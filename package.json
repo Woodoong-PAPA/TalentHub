@@ -1,0 +1,14 @@
+{
+  "name": "samsung-talent-pool-console",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-runtime-config.js",
+    "check": "node --check app.js && node --check server.js && node --check scripts/build-runtime-config.js",
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "version": "2.0",
+  "lastUpdated": "2026-06-04T13:44:18.989Z",
+  "activeFeatures": [
+    "talent-pool-management"
+  ],
+  "primaryFeature": "talent-pool-management",
+  "features": {
+    "talent-pool-management": {
+      "phase": "act",
+      "matchRate": null,
+      "iterationCount": 2,
+      "documents": {},
+      "taskChain": [
+        {
+          "phase": "plan",
+          "status": "completed",
+          "createdAt": "2026-06-03T15:46:56.717Z",
+          "completedAt": "2026-06-03T15:48:57.087Z"
+        },
+        {
+          "phase": "design",
+          "status": "completed",
+          "createdAt": "2026-06-03T15:46:56.717Z",
+          "completedAt": "2026-06-03T15:53:41.208Z"
+        },
+        {
+          "phase": "do",
+          "status": "completed",
+          "createdAt": "2026-06-03T15:46:56.717Z",
+          "completedAt": "2026-06-03T16:11:02.550Z"
+        },
+        {
+          "phase": "check",
+          "status": "completed",
+          "createdAt": "2026-06-03T15:46:56.717Z",
+          "completedAt": "2026-06-04T13:20:57.775Z"
+        },
+        {
+          "phase": "report",
+          "status": "active",
+          "createdAt": "2026-06-03T15:46:56.717Z"
+        }
+      ],
+      "timestamps": {
+        "started": "2026-06-03T15:46:56.743Z",
+        "lastUpdated": "2026-06-04T13:44:18.989Z"
+      }
+    }
+  },
+  "pipeline": {
+    "currentPhase": 1,
+    "level": "Starter",
+    "phaseHistory": []
+  },
+  "session": {
+    "startedAt": "2026-06-03T15:46:56.714Z",
+    "onboardingCompleted": false,
+    "lastActivity": "2026-06-04T13:44:18.989Z"
+  },
+  "history": [
+    {
+      "feature": "talent-pool-management",
+      "from": "plan",
+      "to": "design",
+      "timestamp": "2026-06-03T15:48:57.066Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "action": "phase_complete",
+      "phase": "plan",
+      "nextPhase": "design",
+      "timestamp": "2026-06-03T15:48:57.068Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "from": "design",
+      "to": "design",
+      "timestamp": "2026-06-03T15:50:50.228Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "from": "design",
+      "to": "do",
+      "timestamp": "2026-06-03T15:53:41.160Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "action": "phase_complete",
+      "phase": "design",
+      "nextPhase": "do",
+      "timestamp": "2026-06-03T15:53:41.162Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-06-03T16:11:02.516Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "action": "phase_complete",
+      "phase": "do",
+      "nextPhase": "check",
+      "timestamp": "2026-06-03T16:11:02.517Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-06-04T13:20:57.760Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-06-04T13:20:57.764Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-06-04T13:44:18.977Z"
+    },
+    {
+      "feature": "talent-pool-management",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-06-04T13:44:18.978Z"
+    }
+  ]
+}

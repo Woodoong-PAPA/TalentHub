@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Samsung Talent Pool Console</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="runtime-config.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="주요 메뉴">
+        <div class="brand-block">
+          <div class="brand-mark">S</div>
+          <div>
+            <p class="brand-kicker">Samsung HR</p>
+            <h1>Talent Pool</h1>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item is-active" type="button" data-view="dashboard">
+            <span class="nav-icon">D</span>
+            <span>대시보드</span>
+          </button>
+          <button class="nav-item" type="button" data-view="pool">
+            <span class="nav-icon">P</span>
+            <span>인재 Pool</span>
+          </button>
+          <button class="nav-item" type="button" data-view="register">
+            <span class="nav-icon">R</span>
+            <span>인재 등록</span>
+          </button>
+          <button class="nav-item" type="button" data-view="ai-search">
+            <span class="nav-icon">A</span>
+            <span>AI 검색</span>
+          </button>
+          <button class="nav-item" type="button" data-view="audit">
+            <span class="nav-icon">L</span>
+            <span>감사 로그</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-panel">
+          <p class="panel-label">동의 만료 예정</p>
+          <strong id="side-expiring-count">0명</strong>
+          <span>30일 이내 갱신 필요</span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Recruiting Operations</p>
+            <h2 id="page-title">대시보드</h2>
+          </div>
+          <div class="topbar-actions">
+            <div class="global-search">
+              <label for="global-search" class="visually-hidden">통합 검색</label>
+              <input id="global-search" type="search" placeholder="후보자, 회사, 기술 검색" />
+            </div>
+            <button class="ghost-button" type="button" data-view="register">등록</button>
+            <button class="primary-button" type="button" data-view="ai-search">AI 검색</button>
+          </div>
+        </header>
+
+        <main class="main-content">
+          <section id="dashboard-view" class="view is-active" aria-labelledby="dashboard-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Live Pool</p>
+                <h3 id="dashboard-title">인재 Pool 운영 현황</h3>
+              </div>
+              <div class="date-pill">2026.06.04 09:30 KST</div>
+            </div>
+            <div id="dashboard-content"></div>
+          </section>
+
+          <section id="pool-view" class="view" aria-labelledby="pool-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Candidate Directory</p>
+                <h3 id="pool-title">인재 Pool 목록</h3>
+              </div>
+              <button class="primary-button" type="button" data-view="register">신규 등록</button>
+            </div>
+            <div id="pool-content"></div>
+          </section>
+
+          <section id="register-view" class="view" aria-labelledby="register-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Resume Intake</p>
+                <h3 id="register-title">인재 등록 및 이력서 파싱</h3>
+              </div>
+              <span class="status-chip chip-blue">검수 큐 연동</span>
+            </div>
+            <div id="register-content"></div>
+          </section>
+
+          <section id="ai-search-view" class="view" aria-labelledby="ai-search-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">AI Matching</p>
+                <h3 id="ai-search-title">AI 기반 인재 검색</h3>
+              </div>
+              <span class="status-chip chip-green">민감 속성 제외</span>
+            </div>
+            <div id="ai-search-content"></div>
+          </section>
+
+          <section id="detail-view" class="view" aria-labelledby="detail-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Candidate Profile</p>
+                <h3 id="detail-title">인재 프로필 상세</h3>
+              </div>
+              <div id="detail-actions"></div>
+            </div>
+            <div id="detail-content"></div>
+          </section>
+
+          <section id="audit-view" class="view" aria-labelledby="audit-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Compliance</p>
+                <h3 id="audit-title">감사 로그</h3>
+              </div>
+              <span class="status-chip chip-amber">다운로드 추적</span>
+            </div>
+            <div id="audit-content"></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
