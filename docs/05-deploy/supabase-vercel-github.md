@@ -47,7 +47,7 @@ Do not commit `.env`, `.env.local`, `.vercel`, or `runtime-config.js`.
 1. Create a Supabase project.
 2. Open Supabase Dashboard.
 3. Go to SQL Editor.
-4. Run the full contents of `supabase/schema.sql`.
+4. Run the full contents of `supabase/schema.sql`, or use the CLI migration at `supabase/migrations/20260604143500_init_talent_pool.sql`.
 5. Go to Project Settings > API.
 6. Copy:
    - Project URL into `SUPABASE_URL`
@@ -59,6 +59,14 @@ The current schema creates:
 - `public.audit_logs`
 - `candidate-assets` storage bucket
 - demo RLS policies for anon/authenticated read/write
+
+CLI path after login:
+
+```powershell
+supabase login
+supabase link --project-ref <project-ref>
+supabase db push
+```
 
 Important production note:
 
