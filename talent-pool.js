@@ -2691,21 +2691,127 @@ function parseResumeText(text, filename = "") {
     /([가-힣A-Za-z0-9 /·&+-]+(?:엔지니어|개발자|리서처|아키텍트|분석가|Engineer|Developer|Researcher|Architect))/
   ]));
   const company = cleanParsedValue(findLabeledValue(lines, ["현재 회사", "최근 회사", "현재/최근 회사", "회사", "근무처", "Company"]) || career[0]?.company);
-  const summary = cleanParsedValue(lines.find((line) =>
-    line.length >= 30 &&
-    !line.includes("@") &&
-    !educationLines.includes(line) &&
-    !careerLines.includes(line)
-  ) || `${filename}에서 자동 추출한 후보자 정보입니다.`);
-
   return {
     name,
     company,
     role: role || career[0]?.position || "",
     skills,
-    summary,
+    summary: "",
     education: education.length ? education : [{}],
     career: career.length ? career : [{}]
+  };
+}
+
+function normalizeParsedDate(value) {
+  const text = String(value || "").trim();
+
+  if (!text || text === "0") {
+    return "";
+  }
+
+  if (/현재|재직|present|current/i.test(text)) {
+    return "현재";
+  }
+
+  const monthMatch = text.match(/(\d{4})[.\-/년\s]+(\d{1,2})/);
+
+  if (monthMatch) {
+    return `${monthMatch[1]}-${monthMatch[2].padStart(2, "0")}`;
+  }
+
+  const yearMatch = text.match(/\b(\d{4})\b/);
+  return yearMatch ? yearMatch[1] : "";
+}
+
+function recentRecordSortValue(record) {
+  const end = normalizeParsedDate(record.end);
+  const start = normalizeParsedDate(record.start);
+  const value = end === "현재" ? "9999-12" : end || start || "";
+
+  if (!value) {
+    return "0000-00";
+  }
+
+  return value.length === 4 ? `${value}-00` : value;
+}
+
+function normalizeParsedResumeForForm(parsed = {}) {
+  const career = Array.isArray(parsed.career)
+    ? parsed.career
+      .map((item) => ({
+        country: cleanParsedValue(item.country),
+        company: cleanParsedValue(item.company),
+        rank: cleanParsedValue(item.rank),
+        position: cleanParsedValue(item.position),
+        start: normalizeParsedDate(item.start),
+        end: normalizeParsedDate(item.end),
+        achievements: String(item.achievements || "")
+          .split(/\n+/)
+          .map((line) => cleanParsedValue(line))
+          .filter(Boolean)
+          .join("\n")
+      }))
+      .filter(hasAnyRecordValue)
+      .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
+    : [];
+  const education = Array.isArray(parsed.education)
+    ? parsed.education
+      .map((item) => ({
+        degree: ["박사", "석사", "학사"].includes(cleanParsedValue(item.degree)) ? cleanParsedValue(item.degree) : "",
+        school: cleanParsedValue(item.school),
+        major: cleanParsedValue(item.major),
+        start: normalizeParsedDate(item.start),
+        end: normalizeParsedDate(item.end)
+      }))
+      .filter(hasAnyRecordValue)
+      .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
+    : [];
+  const skills = Array.isArray(parsed.skills)
+    ? parsed.skills.map(cleanParsedValue).filter(Boolean)
+    : String(parsed.skills || "")
+      .split(/[,;\n]/)
+      .map(cleanParsedValue)
+      .filter(Boolean);
+
+  return {
+    name: cleanParsedValue(parsed.name),
+    company: cleanParsedValue(parsed.company || career[0]?.company),
+    role: cleanParsedValue(parsed.role || career[0]?.position),
+    skills: [...new Set(skills)].slice(0, 12),
+    summary: "",
+    education: education.length ? education : [{}],
+    career: career.length ? career : [{}],
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map(cleanParsedValue).filter(Boolean) : []
+  };
+}
+
+async function parseResumeWithServer(text, fileName, deterministic) {
+  const response = await fetch("/api/parse-resume", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      text,
+      fileName,
+      deterministic
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Resume parser API failed: ${response.status}`);
+  }
+
+  const payload = await response.json();
+
+  if (!payload.ok || !payload.parsed) {
+    throw new Error(payload.error || "Resume parser API did not return structured data.");
+  }
+
+  return {
+    parsed: normalizeParsedResumeForForm(payload.parsed),
+    source: payload.source || "server",
+    warning: payload.warning || ""
   };
 }
 
@@ -2748,7 +2854,6 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   setFieldValue("#candidate-company", parsed.company, overwrite);
   setFieldValue("#candidate-role", parsed.role, overwrite);
   setFieldValue("#candidate-skills", parsed.skills.join(", "), overwrite);
-  setFieldValue("#candidate-summary", parsed.summary, overwrite);
 
   if (education.length && (overwrite || currentEducationIsBlank)) {
     setRegisterEducationRecords(education);
@@ -2763,7 +2868,7 @@ async function parseResumeIntoRegisterForm(file) {
   const status = $("#resume-parse-status");
 
   if (status) {
-    status.textContent = "이력서를 읽는 중입니다.";
+    status.textContent = "이력서를 읽고 구조화하는 중입니다.";
   }
 
   try {
@@ -2777,7 +2882,22 @@ async function parseResumeIntoRegisterForm(file) {
       return;
     }
 
-    const parsed = parseResumeText(result.text, file.name);
+    const deterministicParsed = normalizeParsedResumeForForm(parseResumeText(result.text, file.name));
+    let parsed = deterministicParsed;
+    let parserSource = "브라우저 기본 파서";
+
+    try {
+      if (status) {
+        status.textContent = "이력서 내용을 구조화하고 회사 소재국가를 보강하는 중입니다.";
+      }
+
+      const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
+      parsed = serverResult.parsed;
+      parserSource = serverResult.source === "openai-web" ? "AI 구조화 및 회사 소재국가 보강" : "AI 구조화";
+    } catch (serverError) {
+      console.warn("Structured resume parser failed. Falling back to browser parser.", serverError);
+      parserSource = "브라우저 기본 파서";
+    }
 
     if (!hasParsedResumeValues(parsed)) {
       if (status) {
@@ -2795,7 +2915,7 @@ async function parseResumeIntoRegisterForm(file) {
 
     if (status) {
       const quality = result.meta?.textQuality ? ` 텍스트 품질 ${Math.round(result.meta.textQuality)}점.` : "";
-      status.textContent = `이력서에서 읽은 정보를 입력했습니다.${quality} 실제 이력서와 비교 후 등록해주세요.`;
+      status.textContent = `${parserSource} 결과를 입력했습니다.${quality} 실제 이력서와 비교 후 등록해주세요.`;
     }
 
     showToast("이력서 정보를 입력란에 자동 반영했습니다.");

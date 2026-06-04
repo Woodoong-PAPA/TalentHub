@@ -19,6 +19,12 @@ function resolveRequestPath(url) {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.url.split("?")[0] === "/api/parse-resume") {
+    const parseResume = require("./api/parse-resume.js");
+    parseResume(request, response);
+    return;
+  }
+
   const filePath = resolveRequestPath(request.url);
 
   if (!filePath.startsWith(ROOT)) {

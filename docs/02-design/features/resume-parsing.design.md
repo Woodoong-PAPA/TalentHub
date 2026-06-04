@@ -155,7 +155,7 @@ flowchart TD
 
 구조화 파서는 2단계로 동작한다.
 
-### 8.1 Deterministic Parser
+### 8.1 Browser Deterministic Parser
 
 정규식과 섹션 분리를 사용해 빠르게 후보 값을 찾는다.
 
@@ -167,15 +167,28 @@ flowchart TD
 - 경력: `경력`, `Experience`, 회사명/직급/직책/기간/성과가 있는 블록
 - 기술: `기술`, `Skills`, 일반 기술 키워드 목록
 
-### 8.2 AI Structured Extractor
+이 결과는 최종 폼 입력값이 아니라 서버 AI 구조화 실패 시 사용하는 fallback 및 서버 프롬프트 참고값이다.
+
+### 8.2 Server AI Structured Extractor
 
 정규식 결과가 부족하거나 여러 줄 블록 해석이 필요하면 서버 사이드 AI 추출기를 사용한다.
 
-- 실행 위치: Supabase Edge Function 또는 Vercel Serverless Function
+- 실행 위치: Vercel Serverless Function `/api/parse-resume`
 - 입력: 추출된 텍스트, 파일명, deterministic parser 결과
 - 출력: `ResumeParseResult` JSON schema
 - 보안: OpenAI API key는 서버 환경변수에만 보관한다.
 - 원칙: 텍스트에 없는 정보는 추측하지 않고 빈 값으로 반환한다.
+
+### 8.3 Company Country Enrichment
+
+직장소재국가는 이력서에 명시된 값을 최우선으로 사용한다. 이력서와 deterministic parser 결과에 국가가 없는 경력에 한해서 서버 API가 OpenAI Responses API web search 도구로 회사 소재 국가를 보강한다. 검색 결과가 불확실하면 빈 값으로 둔다.
+
+우선순위:
+
+1. 이력서에 명시된 국가
+2. deterministic parser가 찾은 국가
+3. web search로 확인한 회사 소재 국가
+4. 빈 값
 
 ---
 
