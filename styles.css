@@ -506,11 +506,11 @@ table {
 }
 
 .col-photo {
-  width: 72px;
+  width: 88px;
 }
 
 .col-name {
-  width: 150px;
+  width: 160px;
 }
 
 .col-education {
@@ -593,11 +593,19 @@ tr:last-child td {
 }
 
 .photo-cell {
+  padding: 8px;
   text-align: center;
 }
 
 .photo-cell .avatar {
   margin: 0 auto;
+}
+
+.avatar.pool {
+  width: 60px;
+  height: 60px;
+  border-radius: 12px;
+  font-size: 16px;
 }
 
 .candidate-name-compact {
@@ -896,6 +904,16 @@ tr:last-child td {
 
 .query-box textarea {
   min-height: 124px;
+}
+
+.ai-file-upload {
+  min-height: 92px;
+  gap: 8px;
+  padding: 12px;
+}
+
+.ai-file-upload input {
+  max-width: 100%;
 }
 
 .search-result {

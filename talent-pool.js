@@ -352,6 +352,7 @@ const state = {
   aiQuery: "",
   aiResults: [],
   aiSearchLoading: false,
+  aiSearchFileName: "",
   registerExtractedPhotoUrl: "",
   remoteSyncStatus: REMOTE_SYNC_ENABLED ? "대기" : "로컬",
   auditLogs: [
@@ -997,6 +998,20 @@ function candidateVisual(candidate, size = "") {
   return `<span class="${className}" style="background:${candidate.avatarColor}">${candidate.initials}</span>`;
 }
 
+function formatBirthAge(candidate) {
+  const birthYear = String(candidate.birthYear || "").trim();
+  const age = calculateAge(birthYear) || candidate.age;
+
+  if (!birthYear && !age) {
+    return "출생년도 미입력";
+  }
+
+  return [
+    birthYear ? `${birthYear}년생` : "",
+    age ? `${age}세` : ""
+  ].filter(Boolean).join(" · ");
+}
+
 function getPrimaryEducation(candidate) {
   return candidate.education?.[0] || null;
 }
@@ -1294,12 +1309,12 @@ function candidateTable(candidates) {
 
             return `
             <tr>
-              <td class="photo-cell">${candidateVisual(candidate)}</td>
+              <td class="photo-cell">${candidateVisual(candidate, "pool")}</td>
               <td class="candidate-cell">
                 <div class="candidate-name candidate-name-compact">
                   <span>
                     <button class="candidate-name-button" type="button" data-select-candidate="${candidate.id}">${escapeHtml(candidate.name)}</button>
-                    <span>${escapeHtml(candidate.company)}</span>
+                    <span>${escapeHtml(formatBirthAge(candidate))}</span>
                   </span>
                 </div>
               </td>
@@ -1339,8 +1354,22 @@ function renderPool() {
         ${owners.map((owner) => `<option value="${owner}" ${state.poolFilters.owner === owner ? "selected" : ""}>${owner}</option>`).join("")}
       </select>
     </div>
-    ${candidateTable(candidates)}
+    <div id="pool-table-content">
+      ${candidateTable(candidates)}
+    </div>
   `;
+}
+
+function renderPoolTable() {
+  const tableContent = $("#pool-table-content");
+  const candidates = sortCandidatesByCreatedAt(getFilteredCandidates());
+
+  if (!tableContent) {
+    renderPool();
+    return;
+  }
+
+  tableContent.innerHTML = candidateTable(candidates);
 }
 
 function renderRegister() {
@@ -1546,6 +1575,10 @@ function renderAiSearch() {
       <section class="form-panel query-box">
         <label class="visually-hidden" for="ai-query">AI 검색어</label>
         <textarea class="control-textarea" id="ai-query" placeholder="예: NAND 공정 수율 개선 경험이 있고 Python 데이터 분석이 가능한 3~7년차 엔지니어">${escapeHtml(state.aiQuery)}</textarea>
+        <div class="dropzone ai-file-upload">
+          <input id="ai-search-file" name="aiSearchFile" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
+          <span id="ai-file-status" class="form-help">${state.aiSearchFileName ? `${escapeHtml(state.aiSearchFileName)} 내용을 검색 조건으로 반영했습니다.` : "직무기술서, JD, 포지션 설명 파일을 업로드하면 내용을 읽어 적합도를 분석합니다."}</span>
+        </div>
         <button class="primary-button" type="button" id="run-ai-search" ${state.aiSearchLoading ? "disabled" : ""}>${state.aiSearchLoading ? "검색 중" : "검색 실행"}</button>
         ${interpreted.length ? `<div class="tag-row">${interpreted.map((item) => `<span class="status-chip chip-blue">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       </section>
@@ -1828,6 +1861,23 @@ async function runAiSearch(query) {
     console.warn("Server AI search failed. Using local semantic search.", error);
     return localResults;
   }
+}
+
+function buildAiQueryFromUploadedFile(text, fileName) {
+  const normalized = normalizeResumeText(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 6000);
+
+  return [
+    `업로드한 직무기술서 파일: ${fileName}`,
+    "",
+    "아래 직무기술서의 역할, 필수역량, 우대사항, 수행업무와 가장 잘 맞는 후보자를 찾아줘.",
+    "",
+    normalized
+  ].join("\n");
 }
 
 function searchResultCard(candidate) {
@@ -3779,7 +3829,7 @@ function updatePoolFilters() {
   state.poolFilters.status = $("#pool-status")?.value || "all";
   state.poolFilters.owner = $("#pool-owner")?.value || "all";
   persistState();
-  renderPool();
+  renderPoolTable();
 }
 
 function changeCandidateStatus(status) {
@@ -3806,11 +3856,10 @@ function changeCandidateStatus(status) {
   render();
 }
 
-async function executeAiSearch() {
-  const query = $("#ai-query")?.value.trim() || "";
-  state.aiQuery = query;
+async function executeAiSearchWithQuery(query, options = {}) {
+  state.aiQuery = query.trim();
 
-  if (!query) {
+  if (!state.aiQuery) {
     state.aiResults = [];
     state.aiSearchLoading = false;
     renderAiSearch();
@@ -3819,26 +3868,67 @@ async function executeAiSearch() {
   }
 
   state.aiSearchLoading = true;
-  state.aiResults = runLocalAiSearch(query);
+  state.aiResults = runLocalAiSearch(state.aiQuery);
   renderAiSearch();
 
   try {
-    state.aiResults = await runAiSearch(query);
+    state.aiResults = await runAiSearch(state.aiQuery);
     state.auditLogs.unshift({
       actor: "이지원",
-      action: "AI 검색",
-      resource: state.aiQuery.slice(0, 32),
+      action: options.fileName ? "AI 파일 검색" : "AI 검색",
+      resource: options.fileName || state.aiQuery.slice(0, 32),
       purpose: "후보자 Shortlist 탐색",
       time: "2026-06-04 09:35"
     });
     persistState();
-    showToast("AI 검색 결과가 갱신되었습니다.");
+    showToast(options.fileName ? "직무기술서 기반 AI 검색 결과가 갱신되었습니다." : "AI 검색 결과가 갱신되었습니다.");
   } catch (error) {
     console.warn("AI search execution failed.", error);
     showToast("AI 검색 중 오류가 발생해 로컬 검색 결과를 표시합니다.");
   } finally {
     state.aiSearchLoading = false;
     renderAiSearch();
+  }
+}
+
+async function executeAiSearch() {
+  state.aiSearchFileName = "";
+  await executeAiSearchWithQuery($("#ai-query")?.value.trim() || "");
+}
+
+async function handleAiSearchFileUpload(file) {
+  const status = $("#ai-file-status");
+
+  if (!file) {
+    return;
+  }
+
+  state.aiSearchFileName = file.name;
+  state.aiSearchLoading = true;
+  state.aiResults = [];
+
+  if (status) {
+    status.textContent = "직무기술서 파일을 읽고 검색 조건을 구성하는 중입니다.";
+  }
+
+  renderAiSearch();
+
+  try {
+    const result = await readResumeText(file);
+
+    if (!result.text || result.text.length < 20) {
+      state.aiSearchLoading = false;
+      renderAiSearch();
+      showToast("파일에서 읽을 수 있는 직무기술서 텍스트가 부족합니다.");
+      return;
+    }
+
+    await executeAiSearchWithQuery(buildAiQueryFromUploadedFile(result.text, file.name), { fileName: file.name });
+  } catch (error) {
+    console.warn("AI search file could not be read.", error);
+    state.aiSearchLoading = false;
+    renderAiSearch();
+    showToast(error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.");
   }
 }
 
@@ -4011,7 +4101,11 @@ function bindEvents() {
       if (state.view !== "pool") {
         setView("pool");
       } else {
-        renderPool();
+        const poolQuery = $("#pool-query");
+        if (poolQuery) {
+          poolQuery.value = state.poolFilters.query;
+        }
+        renderPoolTable();
       }
     }
 
@@ -4044,6 +4138,14 @@ function bindEvents() {
 
       if (file) {
         parseResumeIntoRegisterForm(file);
+      }
+    }
+
+    if (event.target.id === "ai-search-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        handleAiSearchFileUpload(file);
       }
     }
 

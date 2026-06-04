@@ -220,6 +220,7 @@ Layout:
 - Mobile collapses to a single-column layout.
 - Dashboard metrics appear first, followed by pipeline, skill distribution, and action queue.
 - Candidate detail is a single-page profile, not a tabbed view. The header places the large profile photo and candidate identity on the left, and 담당자, 사업부, 상태, 최종 업데이트, 최초 등록일 on the right. Put 주요 역량/성과, 학력, and 경력 first below the header, followed by resume attachments, basic information, activity, and applications.
+- Candidate pool rows use larger square face thumbnails. Under the candidate name, show birth year and age instead of company name.
 
 Rules:
 
@@ -257,6 +258,7 @@ Do:
 - Use concise Korean UI copy.
 - Show AI search evidence directly inside search results, not as a primary detail-profile section.
 - AI search should accept a blank-by-default natural language query and rank the pool by semantic fit, not by a prefilled example query.
+- AI search can also accept a job description file upload and use the extracted text as the search condition.
 - Use parsing review and audit states visibly where operationally useful, but keep quality score and parsing confidence out of candidate detail.
 - Keep tables compact but readable.
 
