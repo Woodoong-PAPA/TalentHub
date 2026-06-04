@@ -38,7 +38,7 @@ const SAMPLE_CANDIDATES = [
     parsingConfidence: 91,
     avatarColor: "#4e5968",
     skills: ["NAND", "Python", "공정 데이터", "수율 분석", "ML"],
-    tags: ["핵심 기술", "재접촉 우선", "검수 완료"],
+    tags: ["주요 역량/성과", "재접촉 우선", "검수 완료"],
     summary:
       "NAND 공정 데이터 분석과 수율 개선 프로젝트를 수행한 6년차 엔지니어. Python 기반 이상 탐지 모델과 공정 변수 최적화 경험이 강점이다.",
     evidence: [
@@ -51,7 +51,7 @@ const SAMPLE_CANDIDATES = [
     ],
     timeline: [
       { type: "상태 변경", text: "접촉 예정으로 변경", actor: "이지원", date: "2026-06-02" },
-      { type: "AI 요약", text: "이력서 파싱 및 경력 요약 생성", actor: "AI Worker", date: "2026-06-01" },
+      { type: "AI 요약", text: "이력서 파싱 결과 생성", actor: "AI Worker", date: "2026-06-01" },
       { type: "접촉", text: "리퍼럴 경로로 관심 여부 확인", actor: "박민수", date: "2026-05-21" }
     ]
   },
@@ -337,7 +337,6 @@ const state = {
   view: "dashboard",
   candidates: structuredClone(ENRICHED_CANDIDATES),
   selectedCandidateId: "cand-001",
-  detailTab: "overview",
   isEditingCandidate: false,
   editSnapshot: null,
   poolFilters: {
@@ -350,7 +349,7 @@ const state = {
   remoteSyncStatus: REMOTE_SYNC_ENABLED ? "대기" : "로컬",
   auditLogs: [
     { actor: "이지원", action: "후보자 상세 조회", resource: "김도현", purpose: "DS 공정 AI 후보 검토", time: "2026-06-04 09:18" },
-    { actor: "AI Worker", action: "이력서 파싱", resource: "박서연", purpose: "경력 요약 생성", time: "2026-06-04 09:12" },
+    { actor: "AI Worker", action: "이력서 파싱", resource: "박서연", purpose: "파싱 결과 생성", time: "2026-06-04 09:12" },
     { actor: "최유진", action: "AI 검색", resource: "온디바이스 AI", purpose: "DX 리서처 Shortlist", time: "2026-06-04 08:57" },
     { actor: "AI Worker", action: "파싱 품질 스캔", resource: "최민재", purpose: "필수 정보 검수", time: "2026-06-04 08:30" }
   ]
@@ -384,12 +383,21 @@ function removeConsentFields(candidate) {
   delete sanitized.consent;
   const retiredPrivacyTerm = "\uB3D9\uC758";
 
-  sanitized.tags = (sanitized.tags || []).filter((item) => !String(item).includes(retiredPrivacyTerm));
-  sanitized.evidence = (sanitized.evidence || []).filter((item) => !String(item).includes(retiredPrivacyTerm));
-  sanitized.timeline = (sanitized.timeline || []).filter((item) => {
-    const text = `${item.type || ""} ${item.text || ""} ${item.actor || ""}`;
-    return !text.includes(retiredPrivacyTerm) && !text.includes("Compliance");
-  });
+  sanitized.tags = (sanitized.tags || [])
+    .filter((item) => !String(item).includes(retiredPrivacyTerm))
+    .map((item) => String(item).replace("핵심 기술", "주요 역량/성과"));
+  sanitized.evidence = (sanitized.evidence || [])
+    .filter((item) => !String(item).includes(retiredPrivacyTerm))
+    .map((item) => String(item).replace("핵심 기술", "주요 역량/성과"));
+  sanitized.timeline = (sanitized.timeline || [])
+    .filter((item) => {
+      const text = `${item.type || ""} ${item.text || ""} ${item.actor || ""}`;
+      return !text.includes(retiredPrivacyTerm) && !text.includes("Compliance");
+    })
+    .map((item) => ({
+      ...item,
+      text: String(item.text || "").replace("이력서 파싱 및 경력 요약 생성", "이력서 파싱 결과 생성")
+    }));
 
   if (sanitized.summary?.includes(retiredPrivacyTerm)) {
     sanitized.summary = sanitized.summary
@@ -404,6 +412,7 @@ function removeConsentFields(candidate) {
 function normalizeCandidate(candidate) {
   return removeConsentFields({
     photoUrl: "",
+    resumeAttachment: null,
     education: [],
     career: [],
     skills: [],
@@ -417,7 +426,14 @@ function normalizeCandidate(candidate) {
 
 function normalizeAuditLog(log) {
   const text = `${log.actor || ""} ${log.action || ""} ${log.resource || ""} ${log.purpose || ""}`;
-  return text.includes("\uB3D9\uC758") ? null : log;
+  if (text.includes("\uB3D9\uC758")) {
+    return null;
+  }
+
+  return {
+    ...log,
+    purpose: String(log.purpose || "").replace("경력 요약 생성", "파싱 결과 생성")
+  };
 }
 
 function loadPersistedState() {
@@ -642,6 +658,18 @@ function readFileAsDataUrl(file) {
     reader.addEventListener("error", () => reject(reader.error));
     reader.readAsDataURL(file);
   });
+}
+
+function formatFileSize(bytes = 0) {
+  if (!bytes) {
+    return "-";
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function escapeHtml(value) {
@@ -1073,6 +1101,10 @@ function renderRegister() {
             <input class="control-input" id="candidate-role" name="role" required autocomplete="off" />
           </div>
           <div class="field">
+            <label for="candidate-organization">사업부</label>
+            <input class="control-input" id="candidate-organization" name="organization" autocomplete="off" />
+          </div>
+          <div class="field">
             <label for="candidate-owner">담당자</label>
             <select class="control-select" id="candidate-owner" name="owner">
               <option value="">담당자 선택</option>
@@ -1091,7 +1123,7 @@ function renderRegister() {
             </div>
           </div>
           <div class="field full">
-            <label for="candidate-skills">핵심 기술</label>
+            <label for="candidate-skills">주요 역량/성과</label>
             <input class="control-input" id="candidate-skills" name="skills" autocomplete="off" />
           </div>
           <div class="field full">
@@ -1205,16 +1237,6 @@ function renderRegisterCareerRecord(item = {}, index = 0) {
         </div>
       </div>
     </article>
-  `;
-}
-
-function parseField(label, value, confidence) {
-  return `
-    <div class="parse-field">
-      <span class="muted">${label}</span>
-      <strong>${value}</strong>
-      <span class="small-pill">${confidence}</span>
-    </div>
   `;
 }
 
@@ -1356,36 +1378,27 @@ function renderDetail() {
 
   $("#detail-content").innerHTML = `
     <div class="detail-grid">
-      <aside class="profile-panel">
-        <div class="profile-hero">
+      <aside class="profile-panel profile-summary-panel">
+        <div class="profile-hero profile-hero-large">
           ${candidateVisual(candidate, "large")}
           <div>
             <h4>${escapeHtml(candidate.name)}</h4>
-            <span class="muted">${escapeHtml(candidate.company)}</span>
+            <span class="muted">${escapeHtml(candidate.company)} · ${escapeHtml(candidate.role)}</span>
           </div>
         </div>
-        <p>${escapeHtml(candidate.summary)}</p>
         <div class="tag-row">
           ${getStatusChip(candidate.status)}
         </div>
         <div class="profile-stats">
-          ${statBox("품질 점수", `${candidate.dataQuality}`)}
-          ${statBox("파싱 신뢰도", `${candidate.parsingConfidence}%`)}
           ${statBox("담당자", candidate.owner)}
-          ${statBox("조직", candidate.organization)}
+          ${statBox("사업부", candidate.organization)}
+          ${statBox("상태", STATUS_LABELS[candidate.status])}
+          ${statBox("최종 업데이트", candidate.updatedAt)}
         </div>
       </aside>
 
-      <section class="profile-panel">
-        <div class="tabs">
-          ${detailTabButton("overview", "요약")}
-          ${detailTabButton("resume", "이력서")}
-          ${detailTabButton("education", "학력")}
-          ${detailTabButton("career", "경력")}
-          ${detailTabButton("activity", "이력")}
-          ${detailTabButton("applications", "지원")}
-        </div>
-        ${renderDetailTab(candidate)}
+      <section class="profile-panel detail-main-panel">
+        ${renderFullDetailContent(candidate)}
       </section>
     </div>
   `;
@@ -1400,10 +1413,6 @@ function statBox(label, value) {
   `;
 }
 
-function detailTabButton(tab, label) {
-  return `<button class="tab-button ${state.detailTab === tab ? "is-active" : ""}" type="button" data-detail-tab="${tab}">${label}</button>`;
-}
-
 function detailInfoGrid(items) {
   return `
     <div class="detail-info-grid">
@@ -1413,6 +1422,122 @@ function detailInfoGrid(items) {
           <strong>${escapeHtml(item.value || "-")}</strong>
         </div>
       `).join("")}
+    </div>
+  `;
+}
+
+function detailSection(title, content, className = "") {
+  return `
+    <section class="detail-section ${className}">
+      <div class="detail-section-header">
+        <h4>${escapeHtml(title)}</h4>
+      </div>
+      ${content}
+    </section>
+  `;
+}
+
+function renderCompetencySection(candidate) {
+  const tags = candidate.skills?.length
+    ? candidate.skills.map((skill) => `<span class="tag">${escapeHtml(skill)}</span>`).join("")
+    : `<span class="muted">등록된 주요 역량/성과가 없습니다.</span>`;
+
+  return `
+    <div class="bar-list">
+      <div class="tag-row competency-tags">${tags}</div>
+      ${candidate.summary ? `<p class="detail-summary">${escapeHtml(candidate.summary)}</p>` : ""}
+    </div>
+  `;
+}
+
+function renderResumeAttachmentSection(candidate) {
+  const attachment = candidate.resumeAttachment;
+
+  if (!attachment?.dataUrl) {
+    return `<div class="empty-state">등록된 첨부 파일이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="attachment-row">
+      <div>
+        <span class="muted">첨부 파일</span>
+        <strong>${escapeHtml(attachment.name || `${candidate.name}_resume`)}</strong>
+        <small>${escapeHtml(formatFileSize(attachment.size))}${attachment.uploadedAt ? ` · ${escapeHtml(attachment.uploadedAt)}` : ""}</small>
+      </div>
+      <a class="soft-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || `${candidate.name}_resume`)}">다운로드</a>
+    </div>
+  `;
+}
+
+function renderOverviewSection(candidate) {
+  return detailInfoGrid([
+    { label: "이름", value: candidate.name },
+    { label: "현재/최근 회사", value: candidate.company },
+    { label: "현재/최근 직무", value: candidate.role },
+    { label: "사업부", value: candidate.organization },
+    { label: "담당자", value: candidate.owner },
+    { label: "상태", value: STATUS_LABELS[candidate.status] },
+    {
+      label: "최종 학력",
+      value: getPrimaryEducation(candidate)
+        ? `${getPrimaryEducation(candidate).degree} · ${getPrimaryEducation(candidate).school} · ${getPrimaryEducation(candidate).major}`
+        : "-"
+    },
+    {
+      label: "최근 경력",
+      value: getPrimaryCareer(candidate)
+        ? `${getPrimaryCareer(candidate).company} · ${getPrimaryCareer(candidate).position}`
+        : "-"
+    }
+  ]);
+}
+
+function renderActivitySection(candidate) {
+  if (!candidate.timeline?.length) {
+    return `<div class="empty-state">등록된 이력이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="timeline">
+      ${candidate.timeline.map((item) => `
+        <article class="activity-item">
+          <strong>${escapeHtml(item.type)} · ${escapeHtml(item.text)}</strong>
+          <span class="activity-meta">${escapeHtml(item.actor)} · ${escapeHtml(item.date)}</span>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderApplicationsSection(candidate) {
+  if (!candidate.applications?.length) {
+    return `<div class="empty-state">등록된 지원 이력이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>포지션</th><th>단계</th><th>결과</th><th>일자</th></tr></thead>
+        <tbody>
+          ${candidate.applications.map((item) => `
+            <tr><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.stage)}</td><td>${escapeHtml(item.result)}</td><td>${escapeHtml(item.date)}</td></tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderFullDetailContent(candidate) {
+  return `
+    <div class="detail-section-stack">
+      ${detailSection("주요 역량/성과", renderCompetencySection(candidate), "is-primary")}
+      ${detailSection("학력", renderEducationTab(candidate))}
+      ${detailSection("경력", renderCareerTab(candidate))}
+      ${detailSection("이력서", renderResumeAttachmentSection(candidate))}
+      ${detailSection("기본 정보", renderOverviewSection(candidate))}
+      ${detailSection("이력", renderActivitySection(candidate))}
+      ${detailSection("지원", renderApplicationsSection(candidate))}
     </div>
   `;
 }
@@ -1514,6 +1639,10 @@ function renderCandidateEditForm(candidate) {
             <input class="control-input" id="edit-role" name="editRole" value="${inputValue(candidate.role)}" />
           </div>
           <div class="field">
+            <label for="edit-organization">사업부</label>
+            <input class="control-input" id="edit-organization" name="editOrganization" value="${inputValue(candidate.organization)}" />
+          </div>
+          <div class="field">
             <label for="edit-owner">담당자</label>
             <input class="control-input" id="edit-owner" name="editOwner" value="${inputValue(candidate.owner)}" />
           </div>
@@ -1534,7 +1663,7 @@ function renderCandidateEditForm(candidate) {
             </div>
           </div>
           <div class="field full">
-            <label for="edit-skills">핵심 기술</label>
+            <label for="edit-skills">주요 역량/성과</label>
             <input class="control-input" id="edit-skills" name="editSkills" value="${inputValue(candidate.skills.join(", "))}" />
           </div>
           <div class="field full">
@@ -1648,88 +1777,6 @@ function renderCareerEditRecord(item, index) {
         </div>
       </div>
     </article>
-  `;
-}
-
-function renderDetailTab(candidate) {
-  if (state.detailTab === "resume") {
-    return `
-      <div class="parse-preview">
-        ${parseField("원본 파일", `${candidate.name}_resume.pdf`, "권한 필요")}
-        ${parseField("경력 요약", candidate.jobFamily, "확정")}
-        ${parseField("핵심 기술", candidate.skills.slice(0, 4).join(", "), "검수")}
-        ${parseField("AI 신뢰도", `${candidate.parsingConfidence}%`, candidate.parsingConfidence >= 88 ? "높음" : "중간")}
-      </div>
-    `;
-  }
-
-  if (state.detailTab === "education") {
-    return renderEducationTab(candidate);
-  }
-
-  if (state.detailTab === "career") {
-    return renderCareerTab(candidate);
-  }
-
-  if (state.detailTab === "activity") {
-    return `
-      <div class="timeline">
-        ${candidate.timeline.map((item) => `
-          <article class="activity-item">
-            <strong>${escapeHtml(item.type)} · ${escapeHtml(item.text)}</strong>
-            <span class="activity-meta">${escapeHtml(item.actor)} · ${item.date}</span>
-          </article>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  if (state.detailTab === "applications") {
-    if (!candidate.applications.length) {
-      return `<div class="empty-state">등록된 지원 이력이 없습니다.</div>`;
-    }
-
-    return `
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>포지션</th><th>단계</th><th>결과</th><th>일자</th></tr></thead>
-          <tbody>
-            ${candidate.applications.map((item) => `
-              <tr><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.stage)}</td><td>${escapeHtml(item.result)}</td><td>${item.date}</td></tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="bar-list">
-      <div class="tag-row">
-        ${candidate.skills.map((skill) => `<span class="tag">${escapeHtml(skill)}</span>`).join("")}
-      </div>
-      <p>${escapeHtml(candidate.summary)}</p>
-      ${detailInfoGrid([
-        {
-          label: "최종 학력",
-          value: getPrimaryEducation(candidate)
-            ? `${getPrimaryEducation(candidate).degree} · ${getPrimaryEducation(candidate).school} · ${getPrimaryEducation(candidate).major}`
-            : "-"
-        },
-        {
-          label: "최근 경력",
-          value: getPrimaryCareer(candidate)
-            ? `${getPrimaryCareer(candidate).company} · ${getPrimaryCareer(candidate).position}`
-            : "-"
-        }
-      ])}
-      <div>
-        <h4>추천 근거</h4>
-        <ul class="evidence-list">
-          ${candidate.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-        </ul>
-      </div>
-    </div>
   `;
 }
 
@@ -1872,6 +1919,7 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.initials = `${name.slice(0, 1)}${name.slice(-1)}`;
   candidate.company = company;
   candidate.role = getFormText(form, "editRole") || candidate.role;
+  candidate.organization = getFormText(form, "editOrganization") || candidate.organization;
   candidate.owner = getFormText(form, "editOwner") || candidate.owner;
   candidate.status = getFormText(form, "editStatus") || candidate.status;
   candidate.skills = skills.length ? skills : candidate.skills;
@@ -1908,7 +1956,6 @@ async function saveCandidateEdits(form, options = {}) {
   if (!options.keepEditing) {
     state.isEditingCandidate = false;
     state.editSnapshot = null;
-    state.detailTab = "overview";
   }
 
   render();
@@ -2827,7 +2874,7 @@ function hasParsedResumeValues(parsed) {
 }
 
 function registerFormHasEnteredValues() {
-  const fields = ["#candidate-name", "#candidate-company", "#candidate-role", "#candidate-skills", "#candidate-summary", "#candidate-owner"];
+  const fields = ["#candidate-name", "#candidate-company", "#candidate-role", "#candidate-organization", "#candidate-skills", "#candidate-summary", "#candidate-owner"];
   const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
   const hasEducationValue = collectRegisterEducationFromForm($("#register-form"), true).some(hasAnyRecordValue);
   const hasCareerValue = collectRegisterCareerFromForm($("#register-form"), true).some(hasAnyRecordValue);
@@ -2950,6 +2997,7 @@ async function registerCandidate(eventOrForm) {
   const name = form.get("name").toString().trim();
   const company = form.get("company").toString().trim();
   const role = form.get("role").toString().trim();
+  const organization = form.get("organization").toString().trim();
 
   if (!name || !company || !role) {
     showToast("이름, 현재/최근 회사, 직무를 입력해주세요.");
@@ -2965,7 +3013,9 @@ async function registerCandidate(eventOrForm) {
     .map((skill) => skill.trim())
     .filter(Boolean);
   const photoFile = form.get("photo");
+  const resumeFile = form.get("resume");
   let photoUrl = "";
+  let resumeAttachment = null;
 
   if (photoFile && photoFile.size) {
     try {
@@ -2973,6 +3023,22 @@ async function registerCandidate(eventOrForm) {
     } catch (error) {
       console.warn("Profile photo could not be read.", error);
       showToast("사진 파일을 읽지 못했습니다. 다른 파일을 선택해주세요.");
+      return;
+    }
+  }
+
+  if (resumeFile && resumeFile.size) {
+    try {
+      resumeAttachment = {
+        name: resumeFile.name,
+        type: resumeFile.type || "application/octet-stream",
+        size: resumeFile.size,
+        uploadedAt: new Date().toISOString().slice(0, 10),
+        dataUrl: await readFileAsDataUrl(resumeFile)
+      };
+    } catch (error) {
+      console.warn("Resume attachment could not be read.", error);
+      showToast("이력서 첨부 파일을 저장하지 못했습니다. 다른 파일을 선택해주세요.");
       return;
     }
   }
@@ -2985,7 +3051,7 @@ async function registerCandidate(eventOrForm) {
     company,
     years: estimateCareerYears(career),
     jobFamily: "Equipment Software",
-    organization: "DS",
+    organization: organization || "미입력",
     status: "interested",
     owner: form.get("owner").toString(),
     updatedAt: "2026-06-04",
@@ -2996,6 +3062,7 @@ async function registerCandidate(eventOrForm) {
     parsingConfidence: 88,
     avatarColor: "#4e5968",
     photoUrl,
+    resumeAttachment,
     education,
     career,
     skills,
@@ -3003,7 +3070,7 @@ async function registerCandidate(eventOrForm) {
     summary: form.get("summary").toString().trim(),
     evidence: [
       "업로드 이력서에서 후보자 정보를 자동 입력",
-      "핵심 기술 태그 자동 생성",
+      "주요 역량/성과 태그 자동 생성",
       "담당자 검수 대기 상태"
     ],
     applications: [],
@@ -3015,7 +3082,6 @@ async function registerCandidate(eventOrForm) {
 
   state.candidates.unshift(candidate);
   state.selectedCandidateId = candidate.id;
-  state.detailTab = "overview";
   state.auditLogs.unshift({
     actor: candidate.owner,
     action: "후보자 등록",
@@ -3075,7 +3141,6 @@ function bindEvents() {
       }
 
       state.selectedCandidateId = selectButton.dataset.selectCandidate;
-      state.detailTab = "overview";
       state.isEditingCandidate = false;
       const candidate = getCandidate();
       state.auditLogs.unshift({
@@ -3157,13 +3222,6 @@ function bindEvents() {
       if (form) {
         saveCandidateEdits(form);
       }
-      return;
-    }
-
-    const tabButton = event.target.closest("[data-detail-tab]");
-    if (tabButton) {
-      state.detailTab = tabButton.dataset.detailTab;
-      renderDetail();
       return;
     }
 

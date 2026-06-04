@@ -219,7 +219,7 @@ Layout:
 - Desktop uses a fixed left navigation and fluid workspace.
 - Mobile collapses to a single-column layout.
 - Dashboard metrics appear first, followed by pipeline, skill distribution, and action queue.
-- Candidate detail uses summary first, then tabbed deeper information.
+- Candidate detail is a single-page profile, not a tabbed view. Put 주요 역량/성과, 학력, and 경력 first, followed by resume attachments, basic information, activity, and applications.
 
 Rules:
 
@@ -255,8 +255,8 @@ Do:
 - Keep most surfaces white.
 - Use warm grey backgrounds to separate areas.
 - Use concise Korean UI copy.
-- Show AI recommendations with clear evidence.
-- Use parsing quality, review, and audit states visibly.
+- Show AI search evidence directly inside search results, not as a primary detail-profile section.
+- Use parsing review and audit states visibly where operationally useful, but keep quality score and parsing confidence out of candidate detail.
 - Keep tables compact but readable.
 
 Don't:
@@ -298,7 +298,7 @@ Use this when extending the interface:
 - Make dashboard metrics scannable with 30px tabular numerals.
 - Make candidate rows dense, readable, and action-oriented.
 - Show AI search evidence directly in each result.
-- Make parsing quality, retention, and audit state visible as badges or panels.
+- Make parsing review, retention, and audit state visible as badges or panels where they support the workflow.
 - Keep component radius disciplined: 8px cards, 12px buttons, 14px inputs, pill badges.
 - Avoid decorative imagery, gradients, emojis, and marketing composition.
 
