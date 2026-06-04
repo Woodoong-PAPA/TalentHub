@@ -2,29 +2,38 @@
 
 ## 1. Current Status
 
-This project is now prepared for Supabase-backed deployment on Vercel with GitHub Actions.
+This project is deployed on Vercel and connected to Supabase for MVP data persistence.
 
-Completed locally:
+Completed:
 
 - Added Vercel build configuration: `vercel.json`
 - Added runtime config generation: `scripts/build-runtime-config.js`
 - Added npm scripts: `package.json`
 - Added Supabase schema: `supabase/schema.sql`
+- Added Supabase CLI migration: `supabase/migrations/20260604143500_init_talent_pool.sql`
 - Added GitHub Actions deployment workflow: `.github/workflows/vercel-deploy.yml`
 - Added environment variable template: `.env.example`
 - Updated app runtime to use Supabase when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured
 - Uses `talent-pool.js` as the browser script so Vercel does not mistake the UI script for a Node entrypoint
 - Kept local fallback through `localStorage` when Supabase is not configured
+- Linked Supabase project `pefsetlczrrlvlehealp`
+- Applied Supabase DB migration with `supabase db push`
+- Registered Vercel Production environment variables:
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `APP_DATA_SOURCE`
+- Deployed production app:
+  - https://samsung-talent-pool-console.vercel.app
+- Verified production app returns HTTP 200.
+- Verified `runtime-config.js` is in Supabase mode and does not expose `OPENAI_API_KEY`.
+- Verified Supabase REST access for `candidates` and `audit_logs`.
+- Verified initial candidate and audit log records synced to Supabase.
 
-Blocked in this local environment:
+Remaining:
 
-- `git` CLI is not installed or not on PATH.
+- GitHub remote repository is not configured yet.
 - `gh` CLI is not installed or not on PATH.
-- `vercel` CLI is not installed or not on PATH.
-- `supabase` CLI is not installed or not on PATH.
-- No Supabase, Vercel, or GitHub auth tokens are available in the environment.
-
-Because of those constraints, the actual remote project creation, GitHub push, Supabase SQL execution, and Vercel deployment must be completed after the account/project credentials are available.
+- Push the local Git repo to GitHub after creating or selecting the remote repository.
 
 ## 2. Environment Variables
 
