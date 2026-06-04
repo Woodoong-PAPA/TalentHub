@@ -765,6 +765,10 @@ tr:last-child td {
   align-items: start;
 }
 
+.register-form-panel {
+  grid-column: 1 / -1;
+}
+
 .form-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -786,6 +790,16 @@ tr:last-child td {
 
 .field.full {
   grid-column: 1 / -1;
+}
+
+.form-help {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.is-hidden {
+  display: none !important;
 }
 
 .field label {
@@ -994,6 +1008,10 @@ tr:last-child td {
 .edit-section {
   display: grid;
   gap: 12px;
+}
+
+.register-section {
+  margin-top: 18px;
 }
 
 .form-error {
