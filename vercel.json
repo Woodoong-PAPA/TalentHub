@@ -35,6 +35,10 @@
       "dest": "/api/parse-resume.js"
     },
     {
+      "src": "/api/search-candidates",
+      "dest": "/api/search-candidates.js"
+    },
+    {
       "handle": "filesystem"
     },
     {

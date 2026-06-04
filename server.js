@@ -25,6 +25,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/search-candidates") {
+    const searchCandidates = require("./api/search-candidates.js");
+    searchCandidates(request, response);
+    return;
+  }
+
   const filePath = resolveRequestPath(request.url);
 
   if (!filePath.startsWith(ROOT)) {

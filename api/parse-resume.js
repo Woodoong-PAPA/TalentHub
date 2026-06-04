@@ -3,11 +3,16 @@ const MAX_TEXT_LENGTH = 60000;
 const RESUME_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "company", "role", "skills", "education", "career", "warnings"],
+  required: ["name", "company", "role", "birthYear", "email", "phone", "linkedinUrl", "referenceUrl", "skills", "education", "career", "warnings"],
   properties: {
     name: { type: "string" },
     company: { type: "string" },
     role: { type: "string" },
+    birthYear: { type: "string" },
+    email: { type: "string" },
+    phone: { type: "string" },
+    linkedinUrl: { type: "string" },
+    referenceUrl: { type: "string" },
     skills: {
       type: "array",
       items: { type: "string" }
@@ -165,6 +170,11 @@ function normalizeResult(result) {
     name: normalizeString(result.name),
     company: normalizeString(result.company || career[0]?.company),
     role: normalizeString(result.role || career[0]?.position),
+    birthYear: normalizeString(result.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
+    email: normalizeString(result.email),
+    phone: normalizeString(result.phone),
+    linkedinUrl: normalizeString(result.linkedinUrl),
+    referenceUrl: normalizeString(result.referenceUrl),
     skills: Array.isArray(result.skills)
       ? [...new Set(result.skills.map(normalizeString).filter(Boolean))].slice(0, 12)
       : [],
@@ -196,6 +206,11 @@ function mergeParsedResult(primary, fallback) {
     name: normalizedPrimary.name || normalizedFallback.name,
     company: normalizedPrimary.company || normalizedFallback.company,
     role: normalizedPrimary.role || normalizedFallback.role,
+    birthYear: normalizedPrimary.birthYear || normalizedFallback.birthYear,
+    email: normalizedPrimary.email || normalizedFallback.email,
+    phone: normalizedPrimary.phone || normalizedFallback.phone,
+    linkedinUrl: normalizedPrimary.linkedinUrl || normalizedFallback.linkedinUrl,
+    referenceUrl: normalizedPrimary.referenceUrl || normalizedFallback.referenceUrl,
     skills: normalizedPrimary.skills.length ? normalizedPrimary.skills : normalizedFallback.skills,
     education: normalizedPrimary.education.length ? normalizedPrimary.education : normalizedFallback.education,
     career: mergedCareer,
@@ -314,6 +329,9 @@ async function callOpenAI({ text, fileName, deterministic, useWebSearch }) {
     "- 이름, 학력, 경력처럼 텍스트에 명시된 정보는 반드시 누락하지 않는다.",
     "- 문서 첫 줄 또는 상단에 한글 2~5자 단독 이름이 있으면 이름으로 사용한다.",
     "- 이름: 한글 이름과 영어 이름이 모두 있으면 한글 이름을 사용한다.",
+    "- 출생년도: 생년월일 또는 출생년도 정보가 있으면 YYYY만 추출한다. 없으면 빈 문자열.",
+    "- 이메일 주소, 휴대폰 번호, 링크드인 주소, 기타 참고 URL이 있으면 그대로 추출한다. 없으면 빈 문자열.",
+    "- 기타 참고 URL은 GitHub, 포트폴리오, 개인 홈페이지, 논문/프로젝트 URL 등 링크드인 외 참고 URL 중 가장 유용한 1개를 선택한다.",
     "- 현재/최근회사: 현재 또는 가장 최근까지 다녔던 직장의 회사명.",
     "- 현재/최근직무: 현재 또는 가장 최근 직장에서 맡은 직무명. 지원 직무가 아니라 실제 경력상의 직무를 우선한다.",
     "- 핵심기술: 이력서 전반에서 주요 역량을 1줄 키워드 배열로 정리한다.",

@@ -30,6 +30,7 @@ const SAMPLE_CANDIDATES = [
     organization: "DS",
     status: "contact_planned",
     owner: "이지원",
+    createdAt: "2026-06-01",
     updatedAt: "2026-06-02",
     lastContactedAt: "2026-05-21",
     location: "경기 화성",
@@ -66,6 +67,7 @@ const SAMPLE_CANDIDATES = [
     organization: "DX",
     status: "screening",
     owner: "최유진",
+    createdAt: "2026-05-30",
     updatedAt: "2026-06-03",
     lastContactedAt: "2026-06-01",
     location: "서울",
@@ -102,6 +104,7 @@ const SAMPLE_CANDIDATES = [
     organization: "DX",
     status: "nurture",
     owner: "이지원",
+    createdAt: "2026-05-12",
     updatedAt: "2026-05-18",
     lastContactedAt: "2026-05-19",
     location: "성남",
@@ -134,6 +137,7 @@ const SAMPLE_CANDIDATES = [
     organization: "DS",
     status: "contacted",
     owner: "박민수",
+    createdAt: "2026-05-20",
     updatedAt: "2026-05-28",
     lastContactedAt: "2026-05-28",
     location: "충남 아산",
@@ -167,6 +171,7 @@ const SAMPLE_CANDIDATES = [
     organization: "DX",
     status: "hold",
     owner: "한소라",
+    createdAt: "2026-04-21",
     updatedAt: "2026-04-22",
     lastContactedAt: "2026-04-23",
     location: "서울",
@@ -344,8 +349,10 @@ const state = {
     status: "all",
     owner: "all"
   },
-  aiQuery: "NAND 공정 개발 경험이 있고 Python 데이터 분석 역량이 있는 3~7년차 후보자",
+  aiQuery: "",
   aiResults: [],
+  aiSearchLoading: false,
+  registerExtractedPhotoUrl: "",
   remoteSyncStatus: REMOTE_SYNC_ENABLED ? "대기" : "로컬",
   auditLogs: [
     { actor: "이지원", action: "후보자 상세 조회", resource: "김도현", purpose: "DS 공정 AI 후보 검토", time: "2026-06-04 09:18" },
@@ -368,6 +375,56 @@ const $ = (selector) => document.querySelector(selector);
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getCurrentYear() {
+  return new Date().getFullYear();
+}
+
+function calculateAge(birthYear) {
+  const year = Number(String(birthYear || "").trim());
+  const currentYear = getCurrentYear();
+
+  if (!Number.isInteger(year) || year < 1900 || year > currentYear) {
+    return "";
+  }
+
+  return String(currentYear - year);
+}
+
+function dateSortValue(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function inferCreatedAt(candidate) {
+  if (candidate.createdAt) {
+    return candidate.createdAt;
+  }
+
+  const registration = (candidate.timeline || []).find((item) => item.type === "등록" && item.date);
+  if (registration?.date) {
+    return registration.date;
+  }
+
+  const datedTimeline = (candidate.timeline || [])
+    .map((item) => item.date)
+    .filter(Boolean)
+    .sort((a, b) => dateSortValue(a) - dateSortValue(b));
+
+  return datedTimeline[0] || candidate.updatedAt || getTodayDate();
+}
+
+function sortCandidatesByCreatedAt(candidates) {
+  return [...candidates].sort((a, b) =>
+    dateSortValue(b.createdAt) - dateSortValue(a.createdAt) ||
+    dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) ||
+    String(b.id).localeCompare(String(a.id))
+  );
 }
 
 function ensureAuditLogIds() {
@@ -410,9 +467,15 @@ function removeConsentFields(candidate) {
 }
 
 function normalizeCandidate(candidate) {
-  return removeConsentFields({
+  const normalized = removeConsentFields({
     photoUrl: "",
     resumeAttachment: null,
+    birthYear: "",
+    age: "",
+    email: "",
+    phone: "",
+    linkedinUrl: "",
+    referenceUrl: "",
     education: [],
     career: [],
     skills: [],
@@ -422,6 +485,12 @@ function normalizeCandidate(candidate) {
     timeline: [],
     ...candidate
   });
+
+  normalized.createdAt = inferCreatedAt(normalized);
+  normalized.updatedAt = normalized.updatedAt || normalized.createdAt;
+  normalized.age = calculateAge(normalized.birthYear);
+
+  return normalized;
 }
 
 function normalizeAuditLog(log) {
@@ -672,6 +741,198 @@ function formatFileSize(bytes = 0) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function mimeTypeFromFileName(fileName) {
+  const lower = String(fileName || "").toLowerCase();
+
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  return "image/jpeg";
+}
+
+function bytesToDataUrl(bytes, mimeType) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(reader.result.toString()));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(new Blob([bytes], { type: mimeType }));
+  });
+}
+
+function loadImageElement(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image));
+    image.addEventListener("error", reject);
+    image.src = dataUrl;
+  });
+}
+
+function expandedSquareCropBox(box, imageWidth, imageHeight, marginRatio = 0.42) {
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  const side = Math.min(
+    Math.max(box.width, box.height) * (1 + marginRatio),
+    imageWidth,
+    imageHeight
+  );
+  const x = Math.max(0, Math.min(imageWidth - side, centerX - side / 2));
+  const y = Math.max(0, Math.min(imageHeight - side, centerY - side / 2));
+
+  return { x, y, width: side, height: side };
+}
+
+function centerSquareCropBox(imageWidth, imageHeight) {
+  const side = Math.min(imageWidth, imageHeight);
+  return {
+    x: Math.max(0, (imageWidth - side) / 2),
+    y: Math.max(0, (imageHeight - side) / 2),
+    width: side,
+    height: side
+  };
+}
+
+function drawCroppedProfileImage(image, box) {
+  const canvas = document.createElement("canvas");
+  const size = 360;
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  context.drawImage(image, box.x, box.y, box.width, box.height, 0, 0, size, size);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+async function detectFaceBox(image) {
+  if (!("FaceDetector" in window)) {
+    return null;
+  }
+
+  try {
+    const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+    const faces = await detector.detect(image);
+    const face = faces?.[0]?.boundingBox;
+
+    if (!face || face.width < 24 || face.height < 24) {
+      return null;
+    }
+
+    return { x: face.x, y: face.y, width: face.width, height: face.height };
+  } catch (error) {
+    console.warn("Face detection failed.", error);
+    return null;
+  }
+}
+
+function profileImageScore({ width, height, fileName }) {
+  const minSide = Math.min(width, height);
+  const maxSide = Math.max(width, height);
+  const ratio = width / Math.max(1, height);
+
+  if (minSide < 72 || maxSide < 96) {
+    return -100;
+  }
+
+  let score = 20;
+  if (ratio >= 0.55 && ratio <= 1.35) score += 45;
+  if (ratio >= 0.7 && ratio <= 1.05) score += 20;
+  if (/profile|photo|picture|avatar|face|증명|사진|프로필/i.test(fileName)) score += 20;
+  if (width * height > 90000) score += 10;
+
+  return score;
+}
+
+async function cropProfilePhotoCandidate(dataUrl, options = {}) {
+  const image = await loadImageElement(dataUrl);
+  const faceBox = await detectFaceBox(image);
+
+  if (faceBox) {
+    return {
+      dataUrl: drawCroppedProfileImage(image, expandedSquareCropBox(faceBox, image.naturalWidth, image.naturalHeight)),
+      confidence: "face",
+      width: image.naturalWidth,
+      height: image.naturalHeight
+    };
+  }
+
+  if (!options.allowCenterCrop) {
+    return null;
+  }
+
+  return {
+    dataUrl: drawCroppedProfileImage(image, centerSquareCropBox(image.naturalWidth, image.naturalHeight)),
+    confidence: "center",
+    width: image.naturalWidth,
+    height: image.naturalHeight
+  };
+}
+
+async function extractImageCandidatesFromResumeZip(buffer, fileType) {
+  const imagePattern = fileType === "docx"
+    ? /^word\/media\/.+\.(?:png|jpe?g|webp)$/i
+    : /^(?:BinData|Preview|Contents)\/.*\.(?:png|jpe?g|webp)$/i;
+  const entries = await readZipEntries(buffer, (fileName) => imagePattern.test(fileName));
+
+  return Promise.all(entries.map(async (entry) => ({
+    fileName: entry.fileName,
+    dataUrl: await bytesToDataUrl(entry.bytes, mimeTypeFromFileName(entry.fileName))
+  })));
+}
+
+async function renderPdfFirstPageImage(buffer) {
+  const pdfjs = await loadPdfJs();
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer), useWorkerFetch: true });
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 1.8 });
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas.toDataURL("image/png");
+}
+
+async function extractProfilePhotoFromResume(file) {
+  const buffer = await file.arrayBuffer();
+  const fileType = detectResumeFileType(file, buffer);
+  const candidates = [];
+
+  if (fileType === "docx" || fileType === "hwpx") {
+    candidates.push(...await extractImageCandidatesFromResumeZip(buffer, fileType));
+  } else if (fileType === "pdf") {
+    try {
+      candidates.push({ fileName: `${file.name}-first-page.png`, dataUrl: await renderPdfFirstPageImage(buffer), requireFace: true });
+    } catch (error) {
+      console.warn("PDF profile photo extraction failed.", error);
+    }
+  }
+
+  const scored = [];
+
+  for (const candidate of candidates) {
+    try {
+      const cropped = await cropProfilePhotoCandidate(candidate.dataUrl, { allowCenterCrop: !candidate.requireFace });
+
+      if (!cropped) {
+        continue;
+      }
+
+      scored.push({
+        ...cropped,
+        score: profileImageScore({ width: cropped.width, height: cropped.height, fileName: candidate.fileName }) + (cropped.confidence === "face" ? 70 : 0),
+        fileName: candidate.fileName
+      });
+    } catch (error) {
+      console.warn("Profile photo candidate could not be processed.", error);
+    }
+  }
+
+  return scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)[0] || null;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -840,6 +1101,12 @@ function getFilteredCandidates() {
       candidate.jobFamily,
       candidate.organization,
       candidate.owner,
+      candidate.birthYear,
+      candidate.age,
+      candidate.email,
+      candidate.phone,
+      candidate.linkedinUrl,
+      candidate.referenceUrl,
       ...candidate.skills,
       ...candidate.tags,
       ...(candidate.education || []).flatMap((item) => [item.degree, item.school, item.major, item.start, item.end]),
@@ -1058,7 +1325,7 @@ function candidateTable(candidates) {
 
 function renderPool() {
   const owners = [...new Set(state.candidates.map((candidate) => candidate.owner))];
-  const candidates = getFilteredCandidates();
+  const candidates = sortCandidatesByCreatedAt(getFilteredCandidates());
 
   $("#pool-content").innerHTML = `
     <div class="filter-strip">
@@ -1113,6 +1380,30 @@ function renderRegister() {
               <option>최유진</option>
               <option>한소라</option>
             </select>
+          </div>
+          <div class="field">
+            <label for="candidate-birth-year">출생년도</label>
+            <input class="control-input" id="candidate-birth-year" name="birthYear" type="number" inputmode="numeric" min="1900" max="${getCurrentYear()}" autocomplete="bday-year" />
+          </div>
+          <div class="field">
+            <label for="candidate-age">나이</label>
+            <input class="control-input" id="candidate-age" name="age" type="text" readonly />
+          </div>
+          <div class="field">
+            <label for="candidate-email">이메일 주소</label>
+            <input class="control-input" id="candidate-email" name="email" type="email" autocomplete="email" />
+          </div>
+          <div class="field">
+            <label for="candidate-phone">휴대폰 번호</label>
+            <input class="control-input" id="candidate-phone" name="phone" type="tel" autocomplete="tel" />
+          </div>
+          <div class="field">
+            <label for="candidate-linkedin">링크드인 주소</label>
+            <input class="control-input" id="candidate-linkedin" name="linkedinUrl" type="url" autocomplete="url" />
+          </div>
+          <div class="field">
+            <label for="candidate-reference-url">기타 참고 URL</label>
+            <input class="control-input" id="candidate-reference-url" name="referenceUrl" type="url" autocomplete="url" />
           </div>
           <div class="field full">
             <label for="profile-photo">얼굴 프로필 사진</label>
@@ -1241,30 +1532,26 @@ function renderRegisterCareerRecord(item = {}, index = 0) {
 }
 
 function renderAiSearch() {
-  if (!state.aiResults.length) {
-    state.aiResults = runAiSearch(state.aiQuery);
-  }
-
-  const interpreted = interpretQuery(state.aiQuery);
+  const interpreted = state.aiQuery ? interpretQuery(state.aiQuery) : [];
+  const resultContent = state.aiSearchLoading
+    ? `<div class="empty-state">자연어 조건을 분석하고 후보자 적합도를 계산하는 중입니다.</div>`
+    : state.aiQuery
+      ? state.aiResults.length
+        ? state.aiResults.map((result) => searchResultCard(result)).join("")
+        : `<div class="empty-state">검색 조건에 맞는 후보자를 찾지 못했습니다. 조건을 조금 넓혀 다시 검색해주세요.</div>`
+      : `<div class="empty-state">찾고 싶은 인재 조건을 자연어로 입력하면 Pool 전체에서 적합도 높은 후보자를 찾아드립니다.</div>`;
 
   $("#ai-search-content").innerHTML = `
     <div class="ai-layout">
       <section class="form-panel query-box">
         <label class="visually-hidden" for="ai-query">AI 검색어</label>
-        <textarea class="control-textarea" id="ai-query">${escapeHtml(state.aiQuery)}</textarea>
-        <div class="suggestion-row">
-          <button type="button" data-ai-suggestion="온디바이스 AI 또는 임베디드 ML 프로젝트 경험이 있는 SW 엔지니어">온디바이스 AI</button>
-          <button type="button" data-ai-suggestion="글로벌 고객 대응 경험이 있는 반도체 품질 엔지니어">글로벌 품질</button>
-          <button type="button" data-ai-suggestion="클라우드 보안과 Kubernetes 운영 경험이 있는 8년 이상 후보자">클라우드 보안</button>
-        </div>
-        <button class="primary-button" type="button" id="run-ai-search">검색 실행</button>
-        <div class="tag-row">
-          ${interpreted.map((item) => `<span class="status-chip chip-blue">${escapeHtml(item)}</span>`).join("")}
-        </div>
+        <textarea class="control-textarea" id="ai-query" placeholder="예: NAND 공정 수율 개선 경험이 있고 Python 데이터 분석이 가능한 3~7년차 엔지니어">${escapeHtml(state.aiQuery)}</textarea>
+        <button class="primary-button" type="button" id="run-ai-search" ${state.aiSearchLoading ? "disabled" : ""}>${state.aiSearchLoading ? "검색 중" : "검색 실행"}</button>
+        ${interpreted.length ? `<div class="tag-row">${interpreted.map((item) => `<span class="status-chip chip-blue">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       </section>
 
       <section class="search-results">
-        ${state.aiResults.map((result) => searchResultCard(result)).join("")}
+        ${resultContent}
       </section>
     </div>
   `;
@@ -1303,36 +1590,249 @@ function interpretQuery(query) {
   return tokens;
 }
 
-function runAiSearch(query) {
-  const interpreted = interpretQuery(query).map((item) => item.toLowerCase());
-  const queryText = query.toLowerCase();
+const AI_SEARCH_CONCEPTS = [
+  { label: "반도체 공정", aliases: ["반도체", "공정", "NAND", "EUV", "수율", "fab", "wafer"] },
+  { label: "AI/ML", aliases: ["AI", "ML", "머신러닝", "딥러닝", "모델", "예측", "이상 탐지"] },
+  { label: "데이터 분석", aliases: ["데이터", "분석", "Python", "SQL", "파이썬", "통계"] },
+  { label: "온디바이스 AI", aliases: ["온디바이스", "on-device", "NPU", "TensorRT", "경량화", "추론 최적화"] },
+  { label: "클라우드 보안", aliases: ["클라우드", "Cloud", "보안", "Security", "Zero Trust", "IAM", "Kubernetes"] },
+  { label: "임베디드 SW", aliases: ["임베디드", "Embedded", "RTOS", "Linux", "펌웨어", "Automotive"] },
+  { label: "글로벌 품질", aliases: ["글로벌", "품질", "Quality", "8D", "고객 대응", "CS", "영어"] },
+  { label: "연구 역량", aliases: ["연구", "논문", "PhD", "박사", "리서처", "Research"] }
+];
+
+const SEARCH_STOPWORDS = new Set([
+  "있는", "하고", "하며", "또는", "그리고", "후보자", "인재", "경험", "가능한", "적합한",
+  "찾아줘", "찾아", "추천", "직무", "업무", "프로필", "pool", "POOL", "the", "and", "with"
+]);
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^0-9a-z가-힣+#.]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeSearchText(value) {
+  return normalizeSearchText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token));
+}
+
+function candidateSearchText(candidate) {
+  return normalizeSearchText([
+    candidate.name,
+    candidate.company,
+    candidate.role,
+    candidate.jobFamily,
+    candidate.organization,
+    candidate.summary,
+    ...candidate.skills,
+    ...candidate.tags,
+    ...candidate.evidence,
+    ...(candidate.education || []).flatMap((item) => [item.degree, item.school, item.major]),
+    ...(candidate.career || []).flatMap((item) => [
+      item.country,
+      item.company,
+      item.rank,
+      item.position,
+      item.start,
+      item.end,
+      item.achievements
+    ])
+  ].join(" "));
+}
+
+function parseYearCondition(query) {
+  const normalized = query.replace(/\s+/g, "");
+  const range = normalized.match(/(\d+)(?:~|-|부터)(\d+)년/);
+  if (range) {
+    return { min: Number(range[1]), max: Number(range[2]), label: `${range[1]}-${range[2]}년` };
+  }
+
+  const min = normalized.match(/(\d+)년(?:이상|초과|이후)/);
+  if (min) {
+    return { min: Number(min[1]), max: Infinity, label: `${min[1]}년 이상` };
+  }
+
+  const max = normalized.match(/(\d+)년(?:이하|미만|까지)/);
+  if (max) {
+    return { min: 0, max: Number(max[1]), label: `${max[1]}년 이하` };
+  }
+
+  if (/신입|주니어/i.test(query)) {
+    return { min: 0, max: 3, label: "주니어" };
+  }
+
+  if (/시니어|고경력|리드|Principal/i.test(query)) {
+    return { min: 8, max: Infinity, label: "시니어" };
+  }
+
+  return null;
+}
+
+function parseDegreeCondition(query) {
+  if (query.includes("박사")) return "박사";
+  if (query.includes("석사")) return "석사";
+  if (query.includes("학사")) return "학사";
+  return "";
+}
+
+function includesAny(text, aliases) {
+  return aliases.some((alias) => text.includes(normalizeSearchText(alias)));
+}
+
+function runLocalAiSearch(query) {
+  const cleanQuery = query.trim();
+
+  if (!cleanQuery) {
+    return [];
+  }
+
+  const queryText = normalizeSearchText(cleanQuery);
+  const queryTokens = tokenizeSearchText(cleanQuery);
+  const requestedConcepts = AI_SEARCH_CONCEPTS.filter((concept) => includesAny(queryText, concept.aliases));
+  const yearCondition = parseYearCondition(cleanQuery);
+  const degreeCondition = parseDegreeCondition(cleanQuery);
 
   return state.candidates
     .map((candidate) => {
-      const profileText = [
-        candidate.role,
-        candidate.jobFamily,
-        candidate.company,
-        candidate.summary,
-        ...candidate.skills,
-        ...candidate.tags,
-        ...candidate.evidence
-      ]
-        .join(" ")
-        .toLowerCase();
+      const profileText = candidateSearchText(candidate);
+      const tokenHits = queryTokens.filter((token) => profileText.includes(token));
+      const conceptHits = requestedConcepts.filter((concept) => includesAny(profileText, concept.aliases));
+      const skillHits = (candidate.skills || []).filter((skill) => queryText.includes(normalizeSearchText(skill)));
+      const reasons = [];
+      let score = 28;
 
-      const keywordHits = interpreted.filter((token) => profileText.includes(token)).length;
-      const directHits = candidate.skills.filter((skill) => queryText.includes(skill.toLowerCase())).length;
-      const yearFit = queryText.includes("3~7") || queryText.includes("3-7") ? candidate.years >= 3 && candidate.years <= 7 : true;
-      const score = Math.min(98, Math.round(58 + keywordHits * 9 + directHits * 11 + (yearFit ? 7 : -9) + candidate.dataQuality / 10));
+      score += Math.min(30, tokenHits.length * 5);
+      score += conceptHits.length * 13;
+      score += skillHits.length * 8;
 
-      return { ...candidate, matchScore: score };
+      if (conceptHits.length) {
+        reasons.push(`${conceptHits.slice(0, 3).map((concept) => concept.label).join(", ")} 조건과 프로필이 일치`);
+      }
+
+      if (skillHits.length) {
+        reasons.push(`${skillHits.slice(0, 4).join(", ")} 역량이 검색 조건과 직접 일치`);
+      }
+
+      if (yearCondition) {
+        const yearFit = candidate.years >= yearCondition.min && candidate.years <= yearCondition.max;
+        score += yearFit ? 14 : -18;
+        reasons.push(yearFit ? `${candidate.years}년 경력이 ${yearCondition.label} 조건에 부합` : `${candidate.years}년 경력이 ${yearCondition.label} 조건과 차이`);
+      }
+
+      if (degreeCondition) {
+        const degreeFit = (candidate.education || []).some((item) => item.degree === degreeCondition);
+        score += degreeFit ? 10 : -8;
+        if (degreeFit) {
+          reasons.push(`${degreeCondition} 학력 조건 충족`);
+        }
+      }
+
+      const primaryCareer = getPrimaryCareer(candidate);
+      if (primaryCareer?.achievements && tokenHits.length) {
+        reasons.push(`${primaryCareer.company} 주요성과가 검색 의도와 관련`);
+      }
+
+      if (!requestedConcepts.length && tokenHits.length) {
+        reasons.push(`${tokenHits.slice(0, 4).join(", ")} 키워드가 프로필에 포함`);
+      }
+
+      const matchScore = Math.max(0, Math.min(98, Math.round(score)));
+
+      return {
+        ...candidate,
+        matchScore,
+        matchReasons: reasons.filter(Boolean).slice(0, 4)
+      };
     })
-    .sort((a, b) => b.matchScore - a.matchScore)
-    .slice(0, 4);
+    .filter((candidate) => candidate.matchScore >= 35)
+    .sort((a, b) => b.matchScore - a.matchScore || dateSortValue(b.createdAt) - dateSortValue(a.createdAt))
+    .slice(0, 6);
+}
+
+async function searchCandidatesWithServer(query) {
+  const response = await fetch("/api/search-candidates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      candidates: state.candidates.map((candidate) => ({
+        id: candidate.id,
+        name: candidate.name,
+        company: candidate.company,
+        role: candidate.role,
+        organization: candidate.organization,
+        years: candidate.years,
+        skills: candidate.skills,
+        summary: candidate.summary,
+        education: candidate.education,
+        career: candidate.career
+      }))
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`AI search API failed: ${response.status}`);
+  }
+
+  const payload = await response.json();
+
+  if (!payload.ok || !Array.isArray(payload.results)) {
+    throw new Error(payload.error || "AI search API did not return results.");
+  }
+
+  return payload.results;
+}
+
+function mergeServerSearchResults(localResults, serverResults) {
+  const localById = new Map(localResults.map((candidate) => [candidate.id, candidate]));
+  const merged = serverResults
+    .map((result) => {
+      const candidate = state.candidates.find((item) => item.id === result.id);
+
+      if (!candidate) {
+        return null;
+      }
+
+      const local = localById.get(result.id);
+      return {
+        ...candidate,
+        matchScore: Math.max(result.score, local?.matchScore || 0),
+        matchReasons: result.reasons?.length ? result.reasons : local?.matchReasons || []
+      };
+    })
+    .filter(Boolean);
+
+  localResults.forEach((candidate) => {
+    if (!merged.some((item) => item.id === candidate.id)) {
+      merged.push(candidate);
+    }
+  });
+
+  return merged
+    .sort((a, b) => b.matchScore - a.matchScore || dateSortValue(b.createdAt) - dateSortValue(a.createdAt))
+    .slice(0, 6);
+}
+
+async function runAiSearch(query) {
+  const localResults = runLocalAiSearch(query);
+
+  try {
+    const serverResults = await searchCandidatesWithServer(query);
+    return mergeServerSearchResults(localResults, serverResults);
+  } catch (error) {
+    console.warn("Server AI search failed. Using local semantic search.", error);
+    return localResults;
+  }
 }
 
 function searchResultCard(candidate) {
+  const reasons = candidate.matchReasons?.length ? candidate.matchReasons : candidate.evidence.slice(0, 3);
+
   return `
     <article class="search-result">
       <div>
@@ -1349,7 +1849,7 @@ function searchResultCard(candidate) {
           ${getStatusChip(candidate.status)}
         </div>
         <ul class="evidence-list">
-          ${candidate.evidence.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+          ${reasons.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
         </ul>
         <div class="actions-cell" style="margin-top:12px">
           <button class="primary-button" type="button" data-select-candidate="${candidate.id}">상세 보기</button>
@@ -1377,8 +1877,8 @@ function renderDetail() {
   }
 
   $("#detail-content").innerHTML = `
-    <div class="detail-grid">
-      <aside class="profile-panel profile-summary-panel">
+    <div class="profile-panel detail-profile-panel">
+      <div class="detail-profile-header">
         <div class="profile-hero profile-hero-large">
           ${candidateVisual(candidate, "large")}
           <div>
@@ -1386,20 +1886,15 @@ function renderDetail() {
             <span class="muted">${escapeHtml(candidate.company)} · ${escapeHtml(candidate.role)}</span>
           </div>
         </div>
-        <div class="tag-row">
-          ${getStatusChip(candidate.status)}
-        </div>
-        <div class="profile-stats">
+        <div class="profile-stats detail-header-stats">
           ${statBox("담당자", candidate.owner)}
           ${statBox("사업부", candidate.organization)}
           ${statBox("상태", STATUS_LABELS[candidate.status])}
           ${statBox("최종 업데이트", candidate.updatedAt)}
+          ${statBox("최초 등록일", candidate.createdAt)}
         </div>
-      </aside>
-
-      <section class="profile-panel detail-main-panel">
-        ${renderFullDetailContent(candidate)}
-      </section>
+      </div>
+      ${renderFullDetailContent(candidate)}
     </div>
   `;
 }
@@ -1419,11 +1914,31 @@ function detailInfoGrid(items) {
       ${items.map((item) => `
         <div class="detail-info-item">
           <span>${escapeHtml(item.label)}</span>
-          <strong>${escapeHtml(item.value || "-")}</strong>
+          <strong>${item.html || escapeHtml(item.value || "-")}</strong>
         </div>
       `).join("")}
     </div>
   `;
+}
+
+function normalizeExternalUrl(value) {
+  const url = String(value || "").trim();
+
+  if (!url) {
+    return "";
+  }
+
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function detailLink(value) {
+  const url = normalizeExternalUrl(value);
+
+  if (!url) {
+    return "";
+  }
+
+  return `<a class="detail-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(value)}</a>`;
 }
 
 function detailSection(title, content, className = "") {
@@ -1474,9 +1989,12 @@ function renderOverviewSection(candidate) {
     { label: "이름", value: candidate.name },
     { label: "현재/최근 회사", value: candidate.company },
     { label: "현재/최근 직무", value: candidate.role },
-    { label: "사업부", value: candidate.organization },
-    { label: "담당자", value: candidate.owner },
-    { label: "상태", value: STATUS_LABELS[candidate.status] },
+    { label: "출생년도", value: candidate.birthYear },
+    { label: "나이", value: candidate.age ? `${candidate.age}세` : "" },
+    { label: "이메일 주소", value: candidate.email },
+    { label: "휴대폰 번호", value: candidate.phone },
+    { label: "링크드인 주소", html: detailLink(candidate.linkedinUrl) },
+    { label: "기타 참고 URL", html: detailLink(candidate.referenceUrl) },
     {
       label: "최종 학력",
       value: getPrimaryEducation(candidate)
@@ -1651,6 +2169,30 @@ function renderCandidateEditForm(candidate) {
             <select class="control-select" id="edit-status" name="editStatus">
               ${STATUS_ORDER.map((status) => `<option value="${status}" ${candidate.status === status ? "selected" : ""}>${STATUS_LABELS[status]}</option>`).join("")}
             </select>
+          </div>
+          <div class="field">
+            <label for="edit-birth-year">출생년도</label>
+            <input class="control-input" id="edit-birth-year" name="editBirthYear" type="number" inputmode="numeric" min="1900" max="${getCurrentYear()}" value="${inputValue(candidate.birthYear)}" />
+          </div>
+          <div class="field">
+            <label for="edit-age">나이</label>
+            <input class="control-input" id="edit-age" name="editAge" type="text" value="${inputValue(candidate.age ? `${candidate.age}세` : "")}" readonly />
+          </div>
+          <div class="field">
+            <label for="edit-email">이메일 주소</label>
+            <input class="control-input" id="edit-email" name="editEmail" type="email" value="${inputValue(candidate.email)}" />
+          </div>
+          <div class="field">
+            <label for="edit-phone">휴대폰 번호</label>
+            <input class="control-input" id="edit-phone" name="editPhone" type="tel" value="${inputValue(candidate.phone)}" />
+          </div>
+          <div class="field">
+            <label for="edit-linkedin">링크드인 주소</label>
+            <input class="control-input" id="edit-linkedin" name="editLinkedinUrl" type="url" value="${inputValue(candidate.linkedinUrl)}" />
+          </div>
+          <div class="field">
+            <label for="edit-reference-url">기타 참고 URL</label>
+            <input class="control-input" id="edit-reference-url" name="editReferenceUrl" type="url" value="${inputValue(candidate.referenceUrl)}" />
           </div>
           <div class="field full">
             <label for="edit-photo">얼굴 프로필 사진</label>
@@ -1922,12 +2464,18 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.organization = getFormText(form, "editOrganization") || candidate.organization;
   candidate.owner = getFormText(form, "editOwner") || candidate.owner;
   candidate.status = getFormText(form, "editStatus") || candidate.status;
+  candidate.birthYear = getFormText(form, "editBirthYear");
+  candidate.age = calculateAge(candidate.birthYear);
+  candidate.email = getFormText(form, "editEmail");
+  candidate.phone = getFormText(form, "editPhone");
+  candidate.linkedinUrl = getFormText(form, "editLinkedinUrl");
+  candidate.referenceUrl = getFormText(form, "editReferenceUrl");
   candidate.skills = skills.length ? skills : candidate.skills;
   candidate.summary = getFormText(form, "editSummary") || candidate.summary;
   candidate.education = collectEducationFromForm(form, options.preserveBlankRecords);
   candidate.career = collectCareerFromForm(form, options.preserveBlankRecords);
   candidate.years = estimateCareerYears(candidate.career);
-  candidate.updatedAt = "2026-06-04";
+  candidate.updatedAt = getTodayDate();
 
   if (photoFile && photoFile.size) {
     try {
@@ -2400,6 +2948,7 @@ async function readZipEntries(buffer, shouldReadEntry) {
 
       entries.push({
         fileName,
+        bytes: data,
         text: new TextDecoder("utf-8", { fatal: false }).decode(data)
       });
     }
@@ -2557,7 +3106,7 @@ function escapeRegExp(value) {
 
 function cleanParsedValue(value) {
   const cleaned = normalizeResumeText(value)
-    .replace(/^(?:이름|성명|Name|현재\s*회사|최근\s*회사|회사|근무처|지원\s*직무|희망직무|직무|포지션|학력|경력|기술|Skills)\s*[:：-]?\s*/i, "")
+    .replace(/^(?:이름|성명|Name|현재\s*회사|최근\s*회사|회사|근무처|지원\s*직무|희망직무|직무|포지션|출생년도|생년|이메일|Email|휴대폰|전화|Phone|LinkedIn|링크드인|기타\s*URL|참고\s*URL|학력|경력|기술|Skills)\s*[:：-]?\s*/i, "")
     .replace(/\b(?:endobj|xref|stream|endstream|obj|\/Font|\/Type|\/Length|\/Filter)\b/gi, " ")
     .replace(/<\/?[A-Za-z][^>\n]{0,80}>/g, " ")
     .replace(/\s{2,}/g, " ")
@@ -2709,6 +3258,43 @@ function inferSkills(text) {
   });
 }
 
+function extractEmail(text) {
+  return cleanParsedValue(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "");
+}
+
+function extractPhone(text) {
+  return cleanParsedValue(text.match(/(?:\+82[-.\s]?)?0?1[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/)?.[0] || "");
+}
+
+function extractBirthYear(text, lines = []) {
+  const labeled = findLabeledValue(lines, ["출생년도", "생년", "생년월일", "Birth Year", "Birth"]);
+  const fromLabel = labeled.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+
+  if (fromLabel) {
+    return fromLabel;
+  }
+
+  return text.match(/(?:출생|생년|Birth)[^\d]{0,12}(19\d{2}|20\d{2})/)?.[1] || "";
+}
+
+function extractLinkedinUrl(text) {
+  const match = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s<>)"']+/i);
+  return cleanParsedValue(match?.[0] || "");
+}
+
+function extractReferenceUrl(text) {
+  const urls = [...text.matchAll(/https?:\/\/[^\s<>)"']+|(?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/[^\s<>)"']*/g)]
+    .map((match) => cleanParsedValue(match[0]))
+    .filter((url) =>
+      url &&
+      !url.includes("@") &&
+      !/linkedin\.com/i.test(url) &&
+      !/\.(?:com|co\.kr|net|org)$/i.test(url)
+    );
+
+  return urls[0] || "";
+}
+
 function parseResumeText(text, filename = "") {
   const normalized = normalizeResumeText(text);
   const lines = normalized
@@ -2742,6 +3328,11 @@ function parseResumeText(text, filename = "") {
     name,
     company,
     role: role || career[0]?.position || "",
+    birthYear: extractBirthYear(compact, lines),
+    email: extractEmail(compact),
+    phone: extractPhone(compact),
+    linkedinUrl: extractLinkedinUrl(compact),
+    referenceUrl: extractReferenceUrl(compact),
     skills,
     summary: "",
     education: education.length ? education : [{}],
@@ -2824,6 +3415,11 @@ function normalizeParsedResumeForForm(parsed = {}) {
     name: cleanParsedValue(parsed.name),
     company: cleanParsedValue(parsed.company || career[0]?.company),
     role: cleanParsedValue(parsed.role || career[0]?.position),
+    birthYear: cleanParsedValue(parsed.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
+    email: extractEmail(String(parsed.email || "")),
+    phone: cleanParsedValue(parsed.phone),
+    linkedinUrl: cleanParsedValue(parsed.linkedinUrl),
+    referenceUrl: cleanParsedValue(parsed.referenceUrl),
     skills: [...new Set(skills)].slice(0, 12),
     summary: "",
     education: education.length ? education : [{}],
@@ -2867,6 +3463,11 @@ function hasParsedResumeValues(parsed) {
     parsed?.name ||
     parsed?.company ||
     parsed?.role ||
+    parsed?.birthYear ||
+    parsed?.email ||
+    parsed?.phone ||
+    parsed?.linkedinUrl ||
+    parsed?.referenceUrl ||
     parsed?.skills?.length ||
     parsed?.education?.some(hasAnyRecordValue) ||
     parsed?.career?.some(hasAnyRecordValue)
@@ -2874,7 +3475,20 @@ function hasParsedResumeValues(parsed) {
 }
 
 function registerFormHasEnteredValues() {
-  const fields = ["#candidate-name", "#candidate-company", "#candidate-role", "#candidate-organization", "#candidate-skills", "#candidate-summary", "#candidate-owner"];
+  const fields = [
+    "#candidate-name",
+    "#candidate-company",
+    "#candidate-role",
+    "#candidate-organization",
+    "#candidate-owner",
+    "#candidate-birth-year",
+    "#candidate-email",
+    "#candidate-phone",
+    "#candidate-linkedin",
+    "#candidate-reference-url",
+    "#candidate-skills",
+    "#candidate-summary"
+  ];
   const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
   const hasEducationValue = collectRegisterEducationFromForm($("#register-form"), true).some(hasAnyRecordValue);
   const hasCareerValue = collectRegisterCareerFromForm($("#register-form"), true).some(hasAnyRecordValue);
@@ -2890,6 +3504,16 @@ function setFieldValue(selector, value, overwrite = true) {
   }
 }
 
+function updateAgeOutput(inputSelector, outputSelector) {
+  const input = $(inputSelector);
+  const output = $(outputSelector);
+
+  if (input && output) {
+    const age = calculateAge(input.value);
+    output.value = age ? `${age}세` : "";
+  }
+}
+
 function applyParsedResumeToRegisterForm(parsed, options = {}) {
   const overwrite = options.overwrite !== false;
   const education = (parsed.education || []).filter(hasAnyRecordValue);
@@ -2900,7 +3524,13 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   setFieldValue("#candidate-name", parsed.name, overwrite);
   setFieldValue("#candidate-company", parsed.company, overwrite);
   setFieldValue("#candidate-role", parsed.role, overwrite);
+  setFieldValue("#candidate-birth-year", parsed.birthYear, overwrite);
+  setFieldValue("#candidate-email", parsed.email, overwrite);
+  setFieldValue("#candidate-phone", parsed.phone, overwrite);
+  setFieldValue("#candidate-linkedin", parsed.linkedinUrl, overwrite);
+  setFieldValue("#candidate-reference-url", parsed.referenceUrl, overwrite);
   setFieldValue("#candidate-skills", parsed.skills.join(", "), overwrite);
+  updateAgeOutput("#candidate-birth-year", "#candidate-age");
 
   if (education.length && (overwrite || currentEducationIsBlank)) {
     setRegisterEducationRecords(education);
@@ -2908,6 +3538,43 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
 
   if (career.length && (overwrite || currentCareerIsBlank)) {
     setRegisterCareerRecords(career);
+  }
+}
+
+async function applyResumeProfilePhotoToRegisterForm(file, status) {
+  const manualPhotoSelected = Boolean($("#profile-photo")?.files?.length);
+
+  if (manualPhotoSelected) {
+    return false;
+  }
+
+  try {
+    if (status) {
+      status.textContent = `${status.textContent} 프로필 사진 후보를 확인하는 중입니다.`;
+    }
+
+    const extracted = await extractProfilePhotoFromResume(file);
+
+    if (!extracted?.dataUrl || $("#profile-photo")?.files?.length) {
+      return false;
+    }
+
+    state.registerExtractedPhotoUrl = extracted.dataUrl;
+    const preview = $("#photo-preview");
+
+    if (preview) {
+      preview.innerHTML = `<img src="${escapeHtml(extracted.dataUrl)}" alt="이력서에서 추출한 프로필 사진 미리보기" />`;
+    }
+
+    if (status) {
+      status.textContent = `${status.textContent} 이력서 내 사진을 프로필 사진으로 반영했습니다.`;
+    }
+
+    showToast("이력서 사진을 프로필 사진으로 자동 반영했습니다.");
+    return true;
+  } catch (error) {
+    console.warn("Resume profile photo extraction failed.", error);
+    return false;
   }
 }
 
@@ -2959,10 +3626,12 @@ async function parseResumeIntoRegisterForm(file) {
       : true;
 
     applyParsedResumeToRegisterForm(parsed, { overwrite });
+    const profilePhotoApplied = await applyResumeProfilePhotoToRegisterForm(file, status);
 
     if (status) {
       const quality = result.meta?.textQuality ? ` 텍스트 품질 ${Math.round(result.meta.textQuality)}점.` : "";
-      status.textContent = `${parserSource} 결과를 입력했습니다.${quality} 실제 이력서와 비교 후 등록해주세요.`;
+      const photoMessage = profilePhotoApplied ? " 프로필 사진도 자동 반영했습니다." : "";
+      status.textContent = `${parserSource} 결과를 입력했습니다.${quality}${photoMessage} 실제 이력서와 비교 후 등록해주세요.`;
     }
 
     showToast("이력서 정보를 입력란에 자동 반영했습니다.");
@@ -2998,6 +3667,8 @@ async function registerCandidate(eventOrForm) {
   const company = form.get("company").toString().trim();
   const role = form.get("role").toString().trim();
   const organization = form.get("organization").toString().trim();
+  const birthYear = form.get("birthYear").toString().trim();
+  const today = getTodayDate();
 
   if (!name || !company || !role) {
     showToast("이름, 현재/최근 회사, 직무를 입력해주세요.");
@@ -3014,7 +3685,7 @@ async function registerCandidate(eventOrForm) {
     .filter(Boolean);
   const photoFile = form.get("photo");
   const resumeFile = form.get("resume");
-  let photoUrl = "";
+  let photoUrl = state.registerExtractedPhotoUrl || "";
   let resumeAttachment = null;
 
   if (photoFile && photoFile.size) {
@@ -3054,7 +3725,8 @@ async function registerCandidate(eventOrForm) {
     organization: organization || "미입력",
     status: "interested",
     owner: form.get("owner").toString(),
-    updatedAt: "2026-06-04",
+    createdAt: today,
+    updatedAt: today,
     lastContactedAt: "-",
     location: "미확인",
     source: "직접 등록",
@@ -3063,6 +3735,12 @@ async function registerCandidate(eventOrForm) {
     avatarColor: "#4e5968",
     photoUrl,
     resumeAttachment,
+    birthYear,
+    age: calculateAge(birthYear),
+    email: form.get("email").toString().trim(),
+    phone: form.get("phone").toString().trim(),
+    linkedinUrl: form.get("linkedinUrl").toString().trim(),
+    referenceUrl: form.get("referenceUrl").toString().trim(),
     education,
     career,
     skills,
@@ -3075,13 +3753,14 @@ async function registerCandidate(eventOrForm) {
     ],
     applications: [],
     timeline: [
-      { type: "등록", text: "후보자 신규 등록", actor: form.get("owner").toString(), date: "2026-06-04" },
-      { type: "AI 요약", text: "이력서 파싱 결과 생성", actor: "AI Worker", date: "2026-06-04" }
+      { type: "등록", text: "후보자 신규 등록", actor: form.get("owner").toString(), date: today },
+      { type: "AI 요약", text: "이력서 파싱 결과 생성", actor: "AI Worker", date: today }
     ]
   };
 
   state.candidates.unshift(candidate);
   state.selectedCandidateId = candidate.id;
+  state.registerExtractedPhotoUrl = "";
   state.auditLogs.unshift({
     actor: candidate.owner,
     action: "후보자 등록",
@@ -3106,13 +3785,14 @@ function updatePoolFilters() {
 function changeCandidateStatus(status) {
   const candidate = getCandidate();
   const previous = candidate.status;
+  const today = getTodayDate();
   candidate.status = status;
-  candidate.updatedAt = "2026-06-04";
+  candidate.updatedAt = today;
   candidate.timeline.unshift({
     type: "상태 변경",
     text: `${STATUS_LABELS[previous]}에서 ${STATUS_LABELS[status]}으로 변경`,
     actor: candidate.owner,
-    date: "2026-06-04"
+    date: today
   });
   state.auditLogs.unshift({
     actor: candidate.owner,
@@ -3124,6 +3804,42 @@ function changeCandidateStatus(status) {
   persistState();
   showToast(`${candidate.name} 상태가 변경되었습니다.`);
   render();
+}
+
+async function executeAiSearch() {
+  const query = $("#ai-query")?.value.trim() || "";
+  state.aiQuery = query;
+
+  if (!query) {
+    state.aiResults = [];
+    state.aiSearchLoading = false;
+    renderAiSearch();
+    showToast("검색 조건을 자연어로 입력해주세요.");
+    return;
+  }
+
+  state.aiSearchLoading = true;
+  state.aiResults = runLocalAiSearch(query);
+  renderAiSearch();
+
+  try {
+    state.aiResults = await runAiSearch(query);
+    state.auditLogs.unshift({
+      actor: "이지원",
+      action: "AI 검색",
+      resource: state.aiQuery.slice(0, 32),
+      purpose: "후보자 Shortlist 탐색",
+      time: "2026-06-04 09:35"
+    });
+    persistState();
+    showToast("AI 검색 결과가 갱신되었습니다.");
+  } catch (error) {
+    console.warn("AI search execution failed.", error);
+    showToast("AI 검색 중 오류가 발생해 로컬 검색 결과를 표시합니다.");
+  } finally {
+    state.aiSearchLoading = false;
+    renderAiSearch();
+  }
 }
 
 function bindEvents() {
@@ -3238,14 +3954,6 @@ function bindEvents() {
       return;
     }
 
-    const suggestionButton = event.target.closest("[data-ai-suggestion]");
-    if (suggestionButton) {
-      state.aiQuery = suggestionButton.dataset.aiSuggestion;
-      state.aiResults = runAiSearch(state.aiQuery);
-      renderAiSearch();
-      return;
-    }
-
     const shortlistButton = event.target.closest("[data-shortlist]");
     if (shortlistButton) {
       const candidate = getCandidate(shortlistButton.dataset.shortlist);
@@ -3277,6 +3985,7 @@ function bindEvents() {
       window.setTimeout(() => {
         setRegisterEducationRecords([{}]);
         setRegisterCareerRecords([{}]);
+        state.registerExtractedPhotoUrl = "";
         const status = $("#resume-parse-status");
         const preview = $("#photo-preview");
 
@@ -3305,6 +4014,14 @@ function bindEvents() {
         renderPool();
       }
     }
+
+    if (event.target.id === "candidate-birth-year") {
+      updateAgeOutput("#candidate-birth-year", "#candidate-age");
+    }
+
+    if (event.target.id === "edit-birth-year") {
+      updateAgeOutput("#edit-birth-year", "#edit-age");
+    }
   });
 
   document.addEventListener("change", (event) => {
@@ -3317,6 +4034,7 @@ function bindEvents() {
       const file = event.target.files?.[0];
 
       if (preview && file) {
+        state.registerExtractedPhotoUrl = "";
         preview.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="업로드한 얼굴 프로필 사진 미리보기" />`;
       }
     }
@@ -3343,20 +4061,9 @@ function bindEvents() {
     }
   });
 
-  document.addEventListener("click", (event) => {
+  document.addEventListener("click", async (event) => {
     if (event.target.id === "run-ai-search") {
-      state.aiQuery = $("#ai-query").value.trim();
-      state.aiResults = runAiSearch(state.aiQuery);
-      state.auditLogs.unshift({
-        actor: "이지원",
-        action: "AI 검색",
-        resource: state.aiQuery.slice(0, 32),
-        purpose: "후보자 Shortlist 탐색",
-        time: "2026-06-04 09:35"
-      });
-      persistState();
-      renderAiSearch();
-      showToast("AI 검색 결과가 갱신되었습니다.");
+      await executeAiSearch();
     }
   });
 }
