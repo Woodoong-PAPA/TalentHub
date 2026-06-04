@@ -4,7 +4,6 @@
 docs
 supabase
 node_modules
-scripts
 server.js
 runtime-config.js
 *.log
