@@ -28,10 +28,15 @@ function readEnvFile(filePath) {
 }
 
 const fileEnv = readEnvFile(path.join(rootDir, ".env"));
+const supabaseUrl = process.env.SUPABASE_URL || fileEnv.SUPABASE_URL || "";
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || fileEnv.SUPABASE_ANON_KEY || "";
+const requestedDataSource = process.env.APP_DATA_SOURCE || fileEnv.APP_DATA_SOURCE || "local";
+const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
+
 const config = {
-  supabaseUrl: process.env.SUPABASE_URL || fileEnv.SUPABASE_URL || "",
-  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || fileEnv.SUPABASE_ANON_KEY || "",
-  dataSource: process.env.APP_DATA_SOURCE || fileEnv.APP_DATA_SOURCE || "local"
+  supabaseUrl,
+  supabaseAnonKey,
+  dataSource: requestedDataSource === "supabase" && hasSupabaseConfig ? "supabase" : "local"
 };
 
 const contents = `window.__APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`;
