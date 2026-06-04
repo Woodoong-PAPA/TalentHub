@@ -58,9 +58,9 @@ Core qualities:
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--green` | `#03b26c` | Success, valid consent, completed states |
-| `--amber` | `#fe9800` | Warning, expiring consent, pending review |
-| `--red` | `#f04452` | Error, expired consent, blocking states |
+| `--green` | `#03b26c` | Success, completed states, verified data |
+| `--amber` | `#fe9800` | Warning, pending review, low confidence fields |
+| `--red` | `#f04452` | Error, failed parsing, blocking states |
 | `--violet` | `#a234c7` | Special classification, AI-related metadata |
 
 Rules:
@@ -161,8 +161,8 @@ Badges use weak semantic colors by default:
 
 - Blue weak: informational or AI search context
 - Green weak: valid or completed
-- Amber weak: pending or expiring
-- Red weak: blocking or expired
+- Amber weak: pending review or low confidence
+- Red weak: blocking, failed, or invalid data
 - Violet weak: special classification
 
 Badge geometry:
@@ -256,7 +256,7 @@ Do:
 - Use warm grey backgrounds to separate areas.
 - Use concise Korean UI copy.
 - Show AI recommendations with clear evidence.
-- Use consent and audit states visibly.
+- Use parsing quality, review, and audit states visibly.
 - Keep tables compact but readable.
 
 Don't:
@@ -266,7 +266,7 @@ Don't:
 - Do not use emojis.
 - Do not use overly large hero typography inside panels.
 - Do not use purple or dark blue as the dominant theme.
-- Do not hide compliance state behind secondary screens.
+- Do not hide audit or data quality state behind secondary screens.
 
 ---
 
@@ -298,9 +298,44 @@ Use this when extending the interface:
 - Make dashboard metrics scannable with 30px tabular numerals.
 - Make candidate rows dense, readable, and action-oriented.
 - Show AI search evidence directly in each result.
-- Make consent, retention, and audit state visible as badges or panels.
+- Make parsing quality, retention, and audit state visible as badges or panels.
 - Keep component radius disciplined: 8px cards, 12px buttons, 14px inputs, pill badges.
 - Avoid decorative imagery, gradients, emojis, and marketing composition.
+
+---
+
+## 10. Resume Parsing Architecture
+
+Resume upload must not decode binary documents as plain text. PDF, DOCX, HWP, and HWPX files have document-specific internal structures, so the system should extract text through a format-aware pipeline before mapping values into the talent registration form.
+
+Detailed technical design: `docs/02-design/features/resume-parsing.design.md`
+
+Core flow:
+
+```mermaid
+flowchart TD
+    A["Resume upload"] --> B["Detect file type"]
+    B --> C["Format-specific text extraction"]
+    C --> D["Normalize and score text quality"]
+    D --> E{"Readable text?"}
+    E -->|Yes| F["Structured field extraction"]
+    E -->|No| G["Stop autofill and show manual input guidance"]
+    F --> H["Map trusted values to registration fields"]
+    H --> I["User reviews and manually registers"]
+```
+
+Rules:
+
+- Do not pass raw PDF, DOCX, HWP, ZIP, XML, or binary text into form fields.
+- Run a text quality guard before parsing. Reject text with replacement characters, binary signatures, PDF commands, XML tags, or mojibake patterns.
+- Use DOCX/HWPX ZIP XML extraction, PDF text-layer extraction, and clear failure states for scanned PDFs or unsupported HWP files.
+- Keep OpenAI or any AI extraction API key on the server only. The browser should receive structured JSON, never hold secrets.
+- Auto-fill only fields with enough confidence. Leave weak or missing values blank for recruiter review.
+- Preserve the user's manually typed values unless they confirm overwrite.
+- Education and career values must map to repeatable form rows.
+- Current employment maps to `현재` and hides the end year/month input.
+- Year/month value `0` is stored for unknown data but omitted from display.
+- Uploading a resume never saves or registers a candidate automatically.
 
 ---
 
@@ -319,4 +354,4 @@ Use this when extending the interface:
 - No emojis in UI, labels, statuses, or documentation.
 - Korean is the primary UI language.
 - English may be used for short system labels and technical terms.
-- All design decisions should support recruiter speed, candidate data confidence, and compliance visibility.
+- All design decisions should support recruiter speed, candidate data confidence, and audit visibility.

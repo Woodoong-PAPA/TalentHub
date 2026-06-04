@@ -1056,7 +1056,7 @@ function renderRegister() {
           <div class="field full">
             <label for="resume-file">이력서 파일</label>
             <div class="dropzone">
-              <input id="resume-file" name="resume" type="file" accept=".txt,.pdf,.doc,.docx,.hwp" />
+              <input id="resume-file" name="resume" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
               <span id="resume-parse-status" class="form-help">이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.</span>
             </div>
           </div>
@@ -2125,32 +2125,371 @@ function updateCareerCurrentControl(checkbox) {
 function normalizeResumeText(text) {
   return String(text || "")
     .replace(/\r/g, "\n")
+    .replace(/\u0000/g, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u00ad/g, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{2,}/g, "\n")
     .trim();
 }
 
-function extractReadableTextFromBytes(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const utf8Text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  const utf16Text = new TextDecoder("utf-16le", { fatal: false }).decode(bytes);
-  const cleanUtf8 = utf8Text.replace(/[^\x20-\x7Eㄱ-ㅎ가-힣一-龥\n\r\t.,:;()[\]{}@/_+\-·~%]/g, " ");
-  const cleanUtf16 = utf16Text.replace(/[^\x20-\x7Eㄱ-ㅎ가-힣一-龥\n\r\t.,:;()[\]{}@/_+\-·~%]/g, " ");
+const PDFJS_DIST_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs";
+const PDFJS_WORKER_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
 
-  return (cleanUtf16.length > cleanUtf8.length ? cleanUtf16 : cleanUtf8).replace(/\s{2,}/g, " ");
+let pdfJsLoader = null;
+
+function createResumeParseError(message, warnings = []) {
+  const error = new Error(message);
+  error.isResumeParseError = true;
+  error.warnings = warnings;
+  return error;
+}
+
+function getFileExtension(fileName = "") {
+  return fileName.split(".").pop()?.toLowerCase() || "";
+}
+
+function bytesToAscii(bytes, length = 12) {
+  return Array.from(bytes.slice(0, length))
+    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : " "))
+    .join("");
+}
+
+function detectResumeFileType(file, buffer) {
+  const extension = getFileExtension(file?.name);
+  const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+  const signature = bytesToAscii(bytes, 8);
+
+  if (extension === "pdf" || signature.startsWith("%PDF")) return "pdf";
+  if (extension === "docx") return "docx";
+  if (extension === "hwpx") return "hwpx";
+  if (extension === "hwp") return "hwp";
+  if (extension === "doc") return "doc";
+  if (["txt", "md", "csv", "json"].includes(extension) || /text|json|csv|markdown/.test(file?.type || "")) return "text";
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return "zip";
+
+  return "unknown";
+}
+
+function countMatches(text, pattern) {
+  return (text.match(pattern) || []).length;
+}
+
+function scoreExtractedTextQuality(text) {
+  const normalized = normalizeResumeText(text);
+  const length = Math.max(normalized.length, 1);
+  const warnings = [];
+  let score = 100;
+
+  const replacementRate = countMatches(normalized, /\uFFFD/g) / length;
+  const controlRate = countMatches(normalized, /[\u0001-\u0008\u000b\u000c\u000e-\u001f]/g) / length;
+  const mojibakeRate = countMatches(normalized, /[ìíîïëêÃÂÐÑ\uFFFD]/g) / length;
+  const usefulCount = countMatches(normalized, /[A-Za-z0-9가-힣]/g);
+  const usefulRate = usefulCount / length;
+  const pdfArtifactCount = countMatches(normalized, /\b(?:endobj|xref|stream|endstream|obj\s*<<|\/Font|\/Type|\/Length|\/Filter)\b/g);
+  const xmlTagCount = countMatches(normalized, /<\/?[A-Za-z][^>\n]{0,80}>/g);
+  const binarySignature = /%PDF|PK\u0003\u0004|\u0000\u0000/.test(normalized);
+
+  if (replacementRate > 0.01) {
+    score -= 35;
+    warnings.push("깨진 대체 문자가 많습니다.");
+  }
+
+  if (controlRate > 0.01) {
+    score -= 30;
+    warnings.push("바이너리 제어 문자가 남아 있습니다.");
+  }
+
+  if (mojibakeRate > 0.01) {
+    score -= 35;
+    warnings.push("문자 인코딩이 깨진 패턴이 감지되었습니다.");
+  }
+
+  if (usefulRate < 0.25) {
+    score -= 25;
+    warnings.push("이름/회사/학력/경력으로 보이는 유효 텍스트가 부족합니다.");
+  }
+
+  if (pdfArtifactCount >= 3) {
+    score -= 35;
+    warnings.push("PDF 내부 명령어가 텍스트에 남아 있습니다.");
+  }
+
+  if (xmlTagCount >= 3) {
+    score -= 20;
+    warnings.push("문서 XML 태그가 텍스트에 남아 있습니다.");
+  }
+
+  if (binarySignature) {
+    score -= 40;
+    warnings.push("문서 바이너리 시그니처가 감지되었습니다.");
+  }
+
+  if (normalized.length < 20 || usefulCount < 8) {
+    score -= 30;
+    warnings.push("추출된 텍스트가 너무 짧습니다.");
+  }
+
+  return {
+    score: Math.max(0, Math.min(100, score)),
+    text: normalized,
+    warnings
+  };
+}
+
+function ensureReadableResumeText(text, context = {}) {
+  const quality = scoreExtractedTextQuality(text);
+
+  if (quality.score < 55) {
+    throw createResumeParseError(
+      "이 파일에서 읽을 수 있는 텍스트를 충분히 추출하지 못했습니다. DOCX 또는 텍스트 PDF로 다시 업로드해주세요.",
+      quality.warnings
+    );
+  }
+
+  return {
+    text: quality.text,
+    meta: {
+      fileName: context.fileName || "",
+      fileType: context.fileType || "unknown",
+      extractionMethod: context.extractionMethod || "unknown",
+      textQuality: quality.score,
+      warnings: quality.warnings
+    }
+  };
+}
+
+function decodeBufferWithBestEncoding(buffer) {
+  const candidates = ["utf-8", "euc-kr", "utf-16le"]
+    .map((encoding) => {
+      try {
+        const text = new TextDecoder(encoding, { fatal: false }).decode(buffer);
+        return { encoding, ...scoreExtractedTextQuality(text) };
+      } catch (_) {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  return candidates[0] || { encoding: "utf-8", text: "", score: 0, warnings: ["텍스트 인코딩을 판별하지 못했습니다."] };
+}
+
+function readUint16(view, offset) {
+  return view.getUint16(offset, true);
+}
+
+function readUint32(view, offset) {
+  return view.getUint32(offset, true);
+}
+
+function decodeZipFileName(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (_) {
+    return new TextDecoder("euc-kr", { fatal: false }).decode(bytes);
+  }
+}
+
+function findEndOfCentralDirectory(bytes) {
+  for (let offset = bytes.length - 22; offset >= 0 && offset >= bytes.length - 66000; offset -= 1) {
+    if (bytes[offset] === 0x50 && bytes[offset + 1] === 0x4b && bytes[offset + 2] === 0x05 && bytes[offset + 3] === 0x06) {
+      return offset;
+    }
+  }
+
+  return -1;
+}
+
+async function inflateZipEntry(data) {
+  if (typeof DecompressionStream === "undefined") {
+    throw createResumeParseError("이 브라우저에서 압축 문서 텍스트 추출을 지원하지 않습니다.");
+  }
+
+  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function readZipEntries(buffer, shouldReadEntry) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const eocdOffset = findEndOfCentralDirectory(bytes);
+
+  if (eocdOffset < 0) {
+    throw createResumeParseError("압축 문서 구조를 찾지 못했습니다.");
+  }
+
+  const entryCount = readUint16(view, eocdOffset + 10);
+  const centralDirectoryOffset = readUint32(view, eocdOffset + 16);
+  const entries = [];
+  let offset = centralDirectoryOffset;
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (readUint32(view, offset) !== 0x02014b50) break;
+
+    const method = readUint16(view, offset + 10);
+    const compressedSize = readUint32(view, offset + 20);
+    const fileNameLength = readUint16(view, offset + 28);
+    const extraLength = readUint16(view, offset + 30);
+    const commentLength = readUint16(view, offset + 32);
+    const localHeaderOffset = readUint32(view, offset + 42);
+    const fileNameBytes = bytes.slice(offset + 46, offset + 46 + fileNameLength);
+    const fileName = decodeZipFileName(fileNameBytes).replace(/\\/g, "/");
+
+    if (shouldReadEntry(fileName)) {
+      const localNameLength = readUint16(view, localHeaderOffset + 26);
+      const localExtraLength = readUint16(view, localHeaderOffset + 28);
+      const dataOffset = localHeaderOffset + 30 + localNameLength + localExtraLength;
+      const compressedData = bytes.slice(dataOffset, dataOffset + compressedSize);
+      let data;
+
+      if (method === 0) {
+        data = compressedData;
+      } else if (method === 8) {
+        data = await inflateZipEntry(compressedData);
+      } else {
+        data = new Uint8Array();
+      }
+
+      entries.push({
+        fileName,
+        text: new TextDecoder("utf-8", { fatal: false }).decode(data)
+      });
+    }
+
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+function decodeXmlEntities(text) {
+  return String(text || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, value) => String.fromCharCode(Number(value)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, value) => String.fromCharCode(parseInt(value, 16)));
+}
+
+function extractTextFromXml(xml) {
+  return normalizeResumeText(
+    decodeXmlEntities(xml)
+      .replace(/<[^>]*(?:p|paragraph|sectPr|br|tab)[^>]*\/>/gi, "\n")
+      .replace(/<\/(?:w:p|hp:p|p|text:p|a:p)>/gi, "\n")
+      .replace(/<[^>]*>/g, " ")
+  );
+}
+
+async function extractTextFromDocx(buffer) {
+  const entries = await readZipEntries(buffer, (fileName) =>
+    /^word\/(?:document|header\d*|footer\d*)\.xml$/i.test(fileName)
+  );
+
+  return entries.map((entry) => extractTextFromXml(entry.text)).join("\n");
+}
+
+async function extractTextFromHwpx(buffer) {
+  const entries = await readZipEntries(buffer, (fileName) =>
+    /^Contents\/.*\.xml$/i.test(fileName) || /^Preview\/.*\.xml$/i.test(fileName)
+  );
+
+  return entries.map((entry) => extractTextFromXml(entry.text)).join("\n");
+}
+
+function unescapePdfLiteral(value) {
+  return value
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\\(/g, "(")
+    .replace(/\\\)/g, ")")
+    .replace(/\\\\/g, "\\");
+}
+
+function extractTextFromSimplePdf(buffer) {
+  const text = new TextDecoder("iso-8859-1", { fatal: false }).decode(buffer);
+  const literalText = [...text.matchAll(/\((?:\\.|[^\\()]){2,}\)\s*Tj/g)]
+    .map((match) => unescapePdfLiteral(match[0].replace(/\)\s*Tj$/, "").slice(1)))
+    .join("\n");
+  const arrayText = [...text.matchAll(/\[(.*?)\]\s*TJ/gs)]
+    .flatMap((match) => [...match[1].matchAll(/\((?:\\.|[^\\()]){2,}\)/g)].map((item) => unescapePdfLiteral(item[0].slice(1, -1))))
+    .join(" ");
+
+  return normalizeResumeText([literalText, arrayText].filter(Boolean).join("\n"));
+}
+
+async function loadPdfJs() {
+  if (!pdfJsLoader) {
+    pdfJsLoader = import(PDFJS_DIST_URL).then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      return pdfjs;
+    });
+  }
+
+  return pdfJsLoader;
+}
+
+async function extractTextFromPdf(buffer) {
+  try {
+    const pdfjs = await loadPdfJs();
+    const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer), useWorkerFetch: true });
+    const pdf = await loadingTask.promise;
+    const pages = [];
+
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(content.items.map((item) => item.str).join(" "));
+    }
+
+    return normalizeResumeText(pages.join("\n"));
+  } catch (error) {
+    console.warn("PDF.js extraction failed. Trying a simple PDF text fallback.", error);
+    return extractTextFromSimplePdf(buffer);
+  }
+}
+
+function extractReadableTextFromBytes(buffer) {
+  return decodeBufferWithBestEncoding(buffer).text;
 }
 
 async function readResumeText(file) {
   if (!file) {
-    return "";
-  }
-
-  if (/text|json|csv|markdown/.test(file.type) || /\.(txt|md|csv)$/i.test(file.name)) {
-    return normalizeResumeText(await file.text());
+    return ensureReadableResumeText("", { fileType: "unknown", extractionMethod: "empty" });
   }
 
   const buffer = await file.arrayBuffer();
-  return normalizeResumeText(extractReadableTextFromBytes(buffer));
+  const fileType = detectResumeFileType(file, buffer);
+  let text = "";
+  let extractionMethod = fileType;
+
+  if (fileType === "text") {
+    const decoded = decodeBufferWithBestEncoding(buffer);
+    text = decoded.text;
+    extractionMethod = `text-${decoded.encoding}`;
+  } else if (fileType === "docx") {
+    text = await extractTextFromDocx(buffer);
+    extractionMethod = "docx-xml";
+  } else if (fileType === "hwpx") {
+    text = await extractTextFromHwpx(buffer);
+    extractionMethod = "hwpx-xml";
+  } else if (fileType === "pdf") {
+    text = await extractTextFromPdf(buffer);
+    extractionMethod = "pdf-text-layer";
+  } else if (fileType === "hwp" || fileType === "doc") {
+    throw createResumeParseError("이 파일 형식은 브라우저에서 안정적으로 읽기 어렵습니다. DOCX, HWPX 또는 텍스트 PDF로 변환해 업로드해주세요.");
+  } else {
+    throw createResumeParseError("지원하지 않는 이력서 파일 형식입니다. DOCX, HWPX, PDF, TXT 파일을 업로드해주세요.");
+  }
+
+  return ensureReadableResumeText(text, {
+    fileName: file.name,
+    fileType,
+    extractionMethod
+  });
 }
 
 function firstMatch(text, patterns) {
@@ -2165,10 +2504,73 @@ function firstMatch(text, patterns) {
   return "";
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanParsedValue(value) {
+  const cleaned = normalizeResumeText(value)
+    .replace(/^(?:이름|성명|Name|현재\s*회사|최근\s*회사|회사|근무처|지원\s*직무|희망직무|직무|포지션|학력|경력|기술|Skills)\s*[:：-]?\s*/i, "")
+    .replace(/\b(?:endobj|xref|stream|endstream|obj|\/Font|\/Type|\/Length|\/Filter)\b/gi, " ")
+    .replace(/<\/?[A-Za-z][^>\n]{0,80}>/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (!cleaned || /%PDF|PK\u0003\u0004|\uFFFD/.test(cleaned)) {
+    return "";
+  }
+
+  return cleaned;
+}
+
+function labeledValueFromLine(line, labels) {
+  const pattern = new RegExp(`^(?:${labels.map(escapeRegExp).join("|")})(?:\\s*[:：-]|\\s+)\\s*(.+)$`, "i");
+  const match = cleanParsedValue(line).match(pattern) || line.match(pattern);
+
+  return cleanParsedValue(match?.[1] || "");
+}
+
+function findLabeledValue(lines, labels) {
+  for (const line of lines) {
+    const value = labeledValueFromLine(line, labels);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function splitResumeParts(line) {
+  return cleanParsedValue(line)
+    .split(/[,|;\t]/)
+    .map((part) => cleanParsedValue(part))
+    .filter(Boolean);
+}
+
+function normalizeDatePart(year, month = "0") {
+  const normalizedYear = String(year || "").trim();
+  const normalizedMonth = String(month || "0").trim();
+
+  if (!normalizedYear) {
+    return "";
+  }
+
+  if (normalizedMonth === "0" || !normalizedMonth) {
+    return normalizedYear;
+  }
+
+  return `${normalizedYear}-${normalizedMonth.padStart(2, "0")}`;
+}
+
 function extractPeriodValues(line) {
-  const current = /현재|재직|present/i.test(line);
-  const matches = [...line.matchAll(/(\d{4}|0)(?:[-./년\s]+(\d{1,2}|0))?/g)]
-    .map((match) => `${match[1]}-${match[2] || "0"}`);
+  const current = /현재|재직|재직중|present|current|ongoing/i.test(line);
+  const normalizedLine = String(line || "")
+    .replace(/(\d{4}|0)\s*년\s*(\d{1,2}|0)?\s*월?/g, (_, year, month) => `${year}-${month || "0"}`)
+    .replace(/(\d{4}|0)\s*[.\/]\s*(\d{1,2}|0)/g, "$1-$2");
+  const matches = [...normalizedLine.matchAll(/(\d{4}|0)(?:\s*[-]\s*(\d{1,2}|0))?/g)]
+    .map((match) => normalizeDatePart(match[1], match[2] || "0"));
 
   return {
     start: matches[0] || "",
@@ -2177,55 +2579,66 @@ function extractPeriodValues(line) {
 }
 
 function parseEducationLine(line) {
-  const degree = firstMatch(line, [/(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i]);
-  const school = firstMatch(line, [/([가-힣A-Za-z0-9\s]+(?:대학교|대학원|University|College|Institute|KAIST|POSTECH))/i]);
-  const major = firstMatch(line, [
+  const body = cleanParsedValue(line).replace(/^(?:학력|Education)[:：\s-]*/i, "");
+  const parts = splitResumeParts(body);
+  const degree = cleanParsedValue(parts.find((part) => /(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i.test(part)) ||
+    firstMatch(body, [/(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i]));
+  const school = cleanParsedValue(parts.find((part) => /(대학교|대학원|University|College|Institute|KAIST|POSTECH)/i.test(part)) ||
+    firstMatch(body, [/([가-힣A-Za-z0-9\s]+(?:대학교|대학원|University|College|Institute|KAIST|POSTECH))/i]));
+  const major = cleanParsedValue(labeledValueFromLine(body, ["전공", "Major"]) || parts.find((part) =>
+    !part.includes(degree) &&
+    !part.includes(school) &&
+    !extractPeriodValues(part).start &&
+    /(공학|학과|전공|Science|Engineering|Management|Business|AI|SW|컴퓨터|전자|기계|산업)/i.test(part)
+  ) || firstMatch(body, [
     /전공[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
     /([가-힣A-Za-z0-9\s]+(?:공학|학과|전공|Science|Engineering|Management|Business))/i
-  ]);
-  const period = extractPeriodValues(line);
+  ]));
+  const period = extractPeriodValues(body);
 
   return { degree, school, major, ...period };
 }
 
 function parseCareerLine(line) {
   const period = extractPeriodValues(line);
-  const body = line.replace(/^(?:경력|Career|Experience|Work Experience)[:\s]*/i, "").trim();
-  const parts = body.split(/[,|\t]/).map((part) => part.trim()).filter(Boolean);
+  const body = cleanParsedValue(line).replace(/^(?:경력|Career|Experience|Work Experience)[:：\s-]*/i, "");
+  const parts = splitResumeParts(body);
+  const structuredCareerLine = parts.length >= 4 &&
+    (line.includes("경력") || /Career|Experience/i.test(line) || period.start || parts.some((part) => /(사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager)/i.test(part)));
 
-  if (parts.length >= 4 && (line.includes("경력") || /Career|Experience/i.test(line))) {
+  if (structuredCareerLine) {
     const periodIndex = parts.findIndex((part) => extractPeriodValues(part).start || extractPeriodValues(part).end);
     const achievementStart = periodIndex >= 0 ? periodIndex + 1 : 4;
 
     return {
-      country: parts[0] || "",
-      company: parts[1] || "",
-      rank: parts[2] || "",
-      position: parts[3] || "",
+      country: cleanParsedValue(parts[0]),
+      company: cleanParsedValue(parts[1]),
+      rank: cleanParsedValue(parts[2]),
+      position: cleanParsedValue(parts[3]),
       start: period.start,
       end: period.end,
-      achievements: parts.slice(achievementStart).join(", ")
+      achievements: cleanParsedValue(parts.slice(achievementStart).join(", "))
     };
   }
 
-  const company = firstMatch(line, [
+  const company = cleanParsedValue(labeledValueFromLine(body, ["회사", "직장", "근무처", "Company"]) || firstMatch(body, [
     /(?:회사|직장|근무처)[:\s]+([가-힣A-Za-z0-9\s.&+-]+)/,
     /([가-힣A-Za-z0-9\s.&+-]+(?:전자|반도체|리서치|Research|Cloud|Mobis|hynix|ASML|Samsung|Naver|LG|SK|Inc\.?|Corp\.?|Korea))/i
-  ]);
-  const position = firstMatch(line, [
+  ]));
+  const position = cleanParsedValue(labeledValueFromLine(body, ["직책", "담당", "포지션", "Position"]) || firstMatch(body, [
     /(?:직책|담당|포지션)[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
     /([가-힣A-Za-z0-9\s]+(?:엔지니어|개발자|리서처|아키텍트|컨설턴트|분석|리드|Engineer|Researcher|Architect|Developer))/i
-  ]);
-  const rank = firstMatch(line, [/(사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager)/i]);
+  ]));
+  const rank = cleanParsedValue(firstMatch(body, [/(사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager)/i]));
 
   return {
-    country: line.includes("미국") || /USA|United States/i.test(line) ? "미국" : "",
+    country: body.includes("미국") || /USA|United States/i.test(body) ? "미국" : body.includes("대한민국") ? "대한민국" : "",
     company,
     rank,
     position,
     start: period.start,
     end: period.end,
-    achievements: line.length > 30 ? line : ""
+    achievements: body.length > 30 ? body : ""
   };
 }
 
@@ -2251,9 +2664,15 @@ function inferSkills(text) {
 
 function parseResumeText(text, filename = "") {
   const normalized = normalizeResumeText(text);
-  const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = normalized
+    .split("\n")
+    .map((line) => cleanParsedValue(line))
+    .filter((line) => line && !/^(이력서|자기소개서|경력기술서)$/i.test(line));
   const compact = lines.join("\n");
-  const educationLines = lines.filter((line) => /(대학교|대학원|University|College|KAIST|POSTECH|학사|석사|박사|전공)/i.test(line));
+  const educationLines = lines.filter((line) =>
+    /(학력|Education|대학교|대학원|University|College|KAIST|POSTECH|학사|석사|박사|전공)/i.test(line) &&
+    !/(경력|Experience|회사|근무|재직)/i.test(line)
+  );
   const careerLines = lines.filter((line) => {
     const hasCareerContext = /(경력|재직|근무|직장|Experience|Career|Work)/i.test(line);
     const hasPeriodAndCompany = !!extractPeriodValues(line).start &&
@@ -2266,14 +2685,18 @@ function parseResumeText(text, filename = "") {
   const education = educationLines.map(parseEducationLine).filter(hasAnyRecordValue).slice(0, 5);
   const career = careerLines.map(parseCareerLine).filter(hasAnyRecordValue).slice(0, 6);
   const skills = inferSkills(compact);
-  const name = firstMatch(compact, [/이름[:\s]+([가-힣A-Za-z ]{2,30})/, /Name[:\s]+([A-Za-z ]{2,40})/]) ||
-    lines.find((line) => /^[가-힣]{2,5}$|^[A-Z][a-z]+ [A-Z][a-z]+$/.test(line)) || "";
-  const role = firstMatch(compact, [
-    /(?:희망직무|지원분야|직무|포지션)[:\s]+([^\n]+)/,
+  const name = findLabeledValue(lines, ["이름", "성명", "Name"]) ||
+    cleanParsedValue(lines.find((line) => (/^[가-힣]{2,5}$|^[A-Z][a-z]+ [A-Z][a-z]+$/.test(line)) && !/(이력서|자기소개|경력)/.test(line)) || "");
+  const role = cleanParsedValue(findLabeledValue(lines, ["희망직무", "지원분야", "지원 직무", "직무", "포지션", "Position"]) || firstMatch(compact, [
     /([가-힣A-Za-z0-9 /·&+-]+(?:엔지니어|개발자|리서처|아키텍트|분석가|Engineer|Developer|Researcher|Architect))/
-  ]);
-  const company = career[0]?.company || firstMatch(compact, [/(?:회사|직장|근무처)[:\s]+([^\n]+)/]);
-  const summary = lines.find((line) => line.length >= 30 && !line.includes("@")) || `${filename}에서 자동 추출한 후보자 정보입니다.`;
+  ]));
+  const company = cleanParsedValue(findLabeledValue(lines, ["현재 회사", "최근 회사", "현재/최근 회사", "회사", "근무처", "Company"]) || career[0]?.company);
+  const summary = cleanParsedValue(lines.find((line) =>
+    line.length >= 30 &&
+    !line.includes("@") &&
+    !educationLines.includes(line) &&
+    !careerLines.includes(line)
+  ) || `${filename}에서 자동 추출한 후보자 정보입니다.`);
 
   return {
     name,
@@ -2286,22 +2709,54 @@ function parseResumeText(text, filename = "") {
   };
 }
 
-function setFieldValue(selector, value) {
+function hasParsedResumeValues(parsed) {
+  return Boolean(
+    parsed?.name ||
+    parsed?.company ||
+    parsed?.role ||
+    parsed?.skills?.length ||
+    parsed?.education?.some(hasAnyRecordValue) ||
+    parsed?.career?.some(hasAnyRecordValue)
+  );
+}
+
+function registerFormHasEnteredValues() {
+  const fields = ["#candidate-name", "#candidate-company", "#candidate-role", "#candidate-skills", "#candidate-summary", "#candidate-owner"];
+  const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
+  const hasEducationValue = collectRegisterEducationFromForm($("#register-form"), true).some(hasAnyRecordValue);
+  const hasCareerValue = collectRegisterCareerFromForm($("#register-form"), true).some(hasAnyRecordValue);
+
+  return hasBasicValue || hasEducationValue || hasCareerValue;
+}
+
+function setFieldValue(selector, value, overwrite = true) {
   const field = $(selector);
 
-  if (field && value) {
+  if (field && value && (overwrite || !field.value.trim())) {
     field.value = value;
   }
 }
 
-function applyParsedResumeToRegisterForm(parsed) {
-  setFieldValue("#candidate-name", parsed.name);
-  setFieldValue("#candidate-company", parsed.company);
-  setFieldValue("#candidate-role", parsed.role);
-  setFieldValue("#candidate-skills", parsed.skills.join(", "));
-  setFieldValue("#candidate-summary", parsed.summary);
-  setRegisterEducationRecords(parsed.education);
-  setRegisterCareerRecords(parsed.career);
+function applyParsedResumeToRegisterForm(parsed, options = {}) {
+  const overwrite = options.overwrite !== false;
+  const education = (parsed.education || []).filter(hasAnyRecordValue);
+  const career = (parsed.career || []).filter(hasAnyRecordValue);
+  const currentEducationIsBlank = !collectRegisterEducationFromForm($("#register-form"), true).some(hasAnyRecordValue);
+  const currentCareerIsBlank = !collectRegisterCareerFromForm($("#register-form"), true).some(hasAnyRecordValue);
+
+  setFieldValue("#candidate-name", parsed.name, overwrite);
+  setFieldValue("#candidate-company", parsed.company, overwrite);
+  setFieldValue("#candidate-role", parsed.role, overwrite);
+  setFieldValue("#candidate-skills", parsed.skills.join(", "), overwrite);
+  setFieldValue("#candidate-summary", parsed.summary, overwrite);
+
+  if (education.length && (overwrite || currentEducationIsBlank)) {
+    setRegisterEducationRecords(education);
+  }
+
+  if (career.length && (overwrite || currentCareerIsBlank)) {
+    setRegisterCareerRecords(career);
+  }
 }
 
 async function parseResumeIntoRegisterForm(file) {
@@ -2312,9 +2767,9 @@ async function parseResumeIntoRegisterForm(file) {
   }
 
   try {
-    const text = await readResumeText(file);
+    const result = await readResumeText(file);
 
-    if (!text || text.length < 20) {
+    if (!result.text || result.text.length < 20) {
       if (status) {
         status.textContent = "읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 수동 입력해주세요.";
       }
@@ -2322,11 +2777,25 @@ async function parseResumeIntoRegisterForm(file) {
       return;
     }
 
-    const parsed = parseResumeText(text, file.name);
-    applyParsedResumeToRegisterForm(parsed);
+    const parsed = parseResumeText(result.text, file.name);
+
+    if (!hasParsedResumeValues(parsed)) {
+      if (status) {
+        status.textContent = "이력서는 읽었지만 등록 필드에 매핑할 수 있는 값이 부족합니다. 내용을 확인해 수동 입력해주세요.";
+      }
+      showToast("매핑 가능한 이력서 정보를 찾지 못했습니다.");
+      return;
+    }
+
+    const overwrite = registerFormHasEnteredValues()
+      ? window.confirm("현재 입력값을 이력서에서 읽은 정보로 덮어쓸까요?")
+      : true;
+
+    applyParsedResumeToRegisterForm(parsed, { overwrite });
 
     if (status) {
-      status.textContent = "이력서에서 읽은 정보를 입력했습니다. 실제 이력서와 비교 후 등록해주세요.";
+      const quality = result.meta?.textQuality ? ` 텍스트 품질 ${Math.round(result.meta.textQuality)}점.` : "";
+      status.textContent = `이력서에서 읽은 정보를 입력했습니다.${quality} 실제 이력서와 비교 후 등록해주세요.`;
     }
 
     showToast("이력서 정보를 입력란에 자동 반영했습니다.");
@@ -2334,10 +2803,12 @@ async function parseResumeIntoRegisterForm(file) {
     console.warn("Resume parsing failed.", error);
 
     if (status) {
-      status.textContent = "이력서 파일을 읽지 못했습니다. 파일 형식을 확인해주세요.";
+      status.textContent = error.isResumeParseError
+        ? error.message
+        : "이력서 파일을 읽지 못했습니다. 파일 형식을 확인해주세요.";
     }
 
-    showToast("이력서 파일을 읽지 못했습니다.");
+    showToast(error.isResumeParseError ? "이력서 텍스트 추출이 중단되었습니다." : "이력서 파일을 읽지 못했습니다.");
   }
 }
 
