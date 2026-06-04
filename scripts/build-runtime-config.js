@@ -39,7 +39,7 @@ const contents = `window.__APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`
 fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(distDir, { recursive: true });
 
-["index.html", "styles.css", "app.js"].forEach((fileName) => {
+["index.html", "styles.css", "talent-pool.js"].forEach((fileName) => {
   fs.copyFileSync(path.join(rootDir, fileName), path.join(distDir, fileName));
 });
 

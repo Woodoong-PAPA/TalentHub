@@ -13,6 +13,7 @@ Completed locally:
 - Added GitHub Actions deployment workflow: `.github/workflows/vercel-deploy.yml`
 - Added environment variable template: `.env.example`
 - Updated app runtime to use Supabase when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured
+- Uses `talent-pool.js` as the browser script so Vercel does not mistake the UI script for a Node entrypoint
 - Kept local fallback through `localStorage` when Supabase is not configured
 
 Blocked in this local environment:
