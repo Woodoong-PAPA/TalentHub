@@ -123,6 +123,7 @@ Option A: Vercel Dashboard
 2. Framework Preset: Other.
 3. Build Command: `npm run build`
 4. Output Directory: `dist`
+5. The repository `vercel.json` explicitly uses `@vercel/static-build` so Vercel deploys this as a static app, not a Node function.
 5. Add environment variables:
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`
