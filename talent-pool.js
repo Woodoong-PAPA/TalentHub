@@ -2744,9 +2744,9 @@ function formatTrendingCareer(item) {
     ? "현재"
     : formatShortYear(item.end || item.endYear);
   const period = periodStart || periodEnd ? `(${periodStart || ""}~${periodEnd || ""})` : "";
-  const rankTitle = [...new Set([item.rank, item.title || item.position].filter(Boolean))].join("/");
+  const rankTitle = formatCareerRoleParts(item.rank, item.title || item.position, item.department || item.organization || item.org || item.team || item.division || "");
   const department = item.department || item.organization || item.org || item.team || item.division || "";
-  const details = [item.company, rankTitle, department].filter(Boolean).join(", ");
+  const details = [item.company, rankTitle, roleContainsDepartment(rankTitle, department) ? "" : department].filter(Boolean).join(", ");
   const careerText = [details, period].filter(Boolean).join(" ");
 
   if (country) {
@@ -2754,6 +2754,49 @@ function formatTrendingCareer(item) {
   }
 
   return careerText;
+}
+
+function normalizeCareerToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s·,./()\-_/]+/g, "");
+}
+
+function roleContainsDepartment(roleText, department) {
+  const role = normalizeCareerToken(roleText);
+  const dept = normalizeCareerToken(department);
+  return Boolean(role && dept && role.includes(dept));
+}
+
+function appendDistinctCareerPart(parts, value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return;
+  }
+
+  const comparable = normalizeCareerToken(text);
+  const duplicateIndex = parts.findIndex((part) => {
+    const existing = normalizeCareerToken(part);
+    return existing === comparable || existing.includes(comparable) || comparable.includes(existing);
+  });
+
+  if (duplicateIndex === -1) {
+    parts.push(text);
+    return;
+  }
+
+  if (comparable.length > normalizeCareerToken(parts[duplicateIndex]).length) {
+    parts[duplicateIndex] = text;
+  }
+}
+
+function formatCareerRoleParts(rank, title, department) {
+  const parts = [];
+  appendDistinctCareerPart(parts, rank);
+  appendDistinctCareerPart(parts, title);
+  appendDistinctCareerPart(parts, department && parts.some((part) => roleContainsDepartment(part, department)) ? "" : department);
+  return parts.join(", ");
 }
 
 function renderDashList(items) {
@@ -2777,20 +2820,67 @@ function renderNewsLinks(reason) {
     <div class="news-link-row">
       ${links.map((link) => `
         <a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
-          ${escapeHtml(link.source || "기사")} ${link.title ? `· ${escapeHtml(link.title)}` : ""}
+          ${escapeHtml(formatNewsLinkLabel(link))}
         </a>
       `).join("")}
     </div>
   `;
 }
 
+function cleanNewsTitle(title, source = "") {
+  let text = String(title || "").trim();
+  const sourceText = String(source || "").trim();
+
+  if (sourceText) {
+    const escapedSource = sourceText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    text = text
+      .replace(new RegExp(`\\s*[-·|]\\s*${escapedSource}\\s*$`, "i"), "")
+      .replace(new RegExp(`^${escapedSource}\\s*[-·|]\\s*`, "i"), "")
+      .replace(new RegExp(`\\s+${escapedSource}\\s*$`, "i"), "");
+  }
+
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function formatNewsLinkLabel(link) {
+  const source = String(link.source || "기사").trim();
+  const title = cleanNewsTitle(link.title || link.url, source);
+  return `[${source}] ${title}`;
+}
+
+function cleanArticleSummary(value, source = "") {
+  return cleanNewsTitle(value, source)
+    .replace(/^근거\s*기사\s*핵심\s*[:：]?\s*/i, "")
+    .replace(/^\[[^\]]+\]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function fallbackReasonFromLink(link) {
+  if (!link) {
+    return "";
+  }
+
+  const snippet = cleanArticleSummary(link.snippet || link.description || "", link.source);
+
+  if (snippet) {
+    return snippet.length > 120 ? `${snippet.slice(0, 117).trim()}...` : snippet;
+  }
+
+  return cleanArticleSummary(link.title || "", link.source);
+}
+
 function normalizeReasonText(value) {
   return String(value || "")
     .replace(/^[-\s]+/, "")
+    .replace(/^근거\s*기사\s*핵심\s*[:：]?\s*/i, "")
     .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야에서\s*(?:주목받음|중요 인물로 부각|주요 인물로 부각)\.?/gi, "")
     .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야\s*관련성이\s*(?:높음|확인됨)\.?/gi, "")
     .replace(/전일\s*(?:DX|디엑스)\s*관심\s*분야\s*뉴스\s*흐름에서\s*주요\s*인물로\s*분류\.?/g, "")
+    .replace(/(논의|추진|확대|강화|모색|협의|발표|공개|참여|계획)(?:하며|하고)\.?$/g, "$1")
+    .replace(/(?:하며|하면서|하고)\.?$/g, "")
     .replace(/\s+/g, " ")
+    .replace(/[.。]$/, "")
     .trim();
 }
 
@@ -2811,7 +2901,7 @@ function splitReasonSentences(value) {
 
 function asDisplaySentence(value) {
   const text = normalizeReasonText(value);
-  return text && !/[.!?。！？]$/.test(text) ? `${text}.` : text;
+  return text;
 }
 
 function trendingReasonLines(reasons) {
@@ -2823,7 +2913,18 @@ function trendingReasonLines(reasons) {
     .slice(0, 1);
 
   (reasons || []).forEach((reason) => {
-    splitReasonSentences(typeof reason === "object" ? reason.text : reason).forEach((line) => {
+    const rawText = typeof reason === "object" ? reason.text : reason;
+    const link = typeof reason === "object" ? (reason.links || []).find((item) => item.url) : null;
+    const cleanedRaw = normalizeReasonText(rawText);
+    const cleanedTitle = normalizeReasonText(cleanNewsTitle(link?.title || "", link?.source || ""));
+    const displayText = (
+      /^근거\s*기사\s*핵심\s*[:：]?/i.test(String(rawText || "")) ||
+      (cleanedTitle && cleanedRaw === cleanedTitle && (link?.snippet || link?.description))
+    )
+      ? fallbackReasonFromLink(link) || rawText
+      : rawText;
+
+    splitReasonSentences(displayText).forEach((line) => {
       if (line && !lines.includes(line)) {
         lines.push(asDisplaySentence(line));
       }
@@ -2833,12 +2934,14 @@ function trendingReasonLines(reasons) {
   const link = links[0];
 
   if (!lines.length && link?.title) {
-    lines.push(asDisplaySentence(`근거 기사 핵심: ${link.title}`));
+    lines.push(asDisplaySentence(fallbackReasonFromLink(link)));
   }
 
   if (lines.length === 1) {
-    if (link?.title) {
-      lines.push(asDisplaySentence(`근거 기사 핵심: ${link.title}`));
+    const fallback = fallbackReasonFromLink(link);
+
+    if (fallback && fallback !== lines[0]) {
+      lines.push(asDisplaySentence(fallback));
     }
   }
 
@@ -3047,7 +3150,7 @@ function trendingPersonCard(person) {
   const rank = person.rank || "";
   const photo = person.profileImageUrl
     ? `<img class="trending-photo" src="${escapeHtml(person.profileImageUrl)}" alt="${escapeHtml(person.name || "화제 인물")} 프로필 사진" loading="lazy" referrerpolicy="no-referrer" />`
-    : `<div class="trending-rank">${rank}</div>`;
+    : `<div class="trending-photo-placeholder" aria-hidden="true">${escapeHtml(String(person.name || "?").slice(0, 1))}</div>`;
   const alreadyRegistered = state.candidates.some((candidate) =>
     candidate.name === person.name &&
     (!person.currentOrg || candidate.company === person.currentOrg)
@@ -3057,13 +3160,15 @@ function trendingPersonCard(person) {
     <article class="trending-card">
       <div class="trending-media" data-trending-rank="${escapeHtml(rank)}">
         ${photo}
-        ${person.profileImageUrl ? `<span class="trending-rank-badge">${rank}</span>` : ""}
       </div>
       <div class="trending-profile">
         <div class="trending-card-header">
-          <div>
-            <h4>${escapeHtml(person.name || "-")}</h4>
-            <p>${escapeHtml([person.birthYear ? `${person.birthYear}년생` : "", person.currentOrg, person.currentTitle].filter(Boolean).join(" · "))}</p>
+          <div class="trending-title-row">
+            <span class="trending-title-rank">${escapeHtml(rank)}</span>
+            <div>
+              <h4>${escapeHtml(person.name || "-")}</h4>
+              <p>${escapeHtml([person.birthYear ? `${person.birthYear}년생` : "", person.currentOrg, person.currentTitle].filter(Boolean).join(" · "))}</p>
+            </div>
           </div>
           <div class="trending-actions">
             ${person.linkedinUrl ? `<a class="soft-button compact-button" href="${escapeHtml(person.linkedinUrl)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}
@@ -6400,11 +6505,9 @@ function bindEvents() {
       return;
     }
 
-    const media = event.target.closest(".trending-media");
-    const rank = media?.dataset.trendingRank || "";
     const fallback = document.createElement("div");
-    fallback.className = "trending-rank";
-    fallback.textContent = rank;
+    fallback.className = "trending-photo-placeholder";
+    fallback.textContent = "사진";
     event.target.replaceWith(fallback);
   }, true);
 

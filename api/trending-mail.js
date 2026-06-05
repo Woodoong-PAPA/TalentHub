@@ -366,10 +366,53 @@ function formatCareer(item) {
     ? "현재"
     : formatShortYear(item.end || item.endYear);
   const period = periodStart || periodEnd ? `(${periodStart || ""}~${periodEnd || ""})` : "";
-  const rankTitle = [...new Set([item.rank, item.title || item.position].filter(Boolean))].join("/");
+  const rankTitle = formatCareerRoleParts(item.rank, item.title || item.position, item.department || item.organization || item.org || item.team || item.division || "");
   const department = item.department || item.organization || item.org || item.team || item.division || "";
-  const body = [[item.company, rankTitle, department].filter(Boolean).join(", "), period].filter(Boolean).join(" ");
+  const body = [[item.company, rankTitle, roleContainsDepartment(rankTitle, department) ? "" : department].filter(Boolean).join(", "), period].filter(Boolean).join(" ");
   return `${country ? `${country}) ` : ""}${body}`.trim();
+}
+
+function normalizeCareerToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s·,./()\-_/]+/g, "");
+}
+
+function roleContainsDepartment(roleText, department) {
+  const role = normalizeCareerToken(roleText);
+  const dept = normalizeCareerToken(department);
+  return Boolean(role && dept && role.includes(dept));
+}
+
+function appendDistinctCareerPart(parts, value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return;
+  }
+
+  const comparable = normalizeCareerToken(text);
+  const duplicateIndex = parts.findIndex((part) => {
+    const existing = normalizeCareerToken(part);
+    return existing === comparable || existing.includes(comparable) || comparable.includes(existing);
+  });
+
+  if (duplicateIndex === -1) {
+    parts.push(text);
+    return;
+  }
+
+  if (comparable.length > normalizeCareerToken(parts[duplicateIndex]).length) {
+    parts[duplicateIndex] = text;
+  }
+}
+
+function formatCareerRoleParts(rank, title, department) {
+  const parts = [];
+  appendDistinctCareerPart(parts, rank);
+  appendDistinctCareerPart(parts, title);
+  appendDistinctCareerPart(parts, department && parts.some((part) => roleContainsDepartment(part, department)) ? "" : department);
+  return parts.join(", ");
 }
 
 function listItems(items) {
@@ -379,10 +422,35 @@ function listItems(items) {
 function normalizeReasonText(value) {
   return String(value || "")
     .replace(/^[-\s]+/, "")
+    .replace(/^근거\s*기사\s*핵심\s*[:：]?\s*/i, "")
     .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야에서\s*(?:주목받음|중요 인물로 부각|주요 인물로 부각)\.?/gi, "")
     .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야\s*관련성이\s*(?:높음|확인됨)\.?/gi, "")
+    .replace(/(논의|추진|확대|강화|모색|협의|발표|공개|참여|계획)(?:하며|하고)\.?$/g, "$1")
+    .replace(/(?:하며|하면서|하고)\.?$/g, "")
     .replace(/\s+/g, " ")
+    .replace(/[.。]$/, "")
     .trim();
+}
+
+function cleanNewsTitle(title, source = "") {
+  let text = String(title || "").trim();
+  const sourceText = String(source || "").trim();
+
+  if (sourceText) {
+    const escapedSource = sourceText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    text = text
+      .replace(new RegExp(`\\s*[-·|]\\s*${escapedSource}\\s*$`, "i"), "")
+      .replace(new RegExp(`^${escapedSource}\\s*[-·|]\\s*`, "i"), "")
+      .replace(new RegExp(`\\s+${escapedSource}\\s*$`, "i"), "");
+  }
+
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function formatNewsLinkLabel(link) {
+  const source = String(link.source || "기사").trim();
+  const title = cleanNewsTitle(link.title || link.url, source);
+  return `[${source}] ${title}`;
 }
 
 function buildReportText(report) {
@@ -410,7 +478,7 @@ function renderSourceLinks(reason) {
     return "";
   }
 
-  return `<div>${links.map((link) => `<a href="${escapeHtml(link.url)}">${escapeHtml(link.source || "기사")} · ${escapeHtml(link.title || link.url)}</a>`).join("<br>")}</div>`;
+  return `<div>${links.map((link) => `<a href="${escapeHtml(link.url)}">${escapeHtml(formatNewsLinkLabel(link))}</a>`).join("<br>")}</div>`;
 }
 
 function buildReportHtml(report) {

@@ -933,8 +933,9 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
     "경력 department에는 확인 가능한 소속부서, 연구실, 조직명, 사업부, 팀명을 쓴다. 없으면 빈 문자열.",
     "핵심 성과/실적과 선정 사유는 보고서 문장처럼 짧게 끊고, '~했습니다' 같은 종결 문장을 쓰지 않는다.",
     "selectionReasons는 인물별 정확히 2개만 작성한다.",
-    "selectionReasons[0].text는 해당 인물이 Top5로 선정된 직접 사유만 한 문장으로 작성한다.",
-    "selectionReasons[1].text는 가장 중요한 근거 기사 1개의 핵심 내용을 요약한 문장으로 작성한다.",
+    "selectionReasons[0].text는 해당 인물이 Top5로 선정된 직접 사유만 한 문장으로 작성하고, '하며', '하고' 같은 연결형 어미로 끝내지 않는다. 예: '엔씨·크래프톤과 AI 협력 논의'.",
+    "selectionReasons[1].text는 가장 중요한 근거 기사 1개의 title과 snippet을 함께 읽고 기사 본문 취지를 요약한 문장으로 작성한다.",
+    "selectionReasons[1].text에는 '근거 기사 핵심' 같은 안내 문구를 쓰지 않고, 기사 제목을 그대로 복사하지 않는다.",
     "'DX 분야에서 주목받음', 'DX 사업분야에서 중요 인물로 부각'처럼 범용적이고 당연한 부연 설명은 쓰지 않는다.",
     "두 selectionReason의 articleIds에는 동일한 핵심 근거 기사 id 1개만 포함한다.",
     "",
@@ -1055,6 +1056,7 @@ function normalizePerson(person, index, articleById) {
             .map((article) => ({
               title: article.title,
               source: article.source,
+              snippet: article.snippet,
               url: article.url
             }))
         };
