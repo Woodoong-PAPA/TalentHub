@@ -146,7 +146,8 @@ Trending people mailing uses:
 
 - `api/trending-mail.js` for settings, test sends, and cron sends.
 - Supabase tables `trending_mail_settings` and `trending_mail_events`.
-- Vercel Cron path `/api/trending-mail-cron`.
+- Vercel Cron path `/api/trending-mail-cron`; current Hobby-compatible schedule is daily `22:30 UTC` / `07:30 KST`.
+- Exact arbitrary-time delivery needs a scheduler that can call `/api/trending-mail-cron` more frequently than once per day.
 - Resend environment variables `RESEND_API_KEY` and `RESEND_FROM` for real email delivery.
 
 When adding new sample candidates, include education and career data so the detail profile stays complete.

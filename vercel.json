@@ -36,7 +36,7 @@
     },
     {
       "path": "/api/trending-mail-cron",
-      "schedule": "*/5 * * * *"
+      "schedule": "30 22 * * *"
     }
   ],
   "routes": [
