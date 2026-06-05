@@ -512,7 +512,9 @@ const state = {
   editSnapshot: null,
   screeningFolders: structuredClone(DEFAULT_SCREENING_FOLDERS),
   selectedScreeningFolderId: "screening-folder-001",
+  screeningPage: "list",
   screeningPositionModalOpen: false,
+  screeningApplicantModalOpen: false,
   poolReturnScrollY: 0,
   poolFilters: {
     query: "",
@@ -2247,12 +2249,19 @@ function setView(view) {
     view = getDefaultView();
   }
 
+  const previousView = state.view;
   state.view = view;
   if (view !== "trending") {
     state.trendingModal = "";
   }
   if (view !== "screening") {
     state.screeningPositionModalOpen = false;
+    state.screeningApplicantModalOpen = false;
+    state.screeningPage = "list";
+  } else if (previousView !== "screening") {
+    state.screeningPage = "list";
+    state.screeningPositionModalOpen = false;
+    state.screeningApplicantModalOpen = false;
   }
   if (view !== "detail" && state.isEditingCandidate) {
     discardCandidateEditDraft();
@@ -2976,61 +2985,75 @@ function renderFolderAccessEditor(folder) {
   `;
 }
 
-function renderApplicantRegistrationForm(folder) {
+function renderApplicantRegistrationModal(folder) {
+  if (!folder || !state.screeningApplicantModalOpen) {
+    return "";
+  }
+
   return `
-    <form id="screening-applicant-form" class="profile-panel">
-      <div class="panel-header">
-        <h4>지원자 등록</h4>
-        <span class="small-pill">서치펌 또는 채용담당자 직접 등록</span>
-      </div>
-      <div class="field-grid">
-        <input type="hidden" name="folderId" value="${escapeHtml(folder.id)}" />
-        <div class="field">
-          <label for="screening-applicant-name">이름</label>
-          <input class="control-input" id="screening-applicant-name" name="name" />
+    <div class="trending-modal-backdrop" data-screening-applicant-modal-backdrop>
+      <section class="trending-modal screening-applicant-modal" role="dialog" aria-modal="true" aria-labelledby="screening-applicant-modal-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="screening-applicant-modal-title">지원자 등록</strong>
+            <span>${escapeHtml(folder.title)} 포지션에 지원자 정보를 등록합니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-screening-applicant-modal>닫기</button>
         </div>
-        <div class="field">
-          <label for="screening-applicant-source">등록 경로</label>
-          <select class="control-select" id="screening-applicant-source" name="sourceType">
-            <option value="direct" ${isSearchFirmRole() ? "" : "selected"}>채용담당자 직접</option>
-            <option value="search_firm" ${isSearchFirmRole() ? "selected" : ""}>서치펌 등록</option>
-          </select>
+        <div class="trending-modal-body">
+          <form id="screening-applicant-form" class="screening-applicant-form">
+            <div class="field-grid">
+              <input type="hidden" name="folderId" value="${escapeHtml(folder.id)}" />
+              <div class="field">
+                <label for="screening-applicant-name">이름</label>
+                <input class="control-input" id="screening-applicant-name" name="name" />
+              </div>
+              <div class="field">
+                <label for="screening-applicant-source">등록 경로</label>
+                <select class="control-select" id="screening-applicant-source" name="sourceType">
+                  <option value="direct" ${isSearchFirmRole() ? "" : "selected"}>채용담당자 직접</option>
+                  <option value="search_firm" ${isSearchFirmRole() ? "selected" : ""}>서치펌 등록</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="screening-applicant-firm">서치펌 담당자</label>
+                <select class="control-select" id="screening-applicant-firm" name="searchFirmMemberId">
+                  ${activeSearchFirmOptions(isSearchFirmRole() ? getCurrentMember()?.id : "")}
+                </select>
+              </div>
+              <div class="field">
+                <label for="screening-applicant-company">현재/최근 회사</label>
+                <input class="control-input" id="screening-applicant-company" name="company" />
+              </div>
+              <div class="field">
+                <label for="screening-applicant-role">현재/최근 직무</label>
+                <input class="control-input" id="screening-applicant-role" name="currentRole" />
+              </div>
+              <div class="field">
+                <label for="screening-applicant-email">이메일</label>
+                <input class="control-input" id="screening-applicant-email" name="email" type="email" />
+              </div>
+              <div class="field">
+                <label for="screening-applicant-phone">휴대폰 번호</label>
+                <input class="control-input" id="screening-applicant-phone" name="phone" type="tel" />
+              </div>
+              <div class="field">
+                <label for="screening-applicant-resume">이력서 첨부</label>
+                <input class="control-input" id="screening-applicant-resume" name="resumeFile" type="file" />
+              </div>
+              <div class="field full">
+                <label for="screening-applicant-summary">지원자 핵심 경력/역량</label>
+                <textarea class="control-textarea" id="screening-applicant-summary" name="summary" rows="4"></textarea>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-close-screening-applicant-modal>취소</button>
+              <button class="primary-button" type="submit">저장</button>
+            </div>
+          </form>
         </div>
-        <div class="field">
-          <label for="screening-applicant-firm">서치펌 담당자</label>
-          <select class="control-select" id="screening-applicant-firm" name="searchFirmMemberId">
-            ${activeSearchFirmOptions(isSearchFirmRole() ? getCurrentMember()?.id : "")}
-          </select>
-        </div>
-        <div class="field">
-          <label for="screening-applicant-company">현재/최근 회사</label>
-          <input class="control-input" id="screening-applicant-company" name="company" />
-        </div>
-        <div class="field">
-          <label for="screening-applicant-role">현재/최근 직무</label>
-          <input class="control-input" id="screening-applicant-role" name="currentRole" />
-        </div>
-        <div class="field">
-          <label for="screening-applicant-email">이메일</label>
-          <input class="control-input" id="screening-applicant-email" name="email" type="email" />
-        </div>
-        <div class="field">
-          <label for="screening-applicant-phone">휴대폰 번호</label>
-          <input class="control-input" id="screening-applicant-phone" name="phone" type="tel" />
-        </div>
-        <div class="field">
-          <label for="screening-applicant-resume">이력서 첨부</label>
-          <input class="control-input" id="screening-applicant-resume" name="resumeFile" type="file" />
-        </div>
-        <div class="field full">
-          <label for="screening-applicant-summary">지원자 핵심 경력/역량</label>
-          <textarea class="control-textarea" id="screening-applicant-summary" name="summary" rows="4"></textarea>
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="primary-button" type="submit">지원자 등록</button>
-      </div>
-    </form>
+      </section>
+    </div>
   `;
 }
 
@@ -3210,10 +3233,16 @@ function renderScreeningFolderDetail(folder) {
           <p>${escapeHtml([folder.department, folder.positionName].filter(Boolean).join(" · ") || "채용 부서/포지션 미입력")}</p>
           ${folder.jdAttachment ? `<span class="small-pill">JD 첨부: ${escapeHtml(folder.jdAttachment.name)} (${formatFileSize(folder.jdAttachment.size)})</span>` : ""}
         </div>
-        <div class="screening-stage-summary">
-          <span>1차 합격 <strong>${counts.first_pass + counts.second_draft + counts.second_pass + counts.contact_requested + counts.contact_ready + counts.interview_mail_sent}</strong></span>
-          <span>2차 통과 <strong>${counts.second_pass + counts.contact_requested + counts.contact_ready + counts.interview_mail_sent}</strong></span>
-          <span>메일 발송 <strong>${counts.interview_mail_sent}</strong></span>
+        <div class="screening-folder-side">
+          <div class="panel-actions">
+            <button class="ghost-button compact-button" type="button" data-back-screening-list>포지션 리스트</button>
+            <button class="primary-button compact-button" type="button" data-open-screening-applicant-modal>지원자 등록</button>
+          </div>
+          <div class="screening-stage-summary">
+            <span>1차 합격 <strong>${counts.first_pass + counts.second_draft + counts.second_pass + counts.contact_requested + counts.contact_ready + counts.interview_mail_sent}</strong></span>
+            <span>2차 통과 <strong>${counts.second_pass + counts.contact_requested + counts.contact_ready + counts.interview_mail_sent}</strong></span>
+            <span>메일 발송 <strong>${counts.interview_mail_sent}</strong></span>
+          </div>
         </div>
       </section>
 
@@ -3226,7 +3255,6 @@ function renderScreeningFolderDetail(folder) {
       </section>
 
       ${renderFolderAccessEditor(folder)}
-      ${renderApplicantRegistrationForm(folder)}
 
       <section class="profile-panel">
         <div class="panel-header">
@@ -3256,21 +3284,32 @@ function renderScreening() {
     state.selectedScreeningFolderId = selectedFolder.id;
   }
 
+  if (state.screeningPage === "detail" && !selectedFolder) {
+    state.screeningPage = "list";
+  }
+
+  if (state.screeningPage === "detail") {
+    container.innerHTML = `
+      <div class="screening-detail-page">
+        ${renderScreeningFolderDetail(selectedFolder)}
+      </div>
+      ${renderApplicantRegistrationModal(selectedFolder)}
+    `;
+    return;
+  }
+
   container.innerHTML = `
-    <div class="screening-layout">
-      <aside class="screening-sidebar">
-        <section class="content-panel">
-          <div class="panel-header">
-            <h4>포지션 리스트</h4>
-            <div class="panel-actions">
-              <span class="small-pill">${folders.length}개</span>
-              ${canCreateScreeningFolder() ? `<button class="primary-button compact-button" type="button" data-open-screening-position-modal>포지션 생성</button>` : ""}
-            </div>
+    <div class="screening-list-page">
+      <section class="content-panel">
+        <div class="panel-header">
+          <h4>포지션 리스트</h4>
+          <div class="panel-actions">
+            <span class="small-pill">${folders.length}개</span>
+            ${canCreateScreeningFolder() ? `<button class="primary-button compact-button" type="button" data-open-screening-position-modal>포지션 생성</button>` : ""}
           </div>
-          ${renderScreeningFolderList(folders)}
-        </section>
-      </aside>
-      ${renderScreeningFolderDetail(selectedFolder)}
+        </div>
+        ${renderScreeningFolderList(folders)}
+      </section>
     </div>
     ${renderPositionCreateModal()}
   `;
@@ -7108,6 +7147,7 @@ async function registerScreeningApplicant(form) {
   folder.applicants.unshift(applicant);
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
+  state.screeningApplicantModalOpen = false;
   addAuditLog("Screening 지원자 등록", applicant.name, folder.title);
   persistState();
   showToast(`${applicant.name} 지원자를 등록했습니다.`);
@@ -7973,7 +8013,29 @@ function bindEvents() {
     const selectScreeningFolderButton = event.target.closest("[data-select-screening-folder]");
     if (selectScreeningFolderButton) {
       state.selectedScreeningFolderId = selectScreeningFolderButton.dataset.selectScreeningFolder;
+      state.screeningPage = "detail";
+      state.screeningPositionModalOpen = false;
+      state.screeningApplicantModalOpen = false;
       persistState();
+      renderScreening();
+      return;
+    }
+
+    if (event.target.closest("[data-back-screening-list]")) {
+      state.screeningPage = "list";
+      state.screeningApplicantModalOpen = false;
+      renderScreening();
+      return;
+    }
+
+    if (event.target.closest("[data-open-screening-applicant-modal]")) {
+      state.screeningApplicantModalOpen = true;
+      renderScreening();
+      return;
+    }
+
+    if (event.target.closest("[data-close-screening-applicant-modal]") || event.target.matches("[data-screening-applicant-modal-backdrop]")) {
+      state.screeningApplicantModalOpen = false;
       renderScreening();
       return;
     }
@@ -8151,6 +8213,11 @@ function bindEvents() {
 
     if (event.key === "Escape" && state.screeningPositionModalOpen) {
       state.screeningPositionModalOpen = false;
+      renderScreening();
+    }
+
+    if (event.key === "Escape" && state.screeningApplicantModalOpen) {
+      state.screeningApplicantModalOpen = false;
       renderScreening();
     }
 
