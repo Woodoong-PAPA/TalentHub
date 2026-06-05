@@ -2532,6 +2532,10 @@ function trendingPersonCard(person) {
   const career = (person.career || []).map(formatTrendingCareer).filter(Boolean);
   const achievements = Array.isArray(person.achievements) ? person.achievements : [];
   const reasons = Array.isArray(person.selectionReasons) ? person.selectionReasons : [];
+  const rank = person.rank || "";
+  const photo = person.profileImageUrl
+    ? `<img class="trending-photo" src="${escapeHtml(person.profileImageUrl)}" alt="${escapeHtml(person.name || "화제 인물")} 프로필 사진" loading="lazy" referrerpolicy="no-referrer" />`
+    : `<div class="trending-rank">${rank}</div>`;
   const alreadyRegistered = state.candidates.some((candidate) =>
     candidate.name === person.name &&
     (!person.currentOrg || candidate.company === person.currentOrg)
@@ -2539,7 +2543,10 @@ function trendingPersonCard(person) {
 
   return `
     <article class="trending-card">
-      <div class="trending-rank">${person.rank || ""}</div>
+      <div class="trending-media">
+        ${photo}
+        ${person.profileImageUrl ? `<span class="trending-rank-badge">${rank}</span>` : ""}
+      </div>
       <div class="trending-profile">
         <div class="trending-card-header">
           <div>
@@ -4795,6 +4802,7 @@ function registerTrendingPerson(identifier) {
     dataQuality: 82,
     parsingConfidence: 82,
     avatarColor: "#4e5968",
+    photoUrl: person.profileImageUrl || "",
     birthYear: person.birthYear || "",
     linkedinUrl: person.linkedinUrl || "",
     referenceUrl: (person.selectionReasons || [])

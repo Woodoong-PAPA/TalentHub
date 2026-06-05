@@ -22,6 +22,7 @@ const TRENDING_SCHEMA = {
           "achievements",
           "selectionReasons",
           "linkedinUrl",
+          "profileImageUrl",
           "topics",
           "mentionCount"
         ],
@@ -80,11 +81,80 @@ const TRENDING_SCHEMA = {
             }
           },
           linkedinUrl: { type: "string" },
+          profileImageUrl: { type: "string" },
           topics: {
             type: "array",
             items: { type: "string" }
           },
           mentionCount: { type: "number" }
+        }
+      }
+    }
+  }
+};
+
+const PROFILE_ENRICHMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["people"],
+  properties: {
+    people: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "name",
+          "birthYear",
+          "currentOrg",
+          "currentTitle",
+          "education",
+          "career",
+          "achievements",
+          "linkedinUrl",
+          "profileImageUrl"
+        ],
+        properties: {
+          name: { type: "string" },
+          birthYear: { type: "string" },
+          currentOrg: { type: "string" },
+          currentTitle: { type: "string" },
+          education: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["degree", "school", "major", "year"],
+              properties: {
+                degree: { type: "string", enum: ["", "박사", "석사", "학사", "박", "석", "학"] },
+                school: { type: "string" },
+                major: { type: "string" },
+                year: { type: "string" }
+              }
+            }
+          },
+          career: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["country", "company", "rank", "title", "start", "end"],
+              properties: {
+                country: { type: "string" },
+                company: { type: "string" },
+                rank: { type: "string" },
+                title: { type: "string" },
+                start: { type: "string" },
+                end: { type: "string" }
+              }
+            }
+          },
+          achievements: {
+            type: "array",
+            items: { type: "string" }
+          },
+          linkedinUrl: { type: "string" },
+          profileImageUrl: { type: "string" }
         }
       }
     }
@@ -177,6 +247,16 @@ function decodeXml(value) {
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function decodeHtml(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
 }
 
 function extractTag(xml, tag) {
@@ -305,6 +385,37 @@ async function supabaseRequest(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+async function fetchText(url, options = {}) {
+  const { timeoutMs = 15000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
+
+  try {
+    response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 SamsungTalentPoolNewsRadar/1.0",
+        ...(fetchOptions.headers || {})
+      }
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Fetch failed: ${response.status}`);
+  }
+
+  return response.text();
+}
+
+async function fetchJson(url, options = {}) {
+  return JSON.parse(await fetchText(url, options));
+}
+
 async function loadCachedReport(targetDate) {
   const rows = await supabaseRequest(`trending_people_reports?select=payload&report_date=eq.${targetDate}&limit=1`);
   return Array.isArray(rows) && rows[0]?.payload ? rows[0].payload : null;
@@ -371,6 +482,63 @@ function articlePromptBlock(articles) {
   }));
 }
 
+async function requestOpenAIJson({ apiKey, model, prompt, schema, schemaName, errorLabel, useWebSearch = false }) {
+  const body = {
+    model,
+    input: [
+      {
+        role: "system",
+        content: "Return only schema-valid JSON. Do not include markdown."
+      },
+      {
+        role: "user",
+        content: prompt
+      }
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: schemaName,
+        schema,
+        strict: true
+      }
+    },
+    temperature: 0.1
+  };
+
+  if (useWebSearch) {
+    body.tools = [
+      {
+        type: "web_search",
+        external_web_access: true
+      }
+    ];
+    body.tool_choice = "auto";
+  }
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`${errorLabel}: ${response.status} ${responseText.slice(0, 500)}`);
+  }
+
+  const outputText = extractOutputText(JSON.parse(responseText));
+
+  if (!outputText) {
+    throw new Error(`${errorLabel}: response did not include structured text`);
+  }
+
+  return JSON.parse(outputText);
+}
+
 async function callOpenAIForPeople(targetDate, articles, excludedNames) {
   const apiKey = process.env.OPENAI_API_KEY;
 
@@ -390,6 +558,7 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
     "최근 1개월 내 이미 제공된 이름은 절대 다시 선정하지 않는다.",
     "프로필 정보는 기사 스니펫과 일반적으로 알려진 공개 프로필 이력에 근거해 최대한 보강한다.",
     "다만 확인이 어려운 출생년도/학력/링크드인은 추정하지 말고 빈 문자열로 둔다.",
+    "대표 프로필 사진 URL은 이 단계에서 확실하지 않으면 빈 문자열로 둔다. 후속 공개 웹 프로필 보강 단계에서 다시 조사한다.",
     "현재소속, 현재직책, 과거경력, 핵심 성과는 공개적으로 널리 알려진 사실이면 기사 스니펫에 없더라도 작성한다.",
     "학력은 박사, 석사, 학사 순서로 정리한다. 고등학교 학력은 제외한다.",
     "경력은 최근 경력부터 나열하고 각 경력의 최종 직급/직책 기준으로 쓴다.",
@@ -401,48 +570,80 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
     "기사 목록 JSON:",
     JSON.stringify(articlePromptBlock(articles), null, 2)
   ].join("\n");
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: "system",
-          content: "Return only schema-valid JSON. Do not include markdown."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "daily_trending_people",
-          schema: TRENDING_SCHEMA,
-          strict: true
-        }
-      },
-      temperature: 0.1
-    })
+
+  return requestOpenAIJson({
+    apiKey,
+    model,
+    prompt,
+    schema: TRENDING_SCHEMA,
+    schemaName: "daily_trending_people",
+    errorLabel: "OpenAI trending people failed"
   });
-  const responseText = await response.text();
+}
 
-  if (!response.ok) {
-    throw new Error(`OpenAI trending people failed: ${response.status} ${responseText.slice(0, 500)}`);
+async function callOpenAIForProfileEnrichment(targetDate, people) {
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey || !people.length) {
+    return { people: [] };
   }
 
-  const outputText = extractOutputText(JSON.parse(responseText));
+  const model = process.env.OPENAI_PROFILE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1";
+  const prompt = [
+    "너는 삼성전자 DX부문 채용 담당자를 위한 공개 웹 프로필 리서치 애널리스트다.",
+    `대상 리포트 기사일: ${targetDate}.`,
+    "아래 인물에 대해 반드시 web_search 도구로 공개 웹을 검색하고 신뢰 가능한 프로필 정보를 다시 조사해 보강한다.",
+    "모델의 기억만으로 빈 값을 확정하지 말고, 공개 웹 검색에서 확인되는 자료를 우선한다.",
+    "검색은 한국어와 영어를 모두 활용하고, 이름만으로 동명이인 혼동이 있으면 현재소속/현재직책/뉴스 근거 링크와 맞는 인물만 사용한다.",
+    "반드시 같은 이름과 같은 순서로 반환한다. 새 인물을 추가하거나 삭제하지 않는다.",
+    "학력은 고등학교를 제외하고 박사, 석사, 학사 순으로 모든 확인 가능한 학위 정보를 기재한다.",
+    "학력 year는 학위취득년도를 YYYY 또는 'YY 형태로 쓴다. 확인 불가하면 빈 문자열.",
+    "경력은 역대 확인 가능한 모든 주요 경력을 최근 경력부터 기재한다.",
+    "경력 start/end는 YYYY-MM, YYYY, 현재 중 가능한 수준으로만 기재한다. 월 정보가 없으면 YYYY만 쓴다.",
+    "직급/직책은 각 경력에서 확인 가능한 최종 직급/직책 기준으로 쓴다. 불확실하면 빈 문자열.",
+    "LinkedIn은 공식 개인 프로필이라고 판단되는 경우만 URL을 기재한다. 동명이인 가능성이 있거나 확증이 없으면 빈 문자열.",
+    "profileImageUrl은 얼굴이 잘 보이는 대표 프로필 사진의 직접 이미지 URL만 기재한다. 로고, 기사 썸네일 합성, 회사 건물, 비인물 이미지는 제외한다.",
+    "이미지 URL을 확실히 제공할 수 없으면 빈 문자열. 추정하거나 존재하지 않는 URL을 만들지 않는다.",
+    "핵심 성과/실적은 보고서 항목처럼 짧게 끊고, '~했습니다' 같은 종결 문장을 쓰지 않는다.",
+    "",
+    "Top5 인물 JSON:",
+    JSON.stringify(people.map((person) => ({
+      rank: person.rank,
+      name: person.name,
+      birthYear: person.birthYear,
+      currentOrg: person.currentOrg,
+      currentTitle: person.currentTitle,
+      topics: person.topics,
+      linkedinUrl: person.linkedinUrl,
+      profileImageUrl: person.profileImageUrl,
+      education: person.education,
+      career: person.career,
+      achievements: person.achievements,
+      sourceLinks: (person.selectionReasons || []).flatMap((reason) => reason.links || []).slice(0, 6)
+    })), null, 2)
+  ].join("\n");
 
-  if (!outputText) {
-    throw new Error("OpenAI trending people response did not include structured text");
+  try {
+    return await requestOpenAIJson({
+      apiKey,
+      model,
+      prompt,
+      schema: PROFILE_ENRICHMENT_SCHEMA,
+      schemaName: "daily_trending_people_profile_enrichment",
+      errorLabel: "OpenAI profile enrichment failed",
+      useWebSearch: true
+    });
+  } catch (error) {
+    console.warn("OpenAI web profile enrichment failed. Retrying without web search.", error.message);
+    return requestOpenAIJson({
+      apiKey,
+      model,
+      prompt,
+      schema: PROFILE_ENRICHMENT_SCHEMA,
+      schemaName: "daily_trending_people_profile_enrichment",
+      errorLabel: "OpenAI profile enrichment fallback failed"
+    });
   }
-
-  return JSON.parse(outputText);
 }
 
 function normalizePerson(person, index, articleById) {
@@ -455,8 +656,8 @@ function normalizePerson(person, index, articleById) {
     birthYear: String(person.birthYear || "").match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
     currentOrg: String(person.currentOrg || "").trim(),
     currentTitle: String(person.currentTitle || "").trim(),
-    education: Array.isArray(person.education) ? person.education.slice(0, 5) : [],
-    career: Array.isArray(person.career) ? person.career.slice(0, 8) : [],
+    education: Array.isArray(person.education) ? person.education.slice(0, 8) : [],
+    career: Array.isArray(person.career) ? person.career.slice(0, 20) : [],
     achievements: Array.isArray(person.achievements)
       ? person.achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 3)
       : [],
@@ -478,9 +679,348 @@ function normalizePerson(person, index, articleById) {
       }).filter((reason) => reason.text).slice(0, 3)
       : [],
     linkedinUrl: String(person.linkedinUrl || "").trim(),
+    profileImageUrl: sanitizeUrl(person.profileImageUrl),
     topics: Array.isArray(person.topics) ? person.topics.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 5) : [],
     mentionCount: Number(person.mentionCount || 0)
   };
+}
+
+function sanitizeUrl(value) {
+  const url = String(value || "").trim();
+
+  if (!url) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(url);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function mergePersonProfile(basePerson, enrichedPerson) {
+  if (!enrichedPerson) {
+    return basePerson;
+  }
+
+  const education = Array.isArray(enrichedPerson.education) && enrichedPerson.education.length
+    ? enrichedPerson.education
+    : basePerson.education;
+  const career = Array.isArray(enrichedPerson.career) && enrichedPerson.career.length
+    ? enrichedPerson.career
+    : basePerson.career;
+  const achievements = Array.isArray(enrichedPerson.achievements) && enrichedPerson.achievements.length
+    ? enrichedPerson.achievements
+    : basePerson.achievements;
+
+  return {
+    ...basePerson,
+    birthYear: String(enrichedPerson.birthYear || basePerson.birthYear || "").match(/\b(19\d{2}|20\d{2})\b/)?.[1] || basePerson.birthYear,
+    currentOrg: String(enrichedPerson.currentOrg || basePerson.currentOrg || "").trim(),
+    currentTitle: String(enrichedPerson.currentTitle || basePerson.currentTitle || "").trim(),
+    education: education.slice(0, 8),
+    career: career.slice(0, 20),
+    achievements: achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 5),
+    linkedinUrl: sanitizeUrl(enrichedPerson.linkedinUrl) || basePerson.linkedinUrl,
+    profileImageUrl: sanitizeUrl(enrichedPerson.profileImageUrl) || basePerson.profileImageUrl
+  };
+}
+
+async function enrichPeopleProfiles(targetDate, people) {
+  if (!people.length) {
+    return people;
+  }
+
+  const enrichedResults = await Promise.allSettled(people.map(async (person) => {
+    const enriched = await callOpenAIForProfileEnrichment(targetDate, [person]);
+    const enrichedPerson = (enriched.people || []).find((item) => String(item.name || "").trim() === person.name);
+    return mergePersonProfile(person, enrichedPerson);
+  }));
+
+  return people.map((person, index) => {
+    const result = enrichedResults[index];
+
+    if (result.status === "fulfilled") {
+      return result.value;
+    }
+
+    console.warn(`Profile enrichment skipped for ${person.name}.`, result.reason?.message || result.reason);
+    return person;
+  });
+}
+
+function personAssetSearchQueries(person) {
+  return [
+    `${person.name} ${person.currentOrg || ""}`,
+    `${person.name} ${person.currentTitle || ""}`,
+    person.name
+  ].map((query) => query.trim()).filter(Boolean);
+}
+
+function scoreWikiPage(page, person) {
+  const text = `${page.title || ""} ${page.extract || ""}`.toLowerCase();
+  const name = String(person.name || "").toLowerCase();
+  const org = String(person.currentOrg || "").toLowerCase();
+  const title = String(person.currentTitle || "").toLowerCase();
+  let score = 0;
+
+  if (name && text.includes(name)) {
+    score += 4;
+  }
+
+  if (org && text.includes(org)) {
+    score += 3;
+  }
+
+  if (title && text.includes(title)) {
+    score += 1;
+  }
+
+  if (page.thumbnail?.source) {
+    score += 2;
+  }
+
+  if (/(기업인|창업자|ceo|chief executive|businessperson|entrepreneur|회장|대표|사장|founder)/i.test(text)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function wikiPageMatchesPerson(page, person) {
+  const name = String(person.name || "").replace(/\s+/g, "").toLowerCase();
+  const text = `${page.title || ""} ${page.extract || ""}`.replace(/\s+/g, "").toLowerCase();
+  return Boolean(name && text.includes(name));
+}
+
+async function fetchWikipediaProfileImage(person) {
+  const hosts = ["ko.wikipedia.org", "en.wikipedia.org"];
+
+  for (const host of hosts) {
+    for (const query of personAssetSearchQueries(person)) {
+      const url = `https://${host}/w/api.php?action=query&format=json&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=4&prop=pageimages|extracts&pithumbsize=640&exintro=1&explaintext=1&origin=*`;
+
+      try {
+        const json = await fetchJson(url);
+        const pages = Object.values(json.query?.pages || {})
+          .filter((page) => page.title && page.thumbnail?.source)
+          .filter((page) => wikiPageMatchesPerson(page, person))
+          .sort((a, b) => scoreWikiPage(b, person) - scoreWikiPage(a, person));
+        const best = pages[0];
+
+        if (best && scoreWikiPage(best, person) >= 4) {
+          return sanitizeUrl(best.thumbnail.source);
+        }
+      } catch (error) {
+        console.warn(`Wikipedia image lookup failed for ${person.name}.`, error.message);
+      }
+    }
+  }
+
+  return "";
+}
+
+function extractLinkedInUrls(html) {
+  const decoded = decodeHtml(html);
+  const urls = new Set();
+  const directMatches = decoded.match(/https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^"'<>\s&]+/gi) || [];
+
+  directMatches.forEach((url) => urls.add(url));
+
+  for (const match of decoded.matchAll(/[?&]uddg=([^&"']+)/g)) {
+    try {
+      urls.add(decodeURIComponent(match[1]));
+    } catch (error) {
+      // Ignore malformed redirect values.
+    }
+  }
+
+  return [...urls]
+    .map((url) => sanitizeUrl(url.split("?")[0]))
+    .filter((url) => /^https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#]+/i.test(url));
+}
+
+function extractSearchResultUrls(html) {
+  const decoded = decodeHtml(html);
+  const urls = new Set();
+
+  for (const match of decoded.matchAll(/[?&]uddg=([^&"']+)/g)) {
+    try {
+      urls.add(decodeURIComponent(match[1]));
+    } catch (error) {
+      // Ignore malformed redirect values.
+    }
+  }
+
+  for (const match of decoded.matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)) {
+    urls.add(match[1]);
+  }
+
+  return [...urls]
+    .map(sanitizeUrl)
+    .filter(Boolean)
+    .filter((url) => !/duckduckgo\.com|google\.com|bing\.com|naver\.com\/search/i.test(url))
+    .slice(0, 8);
+}
+
+function extractMetaImageUrl(html, pageUrl, person) {
+  const name = String(person.name || "").replace(/\s+/g, "").toLowerCase();
+
+  for (const match of String(html || "").matchAll(/<meta\b[^>]+>/gi)) {
+    const tag = match[0];
+
+    if (!/(?:property|name)=["'](?:og:image|twitter:image|image)["']/i.test(tag)) {
+      continue;
+    }
+
+    const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
+
+    if (content) {
+      return new URL(decodeHtml(content), pageUrl).href;
+    }
+  }
+
+  for (const match of String(html || "").matchAll(/<img\b[^>]+>/gi)) {
+    const tag = match[0];
+    const compactTag = decodeHtml(tag).replace(/\s+/g, "").toLowerCase();
+
+    if (name && !compactTag.includes(name)) {
+      continue;
+    }
+
+    const src = tag.match(/\bsrc=["']([^"']+)["']/i)?.[1] || tag.match(/\bdata-src=["']([^"']+)["']/i)?.[1];
+
+    if (src) {
+      return new URL(decodeHtml(src), pageUrl).href;
+    }
+  }
+
+  return "";
+}
+
+async function fetchProfileImageFromSearch(person) {
+  const queries = [
+    `"${person.name}" "${person.currentOrg || ""}" 프로필 사진`,
+    `"${person.name}" "${person.currentOrg || ""}" profile photo`,
+    `"${person.name}" "${person.currentOrg || ""}" faculty profile`,
+    `"${person.name}" "${person.currentOrg || ""}" CEO profile`
+  ].map((query) => query.replace(/\s+/g, " ").trim());
+
+  for (const query of queries) {
+    try {
+      const searchHtml = await fetchText(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { timeoutMs: 12000 });
+      const resultUrls = extractSearchResultUrls(searchHtml);
+
+      for (const resultUrl of resultUrls) {
+        const directImage = await validateImageUrl(resultUrl);
+
+        if (directImage) {
+          return directImage;
+        }
+
+        try {
+          const pageHtml = await fetchText(resultUrl, { timeoutMs: 12000 });
+          const imageUrl = await validateImageUrl(extractMetaImageUrl(pageHtml, resultUrl, person));
+
+          if (imageUrl) {
+            return imageUrl;
+          }
+        } catch (error) {
+          // Continue through other public profile result pages.
+        }
+      }
+    } catch (error) {
+      console.warn(`Profile image search failed for ${person.name}.`, error.message);
+    }
+  }
+
+  return "";
+}
+
+async function fetchLinkedInProfileUrl(person) {
+  const queries = [
+    `site:linkedin.com/in "${person.name}" "${person.currentOrg || ""}"`,
+    `site:linkedin.com/in "${person.name}" "${person.currentTitle || ""}"`,
+    `site:linkedin.com/in "${person.name}"`
+  ].map((query) => query.trim());
+
+  for (const query of queries) {
+    const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+
+    try {
+      const html = await fetchText(url);
+      const urls = extractLinkedInUrls(html);
+      const org = String(person.currentOrg || "").toLowerCase();
+      const preferred = urls.find((candidate) => org && candidate.toLowerCase().includes(org.replace(/[^a-z0-9]/g, ""))) || urls[0];
+
+      if (preferred) {
+        return preferred;
+      }
+    } catch (error) {
+      console.warn(`LinkedIn lookup failed for ${person.name}.`, error.message);
+    }
+  }
+
+  return "";
+}
+
+async function validateImageUrl(url) {
+  const safeUrl = sanitizeUrl(url);
+
+  if (!safeUrl || /%e2%80%a6|…|logo|symbol|emblem|\/[a-z0-9_-]*ci[._-]/i.test(safeUrl) || /\.svg(?:[?#]|$)/i.test(safeUrl)) {
+    return "";
+  }
+
+  try {
+    let response = await fetch(safeUrl, {
+      method: "HEAD",
+      headers: { "User-Agent": "SamsungTalentPoolNewsRadar/1.0" }
+    });
+
+    if (response.status === 405 || response.status === 403) {
+      response = await fetch(safeUrl, {
+        method: "GET",
+        headers: {
+          "User-Agent": "SamsungTalentPoolNewsRadar/1.0",
+          Range: "bytes=0-0"
+        }
+      });
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    return response.ok && contentType.toLowerCase().startsWith("image/") ? safeUrl : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+async function supplementPublicProfileAssets(people) {
+  const results = await Promise.allSettled(people.map(async (person) => {
+    let imageUrl = await validateImageUrl(person.profileImageUrl);
+
+    if (!imageUrl) {
+      imageUrl = await validateImageUrl(await fetchWikipediaProfileImage(person));
+    }
+
+    if (!imageUrl) {
+      imageUrl = await fetchProfileImageFromSearch(person);
+    }
+
+    const linkedinUrl = person.linkedinUrl || await fetchLinkedInProfileUrl(person);
+
+    return {
+      ...person,
+      profileImageUrl: imageUrl,
+      linkedinUrl: sanitizeUrl(person.linkedinUrl) || sanitizeUrl(linkedinUrl)
+    };
+  }));
+
+  return people.map((person, index) => {
+    const result = results[index];
+    return result.status === "fulfilled" ? result.value : person;
+  });
 }
 
 function isLikelyPersonName(person) {
@@ -516,10 +1056,12 @@ async function generateReport(targetDate) {
 
   const articleById = new Map(articles.map((article) => [article.id, article]));
   const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames);
-  const people = (ranked.people || [])
+  const rankedPeople = (ranked.people || [])
     .filter((person) => person.name && !excludedNames.includes(person.name) && isLikelyPersonName(person))
     .slice(0, 5)
     .map((person, index) => normalizePerson(person, index, articleById));
+  const enrichedPeople = await enrichPeopleProfiles(targetDate, rankedPeople);
+  const people = await supplementPublicProfileAssets(enrichedPeople);
   const report = {
     reportDate: targetDate,
     targetDate,

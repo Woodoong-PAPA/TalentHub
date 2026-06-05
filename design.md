@@ -352,12 +352,14 @@ The 오늘의 화제 인물 feature supports daily sourcing from Korean news:
 - DS/semiconductor terms such as 반도체, 메모리, HBM, 파운드리, 웨이퍼, 낸드, D램 are excluded.
 - Supabase table `trending_people_reports` stores generated reports and article/source payloads.
 - Previous 30 days of stored profiles are used as the duplicate exclusion memory.
-- Cards include source news links in the Top 5 selection reason section.
-- A selected person can be converted to an 인재 Pool candidate with source, evidence, career, education, and tags prefilled for recruiter review.
+- After Top 5 ranking, the API runs public-web profile enrichment for education, career, achievements, LinkedIn, and representative profile photos.
+- Cards include cropped profile photos when a validated person image URL is available, and fall back to the rank badge when no reliable face image is found.
+- Cards include source news links in the Top 5 selection reason section. Long news titles and URLs must wrap inside the card without horizontal overflow.
+- A selected person can be converted to an 인재 Pool candidate with source, evidence, career, education, profile photo, and tags prefilled for recruiter review.
 
 Production hardening note:
 
-- Current implementation uses Google News RSS snippets plus OpenAI structured extraction.
+- Current implementation uses Google News RSS snippets, OpenAI structured extraction, OpenAI web-search enrichment, Wikipedia image fallback, and public search fallback for profile assets.
 - For production-grade accuracy, connect a licensed Korean news provider, full-text crawler, entity resolution, and fact-checking/profile enrichment pipeline.
 
 ---

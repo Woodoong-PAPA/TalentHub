@@ -128,7 +128,14 @@ Trending people reports should include:
 - `reportDate`, `targetDate`, `generatedAt`, `searchScope`, `topics`
 - `excludedNames` for recent 30-day duplicate suppression
 - `articles[]` with title, source, published date, URL, snippet, and topic
-- `people[]` with name, birth year, current org/title, education, career, achievements, selection reasons, LinkedIn URL, and topics
+- `people[]` with name, birth year, current org/title, education, career, achievements, selection reasons, LinkedIn URL, profile image URL, and topics
+
+Trending people profile enrichment:
+
+- Rank Top 5 people from previous-day Korean DX news first, then enrich selected people with public web profile research.
+- Keep LinkedIn blank unless a reliable personal `/in/` profile is found.
+- Use only validated direct image URLs for profile photos; reject logos, SVGs, broken URLs, and ambiguous non-person images.
+- Long source news links must wrap inside cards without horizontal overflow on mobile.
 
 When adding new sample candidates, include education and career data so the detail profile stays complete.
 
