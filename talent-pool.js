@@ -19,14 +19,14 @@ const STATUS_ORDER = [
 ];
 
 const MENU_CONFIG = [
-  { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
-  { view: "pool", label: "인재 Pool", description: "후보자 목록과 상세 프로필 조회" },
+  { view: "dashboard", label: "Dashboard", description: "운영 현황과 KPI 조회" },
+  { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
-  { view: "register", label: "인재 등록", description: "후보자 신규 등록과 이력서 파싱" },
-  { view: "ai-search", label: "AI 검색", description: "자연어/JD 기반 후보자 검색" },
+  { view: "register", label: "Add Talent", description: "후보자 신규 등록과 이력서 파싱" },
+  { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
-  { view: "audit", label: "감사 로그", description: "사용자·AI 처리 이력 확인" },
-  { view: "members", label: "회원관리", description: "회원 승인, 등급, 메뉴 권한 관리" }
+  { view: "audit", label: "Log", description: "사용자·AI 처리 이력 확인" },
+  { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한 관리" }
 ];
 
 const MEMBER_ROLES = {
@@ -547,14 +547,14 @@ const state = {
 };
 
 const viewTitles = {
-  dashboard: "대시보드",
-  pool: "인재 Pool",
-  register: "인재 등록",
-  "ai-search": "AI 검색",
+  dashboard: "Dashboard",
+  pool: "Talent Pool",
+  register: "Add Talent",
+  "ai-search": "AI Search",
   trending: "Today's Talent",
   detail: "상세 프로필",
-  audit: "감사 로그",
-  members: "회원관리"
+  audit: "Log",
+  members: "Management"
 };
 
 const $ = (selector) => document.querySelector(selector);
