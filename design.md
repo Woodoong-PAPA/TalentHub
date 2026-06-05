@@ -359,7 +359,7 @@ The 오늘의 화제 인물 feature supports daily sourcing from Korean news:
 - Admin users can manage daily mailing settings inside the view: enabled state, KST send time, subject prefix, and recipients.
 - Mailing settings are stored in Supabase `trending_mail_settings`; delivery attempts are logged in `trending_mail_events`.
 - Vercel Cron checks `/api/trending-mail-cron` daily at `22:30 UTC`, which is `07:30 KST`, and sends the report once per report date when mailing is enabled.
-- The API still supports configured send-time gating; exact arbitrary-time delivery requires a scheduler that can call `/api/trending-mail-cron` more frequently, such as Vercel Pro Cron or an external scheduler.
+- The API still supports configured send-time gating; `.github/workflows/trending-mail-cron.yml` calls `/api/trending-mail-cron` every 5 minutes so UI-configured send time can be honored without Vercel Pro Cron.
 - Email delivery uses Resend when `RESEND_API_KEY` and `RESEND_FROM` are configured.
 - Education display uses comma-separated report formatting, for example `박) 서울대학교, 재료공학 ('12)`.
 - Career display uses comma-separated report formatting and normalizes `대한민국`/`South Korea` to `한국`.
