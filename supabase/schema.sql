@@ -85,7 +85,7 @@ create table if not exists public.trending_mail_settings (
     check (send_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
   timezone text not null default 'Asia/Seoul',
   recipients jsonb not null default '[]'::jsonb,
-  subject_prefix text not null default '[TalentHub] 오늘의 화제 인물',
+  subject_prefix text not null default '[TalentHub] Today''s Talent',
   last_sent_report_date date,
   last_sent_at timestamptz,
   updated_at timestamptz not null default now(),
@@ -265,13 +265,13 @@ values (
   '07:30',
   'Asia/Seoul',
   '[]'::jsonb,
-  '[TalentHub] 오늘의 화제 인물',
+  '[TalentHub] Today''s Talent',
   jsonb_build_object(
     'enabled', false,
     'sendTime', '07:30',
     'timezone', 'Asia/Seoul',
     'recipients', jsonb_build_array(),
-    'subjectPrefix', '[TalentHub] 오늘의 화제 인물'
+    'subjectPrefix', '[TalentHub] Today''s Talent'
   )
 )
 on conflict (id) do nothing;

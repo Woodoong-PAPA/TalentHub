@@ -23,7 +23,7 @@ const MENU_CONFIG = [
   { view: "pool", label: "인재 Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "register", label: "인재 등록", description: "후보자 신규 등록과 이력서 파싱" },
   { view: "ai-search", label: "AI 검색", description: "자연어/JD 기반 후보자 검색" },
-  { view: "trending", label: "오늘의 화제 인물", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
+  { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "audit", label: "감사 로그", description: "사용자·AI 처리 이력 확인" },
   { view: "members", label: "회원관리", description: "회원 승인, 등급, 메뉴 권한 관리" }
 ];
@@ -59,13 +59,14 @@ const DEFAULT_TRENDING_MAIL_SETTINGS = {
   sendTime: "07:30",
   timezone: "Asia/Seoul",
   recipients: [],
-  subjectPrefix: "[TalentHub] 오늘의 화제 인물",
+  subjectPrefix: "[TalentHub] Today's Talent",
   lastSentReportDate: "",
   lastSentAt: "",
   providerConfigured: false,
   updatedAt: "",
   updatedBy: ""
 };
+const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const TRENDING_PROFILE_COMPLETENESS_VERSION = 5;
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
@@ -463,7 +464,7 @@ const viewTitles = {
   pool: "인재 Pool",
   register: "인재 등록",
   "ai-search": "AI 검색",
-  trending: "오늘의 화제 인물",
+  trending: "Today's Talent",
   detail: "상세 프로필",
   audit: "감사 로그",
   members: "회원관리"
@@ -755,6 +756,7 @@ function normalizeSendTime(value) {
 
 function normalizeTrendingMailSettings(settings = {}) {
   const recipients = normalizeEmailList(settings.recipients);
+  const subjectPrefix = String(settings.subjectPrefix || settings.subject_prefix || DEFAULT_TRENDING_MAIL_SETTINGS.subjectPrefix).trim();
 
   return {
     ...structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
@@ -763,7 +765,7 @@ function normalizeTrendingMailSettings(settings = {}) {
     sendTime: normalizeSendTime(settings.sendTime || settings.send_time),
     timezone: settings.timezone || "Asia/Seoul",
     recipients,
-    subjectPrefix: String(settings.subjectPrefix || settings.subject_prefix || DEFAULT_TRENDING_MAIL_SETTINGS.subjectPrefix).trim(),
+    subjectPrefix: subjectPrefix === LEGACY_TRENDING_MAIL_SUBJECT_PREFIX ? DEFAULT_TRENDING_MAIL_SETTINGS.subjectPrefix : subjectPrefix,
     lastSentReportDate: String(settings.lastSentReportDate || settings.last_sent_report_date || "").trim(),
     lastSentAt: String(settings.lastSentAt || settings.last_sent_at || "").trim(),
     providerConfigured: Boolean(settings.providerConfigured || settings.provider_configured),
@@ -3184,7 +3186,7 @@ function renderTrendingModal() {
   const title = isMailModal ? "메일링 설정" : "리포트 보관함";
   const description = isMailModal
     ? "발송 시간과 복수 수신처를 설정하고 테스트 메일을 발송합니다."
-    : "저장된 날짜를 선택해 과거 오늘의 화제 인물 리포트를 조회합니다.";
+    : "저장된 날짜를 선택해 과거 Today's Talent 리포트를 조회합니다.";
   const content = isMailModal
     ? renderTrendingMailPanel({ hideTitle: true })
     : renderTrendingHistoryPanel({ hideTitle: true });
@@ -5537,11 +5539,11 @@ async function fetchTrendingPeople(options = {}) {
     persistState();
     renderTrendingPeople();
     fetchTrendingHistory({ silent: true });
-    showToast("오늘의 화제 인물 리포트를 불러왔습니다.");
+    showToast("Today's Talent 리포트를 불러왔습니다.");
   } catch (error) {
     console.warn("Trending people report failed.", error);
     state.trendingLoading = false;
-    state.trendingError = "화제 인물 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+    state.trendingError = "Today's Talent 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
     renderTrendingPeople();
   }
 }
@@ -5648,7 +5650,7 @@ async function saveTrendingMailSettings() {
 
     state.trendingMailSettings = normalizeTrendingMailSettings(payload.settings);
     state.trendingMailStatus = "메일링 설정을 저장했습니다.";
-    addAuditLog("화제 인물 메일링 설정", "오늘의 화제 인물", `${settings.sendTime} · ${settings.recipients.length}명`);
+    addAuditLog("Today's Talent 메일링 설정", "Today's Talent", `${settings.sendTime} · ${settings.recipients.length}명`);
     persistState();
     showToast("메일링 설정을 저장했습니다.");
   } catch (error) {
@@ -5691,7 +5693,7 @@ async function sendTrendingMailTest() {
 
     state.trendingMailSettings = normalizeTrendingMailSettings(payload.settings || settings);
     state.trendingMailStatus = payload.message || "테스트 메일 발송을 요청했습니다.";
-    addAuditLog("화제 인물 테스트 메일", "오늘의 화제 인물", `${settings.recipients.length}명`);
+    addAuditLog("Today's Talent 테스트 메일", "Today's Talent", `${settings.recipients.length}명`);
     persistState();
     showToast(state.trendingMailStatus);
   } catch (error) {
@@ -5741,7 +5743,7 @@ function registerTrendingPerson(identifier) {
   const person = findTrendingPerson(identifier);
 
   if (!person) {
-    showToast("등록할 화제 인물 정보를 찾지 못했습니다.");
+    showToast("등록할 Today's Talent 프로필을 찾지 못했습니다.");
     return;
   }
 
@@ -5766,7 +5768,7 @@ function registerTrendingPerson(identifier) {
     id: createId("cand"),
     name: person.name,
     initials: `${String(person.name || "").slice(0, 1)}${String(person.name || "").slice(-1)}`,
-    role: person.currentTitle || "오늘의 화제 인물",
+    role: person.currentTitle || "Today's Talent",
     company: person.currentOrg || "소속 확인 필요",
     years: 0,
     jobFamily: "DX News Radar",
@@ -5777,7 +5779,7 @@ function registerTrendingPerson(identifier) {
     updatedAt: today,
     lastContactedAt: "",
     location: "",
-    source: `오늘의 화제 인물 ${state.trendingReport?.targetDate || today}`,
+    source: `Today's Talent ${state.trendingReport?.targetDate || today}`,
     dataQuality: 82,
     parsingConfidence: 82,
     avatarColor: "#4e5968",
@@ -5788,7 +5790,7 @@ function registerTrendingPerson(identifier) {
       .flatMap((reason) => reason.links || [])
       .find((link) => link.url)?.url || "",
     skills: [...new Set([...(person.topics || []), "DX", "뉴스 화제 인물"].filter(Boolean))],
-    tags: ["오늘의 화제 인물", "뉴스 기반 소싱", "검수 필요"],
+    tags: ["Today's Talent", "뉴스 기반 소싱", "검수 필요"],
     summary: [...achievements, ...reasons].slice(0, 4).join("\n"),
     evidence: reasons.slice(0, 4),
     education: (person.education || []).map(trendingEducationToCandidateEducation).filter(hasAnyRecordValue),
@@ -5797,7 +5799,7 @@ function registerTrendingPerson(identifier) {
     timeline: [
       {
         type: "등록",
-        text: "오늘의 화제 인물 메뉴에서 인재 Pool로 등록",
+        text: "Today's Talent 메뉴에서 인재 Pool로 등록",
         actor: getCurrentActorName(),
         date: today
       }
@@ -5806,7 +5808,7 @@ function registerTrendingPerson(identifier) {
 
   state.candidates.unshift(candidate);
   state.selectedCandidateId = candidate.id;
-  addAuditLog("화제 인물 Pool 등록", candidate.name, "뉴스 기반 후보자 등록");
+  addAuditLog("Today's Talent Pool 등록", candidate.name, "뉴스 기반 후보자 등록");
   persistState();
   render();
   showToast(`${candidate.name} 인물을 인재 Pool에 등록했습니다.`);

@@ -3,13 +3,14 @@ const DEFAULT_SETTINGS = {
   sendTime: "07:30",
   timezone: "Asia/Seoul",
   recipients: [],
-  subjectPrefix: "[TalentHub] 오늘의 화제 인물",
+  subjectPrefix: "[TalentHub] Today's Talent",
   lastSentReportDate: "",
   lastSentAt: "",
   providerConfigured: false,
   updatedAt: "",
   updatedBy: ""
 };
+const LEGACY_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 
 function loadLocalEnv() {
   try {
@@ -136,6 +137,7 @@ function isProviderConfigured() {
 
 function normalizeSettings(settings = {}) {
   const recipients = normalizeEmailList(settings.recipients);
+  const subjectPrefix = String(settings.subjectPrefix || settings.subject_prefix || DEFAULT_SETTINGS.subjectPrefix).trim();
 
   return {
     ...DEFAULT_SETTINGS,
@@ -143,7 +145,7 @@ function normalizeSettings(settings = {}) {
     sendTime: normalizeSendTime(settings.sendTime || settings.send_time),
     timezone: settings.timezone || "Asia/Seoul",
     recipients,
-    subjectPrefix: String(settings.subjectPrefix || settings.subject_prefix || DEFAULT_SETTINGS.subjectPrefix).trim(),
+    subjectPrefix: subjectPrefix === LEGACY_SUBJECT_PREFIX ? DEFAULT_SETTINGS.subjectPrefix : subjectPrefix,
     lastSentReportDate: String(settings.lastSentReportDate || settings.last_sent_report_date || "").trim(),
     lastSentAt: String(settings.lastSentAt || settings.last_sent_at || "").trim(),
     providerConfigured: isProviderConfigured(),
@@ -455,7 +457,7 @@ function formatNewsLinkLabel(link) {
 
 function buildReportText(report) {
   return [
-    `오늘의 화제 인물 리포트 (${report.targetDate || report.reportDate})`,
+    `Today's Talent 리포트 (${report.targetDate || report.reportDate})`,
     "",
     ...(report.people || []).map((person) => [
       `${person.rank}. ${person.name} - ${[person.currentOrg, person.currentTitle].filter(Boolean).join(" · ")}`,
@@ -478,39 +480,179 @@ function renderSourceLinks(reason) {
     return "";
   }
 
-  return `<div>${links.map((link) => `<a href="${escapeHtml(link.url)}">${escapeHtml(formatNewsLinkLabel(link))}</a>`).join("<br>")}</div>`;
+  return `
+    <div style="margin-top:10px;mso-line-height-rule:exactly">
+      ${links.map((link) => `
+        <a href="${escapeHtml(link.url)}" target="_blank" style="display:inline-block;max-width:100%;border:1px solid #cfe3ff;border-radius:999px;padding:8px 12px;color:#1b64da;background:#e8f3ff;font-size:12px;font-weight:700;text-decoration:none;line-height:1.4;word-break:break-word">
+          ${escapeHtml(formatNewsLinkLabel(link))}
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMailLineList(items) {
+  const list = (items || []).filter(Boolean);
+
+  if (!list.length) {
+    return `<p style="margin:0;color:#8b95a1;font-size:13px">정보 없음</p>`;
+  }
+
+  return `
+    <div>
+      ${list.map((item) => `
+        <div style="margin:0 0 8px;color:#191f28;font-size:14px;line-height:1.65;word-break:break-word">
+          ${escapeHtml(item)}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMailDashList(items) {
+  const list = (items || []).filter(Boolean).slice(0, 3);
+
+  if (!list.length) {
+    return `<p style="margin:0;color:#8b95a1;font-size:13px">정보 없음</p>`;
+  }
+
+  return `
+    <div>
+      ${list.map((item) => `
+        <div style="margin:0 0 8px;color:#191f28;font-size:14px;line-height:1.65;word-break:break-word">
+          - ${escapeHtml(item)}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMailReasons(reasons) {
+  const blocks = (reasons || [])
+    .map((reason) => ({
+      reason,
+      text: normalizeReasonText(typeof reason === "string" ? reason : reason.text)
+    }))
+    .filter((item) => item.text)
+    .slice(0, 2);
+
+  if (!blocks.length) {
+    return `<p style="margin:0;color:#8b95a1;font-size:13px">정보 없음</p>`;
+  }
+
+  return `
+    <div>
+      ${blocks.map(({ reason, text }) => `
+        <div style="border-left:3px solid #3182f6;margin:0 0 12px;padding-left:10px">
+          <p style="margin:0;color:#191f28;font-size:14px;line-height:1.65;word-break:break-word">${escapeHtml(text)}</p>
+          ${typeof reason === "object" ? renderSourceLinks(reason) : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMailSection(title, body) {
+  return `
+    <div style="margin:0 0 18px">
+      <div style="margin:0 0 8px;color:#6b7684;font-size:12px;font-weight:800">${escapeHtml(title)}</div>
+      ${body}
+    </div>
+  `;
+}
+
+function renderMailProfileImage(person) {
+  if (person.profileImageUrl) {
+    return `
+      <img src="${escapeHtml(person.profileImageUrl)}" width="74" height="74" alt="${escapeHtml(person.name || "Talent")} profile" style="display:block;width:74px;height:74px;border:1px solid #e5e8eb;border-radius:16px;background:#f2f4f6;object-fit:cover;object-position:center top" />
+    `;
+  }
+
+  return `
+    <div style="width:74px;height:74px;border:1px solid #e5e8eb;border-radius:16px;background:#f2f4f6;color:#8b95a1;text-align:center;line-height:74px;font-size:13px;font-weight:800">
+      사진
+    </div>
+  `;
+}
+
+function renderPersonCard(person) {
+  const education = (person.education || []).map(formatEducation).filter(Boolean);
+  const career = (person.career || []).map(formatCareer).filter(Boolean);
+  const meta = [person.birthYear ? `${person.birthYear}년생` : "", person.currentOrg, person.currentTitle].filter(Boolean).join(" · ");
+
+  return `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;margin:0 0 16px;border:1px solid #e5e8eb;border-radius:12px;background:#ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
+      <tr>
+        <td style="padding:18px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+            <tr>
+              <td width="86" valign="top" style="width:86px;padding:0 14px 14px 0">
+                ${renderMailProfileImage(person)}
+              </td>
+              <td valign="top" style="padding:0 0 14px 0">
+                <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+                  <tr>
+                    <td valign="top" style="padding:2px 10px 0 0">
+                      <div style="width:30px;height:30px;border-radius:999px;color:#ffffff;background:#3182f6;text-align:center;line-height:30px;font-size:14px;font-weight:800">${escapeHtml(person.rank || "")}</div>
+                    </td>
+                    <td valign="top">
+                      <h3 style="margin:0 0 5px;color:#191f28;font-size:22px;line-height:1.25">${escapeHtml(person.name || "-")}</h3>
+                      <p style="margin:0;color:#6b7684;font-size:14px;line-height:1.5">${escapeHtml(meta || "-")}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+          <div style="border-top:1px solid #e5e8eb;margin:0 0 18px;font-size:0;line-height:0">&nbsp;</div>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+            <tr>
+              <td valign="top" width="50%" style="width:50%;padding:0 14px 0 0">
+                ${renderMailSection("학력", renderMailLineList(education))}
+                ${renderMailSection("경력", renderMailLineList(career))}
+              </td>
+              <td valign="top" width="50%" style="width:50%;padding:0 0 0 14px">
+                ${renderMailSection("주요 성과/실적", renderMailDashList(person.achievements || []))}
+                ${renderMailSection("선정 사유", renderMailReasons(person.selectionReasons || []))}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
 }
 
 function buildReportHtml(report) {
+  const reportDate = report.targetDate || report.reportDate || "";
+
   return `
-    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.6">
-      <h2 style="margin:0 0 12px">오늘의 화제 인물 리포트</h2>
-      <p style="margin:0 0 18px;color:#4e5968">${escapeHtml(report.targetDate || report.reportDate)} 00:00~24:00 기사 기준</p>
-      ${(report.people || []).map((person) => `
-        <section style="border:1px solid #e5e8eb;border-radius:8px;padding:16px;margin:0 0 14px">
-          <h3 style="margin:0 0 4px">${escapeHtml(person.rank)}. ${escapeHtml(person.name || "-")}</h3>
-          <p style="margin:0 0 14px;color:#4e5968">${escapeHtml([person.currentOrg, person.currentTitle].filter(Boolean).join(" · "))}</p>
-          <strong>학력</strong>
-          <ul>${(person.education || []).map(formatEducation).filter(Boolean).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>정보 없음</li>"}</ul>
-          <strong>경력</strong>
-          <ul>${(person.career || []).map(formatCareer).filter(Boolean).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>정보 없음</li>"}</ul>
-          <strong>핵심 성과/실적</strong>
-          <ul>${(person.achievements || []).filter(Boolean).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>정보 없음</li>"}</ul>
-          <strong>Top5 선정 사유</strong>
-          ${(person.selectionReasons || []).map((reason) => {
-            const text = normalizeReasonText(typeof reason === "string" ? reason : reason.text);
-
-            if (!text) {
-              return "";
-            }
-
-            return `
-              <p style="margin:8px 0 4px">- ${escapeHtml(text)}</p>
-              ${typeof reason === "object" ? renderSourceLinks(reason) : ""}
-            `;
-          }).join("") || "<p>정보 없음</p>"}
-        </section>
-      `).join("")}
+    <div style="margin:0;padding:0;background:#f9fafb;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#191f28;line-height:1.55">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#f9fafb">
+        <tr>
+          <td align="center" style="padding:28px 14px">
+            <table role="presentation" width="760" cellspacing="0" cellpadding="0" style="width:100%;max-width:760px;border-collapse:collapse">
+              <tr>
+                <td>
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;margin:0 0 18px;border:1px solid #e5e8eb;border-radius:12px;background:#ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
+                    <tr>
+                      <td style="padding:20px">
+                        <p style="margin:0 0 6px;color:#8b95a1;font-size:12px;font-weight:800;letter-spacing:0;text-transform:uppercase">Daily News Radar</p>
+                        <h2 style="margin:0 0 10px;color:#191f28;font-size:28px;line-height:1.25">Today's Talent</h2>
+                        <p style="margin:0;color:#4e5968;font-size:15px;line-height:1.6">${escapeHtml(reportDate)} 00:00~24:00 기사 기준</p>
+                        <p style="margin:6px 0 0;color:#6b7684;font-size:13px;line-height:1.6">한국 뉴스 · AI, 로보틱스, 모바일, TV, 생활가전 중심 · DS/반도체 제외</p>
+                      </td>
+                    </tr>
+                  </table>
+                  ${(report.people || []).map(renderPersonCard).join("")}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 }

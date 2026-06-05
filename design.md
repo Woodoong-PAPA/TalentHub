@@ -343,7 +343,7 @@ Production hardening note:
 
 ## 11. Daily Trending People
 
-The 오늘의 화제 인물 feature supports daily sourcing from Korean news:
+The Today's Talent feature supports daily sourcing from Korean news:
 
 - Vercel Cron calls `/api/trending-people` every day at `21:00 UTC`, which is `06:00 KST`.
 - The API analyzes the previous KST calendar day, `00:00~24:00`.
