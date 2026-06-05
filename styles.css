@@ -427,6 +427,37 @@ body.is-authenticated .app-shell {
   gap: 14px;
 }
 
+.dashboard-filter-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.dashboard-filter-row > div {
+  display: grid;
+  gap: 2px;
+}
+
+.dashboard-filter-row strong {
+  font-size: 15px;
+}
+
+.dashboard-filter-row span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dashboard-filter-row .control-select {
+  max-width: 220px;
+}
+
 .metric-card,
 .content-panel,
 .candidate-card,
@@ -518,6 +549,19 @@ body.is-authenticated .app-shell {
   font-size: 13px;
 }
 
+.dashboard-bar-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 18px;
+}
+
+.dashboard-bar-row {
+  grid-template-columns: 74px minmax(0, 1fr) 54px;
+}
+
+.month-bar-row {
+  grid-template-columns: 72px minmax(0, 1fr) 52px;
+}
+
 .bar-track {
   height: 10px;
   overflow: hidden;
@@ -541,6 +585,54 @@ body.is-authenticated .app-shell {
 
 .bar-fill.violet {
   background: var(--violet);
+}
+
+.top-profile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.top-profile-card {
+  display: grid;
+  grid-template-columns: 32px 60px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface);
+}
+
+.top-rank {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.top-profile-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.top-profile-main span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-profile-count {
+  color: var(--text);
+  font-size: 16px;
+  white-space: nowrap;
 }
 
 .pipeline {
@@ -830,6 +922,31 @@ tr:last-child td {
 }
 
 .candidate-name-button:hover {
+  color: var(--blue-700);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-button {
+  display: inline;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: var(--blue-700);
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-button.strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.link-button:hover {
   color: var(--blue-700);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -2340,6 +2457,10 @@ tr:last-child td {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .dashboard-bar-list {
+    grid-template-columns: 1fr;
+  }
+
   .span-4,
   .span-5,
   .span-7,
@@ -2405,6 +2526,30 @@ tr:last-child td {
   .detail-plan-grid,
   .audit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-filter-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-filter-row .control-select {
+    max-width: none;
+  }
+
+  .top-profile-card {
+    grid-template-columns: 28px 52px minmax(0, 1fr);
+  }
+
+  .top-profile-card .avatar.pool {
+    width: 52px;
+    height: 52px;
+  }
+
+  .top-profile-count {
+    grid-column: 3;
+    justify-self: start;
+    font-size: 13px;
   }
 
   .search-result {

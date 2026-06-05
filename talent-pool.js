@@ -445,6 +445,9 @@ const state = {
     status: "all",
     owner: "all"
   },
+  dashboardFilters: {
+    organization: "all"
+  },
   aiQuery: "",
   aiResults: [],
   aiSearchLoading: false,
@@ -1015,6 +1018,7 @@ function persistState(options = {}) {
         auditLogs: state.auditLogs,
         selectedCandidateId: state.selectedCandidateId,
         poolFilters: state.poolFilters,
+        dashboardFilters: state.dashboardFilters,
         members: state.members.map(sanitizeMemberForStorage),
         rolePermissions: state.rolePermissions,
         memberFilters: state.memberFilters,
@@ -1051,6 +1055,14 @@ function restorePersistedState() {
 
   if (persisted.poolFilters && typeof persisted.poolFilters === "object") {
     state.poolFilters = { ...state.poolFilters, ...persisted.poolFilters };
+  }
+
+  if (persisted.dashboardFilters && typeof persisted.dashboardFilters === "object") {
+    state.dashboardFilters = { ...state.dashboardFilters, ...persisted.dashboardFilters };
+  }
+
+  if (state.dashboardFilters.organization !== "all" && !BUSINESS_UNITS.includes(state.dashboardFilters.organization)) {
+    state.dashboardFilters.organization = "all";
   }
 
   if (Array.isArray(persisted.members) && persisted.members.length) {
@@ -2175,58 +2187,59 @@ function renderSidePanel() {
 }
 
 function renderDashboard() {
-  const total = state.candidates.length;
-  const monthlyDelta = countCandidatesCreatedSince(dateDaysAgo(30));
-  const weeklyDelta = countCandidatesCreatedSince(dateDaysAgo(7));
-  const skillCounts = getSkillCounts().slice(0, 6);
-  const maxSkill = Math.max(...skillCounts.map((item) => item.count), 1);
-  const actionCandidates = state.candidates
-    .filter((candidate) => candidate.parsingConfidence < 88 || candidate.status === "contact_planned")
-    .slice(0, 5);
+  const selectedOrganization = getDashboardOrganizationFilter();
+  const selectedLabel = selectedOrganization === "all" ? "전체" : selectedOrganization;
+  const filteredCandidates = getDashboardFilteredCandidates();
+  const total = filteredCandidates.length;
+  const monthlyDelta = countCandidatesCreatedSince(dateDaysAgo(30), filteredCandidates);
+  const weeklyDelta = countCandidatesCreatedSince(dateDaysAgo(7), filteredCandidates);
+  const currentMonthKey = getMonthKey();
+  const previousMonthKey = getMonthKey(addMonths(new Date(), -1));
+  const currentMonthNew = countCandidatesCreatedInMonth(filteredCandidates, currentMonthKey);
+  const previousMonthNew = countCandidatesCreatedInMonth(filteredCandidates, previousMonthKey);
+  const monthlySeries = getMonthlyRegistrationSeries(filteredCandidates, 6);
+  const businessUnitCounts = getBusinessUnitRegistrationCounts();
+  const topViewedProfiles = getTopViewedProfiles(90, 5);
 
   $("#dashboard-content").innerHTML = `
     <div class="dashboard-grid">
+      <div class="dashboard-filter-row">
+        <div>
+          <strong>월별 신규 인재 Pool 등록 수</strong>
+          <span>전체 및 사업부별 필터 조회</span>
+        </div>
+        <select class="control-select" id="dashboard-organization-filter" aria-label="월별 신규 등록 사업부 필터">
+          ${renderDashboardBusinessUnitOptions(selectedOrganization)}
+        </select>
+      </div>
+
       <div class="kpi-row">
-        ${metricCard("전체 후보자", total, `전월 대비 ${formatSignedCount(monthlyDelta)}명 · 전주 대비 ${formatSignedCount(weeklyDelta)}명`)}
+        ${metricCard(`${selectedLabel} 후보자`, total, `전월 대비 ${formatSignedCount(monthlyDelta)}명 · 전주 대비 ${formatSignedCount(weeklyDelta)}명`)}
+        ${metricCard("이번 달 신규 등록", currentMonthNew, `${formatMonthLabel(currentMonthKey)} · 전월 대비 ${formatSignedCount(currentMonthNew - previousMonthNew)}명`)}
       </div>
 
       <section class="content-panel span-12">
         <div class="panel-header">
-          <h4>상위 기술 키워드</h4>
-          <span class="small-pill">검색 인덱스</span>
+          <h4>사업부별 누적 인재 Pool 등록 수</h4>
+          <span class="small-pill">누적 기준</span>
         </div>
-        <div class="bar-list">
-          ${skillCounts.map((item, index) => `
-            <div class="bar-row">
-              <span class="truncate">${escapeHtml(item.skill)}</span>
-              <div class="bar-track">
-                <div class="bar-fill ${["", "green", "amber", "violet"][index % 4]}" style="width:${(item.count / maxSkill) * 100}%"></div>
-              </div>
-              <strong>${item.count}</strong>
-            </div>
-          `).join("")}
-        </div>
+        ${renderBusinessUnitRegistrationChart(businessUnitCounts)}
       </section>
 
-      <section class="content-panel span-8">
+      <section class="content-panel span-5">
         <div class="panel-header">
-          <h4>운영 액션 큐</h4>
-          <button class="soft-button" type="button" data-view="pool">목록 보기</button>
+          <h4>월별 신규 등록 추이</h4>
+          <span class="small-pill">${escapeHtml(selectedLabel)} 기준</span>
         </div>
-        ${candidateTable(actionCandidates)}
+        ${renderMonthlyRegistrationChart(monthlySeries)}
       </section>
 
-      <section class="content-panel span-4">
+      <section class="content-panel span-7">
         <div class="panel-header">
-          <h4>AI 추천 시그널</h4>
-          <span class="small-pill">근거 기반</span>
+          <h4>최근 3개월 조회 수 TOP5 프로필</h4>
+          <span class="small-pill">상세 조회 로그 기준</span>
         </div>
-        <div class="bar-list">
-          ${signalRow("재접촉 우선", 82, "green")}
-          ${signalRow("핵심 기술 적합", 74, "amber")}
-          ${signalRow("최근 업데이트", 41, "violet")}
-          ${signalRow("전형 전환 가능", 67, "")}
-        </div>
+        ${renderTopViewedProfiles(topViewedProfiles)}
       </section>
     </div>
   `;
@@ -2242,37 +2255,177 @@ function metricCard(label, value, trend) {
   `;
 }
 
-function countCandidatesCreatedSince(date) {
-  return state.candidates.filter((candidate) => String(candidate.createdAt || "") >= date).length;
+function countCandidatesCreatedSince(date, candidates = state.candidates) {
+  return candidates.filter((candidate) => String(candidate.createdAt || "") >= date).length;
 }
 
 function formatSignedCount(value) {
   return value > 0 ? `+${value}` : String(value);
 }
 
-function signalRow(label, value, color) {
+function getDashboardOrganizationFilter() {
+  const organization = state.dashboardFilters.organization;
+  return organization === "all" || BUSINESS_UNITS.includes(organization) ? organization : "all";
+}
+
+function renderDashboardBusinessUnitOptions(selectedOrganization) {
   return `
-    <div class="bar-row">
-      <span>${label}</span>
-      <div class="bar-track">
-        <div class="bar-fill ${color}" style="width:${value}%"></div>
-      </div>
-      <strong>${value}</strong>
+    <option value="all" ${selectedOrganization === "all" ? "selected" : ""}>전체</option>
+    ${BUSINESS_UNITS.map((unit) => `<option value="${escapeHtml(unit)}" ${unit === selectedOrganization ? "selected" : ""}>${escapeHtml(unit)}</option>`).join("")}
+  `;
+}
+
+function getCandidateBusinessUnit(candidate) {
+  return normalizeBusinessUnit(candidate.organization) || "미지정";
+}
+
+function getDashboardFilteredCandidates() {
+  const organization = getDashboardOrganizationFilter();
+  return organization === "all"
+    ? state.candidates
+    : state.candidates.filter((candidate) => getCandidateBusinessUnit(candidate) === organization);
+}
+
+function getBusinessUnitRegistrationCounts() {
+  const counts = new Map(BUSINESS_UNITS.map((unit) => [unit, 0]));
+  let unassignedCount = 0;
+
+  state.candidates.forEach((candidate) => {
+    const unit = getCandidateBusinessUnit(candidate);
+
+    if (counts.has(unit)) {
+      counts.set(unit, counts.get(unit) + 1);
+    } else {
+      unassignedCount += 1;
+    }
+  });
+
+  const rows = BUSINESS_UNITS.map((unit) => ({ unit, count: counts.get(unit) || 0 }));
+
+  if (unassignedCount) {
+    rows.push({ unit: "미지정", count: unassignedCount });
+  }
+
+  return rows;
+}
+
+function renderBusinessUnitRegistrationChart(rows) {
+  const maxCount = Math.max(...rows.map((row) => row.count), 1);
+
+  return `
+    <div class="bar-list dashboard-bar-list">
+      ${rows.map((row, index) => `
+        <div class="bar-row dashboard-bar-row">
+          <span class="truncate">${escapeHtml(row.unit)}</span>
+          <div class="bar-track">
+            <div class="bar-fill ${["", "green", "amber", "violet"][index % 4]}" style="width:${(row.count / maxCount) * 100}%"></div>
+          </div>
+          <strong>${row.count}명</strong>
+        </div>
+      `).join("")}
     </div>
   `;
 }
 
-function getSkillCounts() {
+function addMonths(date, offset) {
+  const nextDate = new Date(date);
+  nextDate.setMonth(nextDate.getMonth() + offset);
+  return nextDate;
+}
+
+function getMonthKey(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
+
+function formatMonthLabel(monthKey) {
+  const [year, month] = String(monthKey || "").split("-");
+  return year && month ? `${year}.${month}` : "-";
+}
+
+function countCandidatesCreatedInMonth(candidates, monthKey) {
+  return candidates.filter((candidate) => String(candidate.createdAt || "").slice(0, 7) === monthKey).length;
+}
+
+function getMonthlyRegistrationSeries(candidates, monthCount = 6) {
+  return Array.from({ length: monthCount }, (_, index) => {
+    const monthKey = getMonthKey(addMonths(new Date(), index - monthCount + 1));
+    return {
+      key: monthKey,
+      label: formatMonthLabel(monthKey),
+      count: countCandidatesCreatedInMonth(candidates, monthKey)
+    };
+  });
+}
+
+function renderMonthlyRegistrationChart(series) {
+  const maxCount = Math.max(...series.map((item) => item.count), 1);
+
+  return `
+    <div class="bar-list">
+      ${series.map((item, index) => `
+        <div class="bar-row month-bar-row">
+          <span>${escapeHtml(item.label)}</span>
+          <div class="bar-track">
+            <div class="bar-fill ${index === series.length - 1 ? "" : "green"}" style="width:${(item.count / maxCount) * 100}%"></div>
+          </div>
+          <strong>${item.count}명</strong>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function getTopViewedProfiles(days = 90, limit = 5) {
+  const since = dateDaysAgo(days);
   const counts = new Map();
-  state.candidates.forEach((candidate) => {
-    candidate.skills.forEach((skill) => {
-      counts.set(skill, (counts.get(skill) || 0) + 1);
-    });
+
+  state.auditLogs.forEach((log) => {
+    const action = String(log.action || "");
+    const viewedAt = String(log.time || "").slice(0, 10);
+    const candidateName = String(log.resource || "").trim();
+
+    if (!action.includes("후보자 상세 조회") || !candidateName || viewedAt < since) {
+      return;
+    }
+
+    counts.set(candidateName, (counts.get(candidateName) || 0) + 1);
   });
 
   return [...counts.entries()]
-    .map(([skill, count]) => ({ skill, count }))
-    .sort((a, b) => b.count - a.count || a.skill.localeCompare(b.skill));
+    .map(([name, views]) => ({
+      candidate: state.candidates.find((candidate) => candidate.name === name),
+      views
+    }))
+    .filter((item) => item.candidate)
+    .sort((a, b) =>
+      b.views - a.views ||
+      dateSortValue(b.candidate.updatedAt) - dateSortValue(a.candidate.updatedAt) ||
+      String(a.candidate.name).localeCompare(String(b.candidate.name))
+    )
+    .slice(0, limit);
+}
+
+function renderTopViewedProfiles(items) {
+  if (!items.length) {
+    return `<div class="empty-state">최근 3개월 상세 조회 이력이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="top-profile-list">
+      ${items.map(({ candidate, views }, index) => `
+        <article class="top-profile-card">
+          <span class="top-rank">${index + 1}</span>
+          ${candidateVisual(candidate, "pool")}
+          <div class="top-profile-main">
+            <button class="link-button strong" type="button" data-select-candidate="${escapeHtml(candidate.id)}">${escapeHtml(candidate.name)}</button>
+            <span>${escapeHtml(formatBirthAge(candidate))}</span>
+            <span>${escapeHtml(candidate.organization || "사업부 미입력")} · ${escapeHtml(candidate.role || "직무 미입력")}</span>
+          </div>
+          <strong class="top-profile-count">${views}회</strong>
+        </article>
+      `).join("")}
+    </div>
+  `;
 }
 
 function candidateTable(candidates) {
@@ -6100,6 +6253,12 @@ function updatePoolFilters() {
   renderPoolTable();
 }
 
+function updateDashboardFilters() {
+  state.dashboardFilters.organization = $("#dashboard-organization-filter")?.value || "all";
+  persistState();
+  renderDashboard();
+}
+
 async function deleteCandidateProfile(candidateId) {
   const candidate = findCandidate(candidateId);
 
@@ -6949,6 +7108,10 @@ function bindEvents() {
   }, true);
 
   document.addEventListener("change", (event) => {
+    if (event.target.id === "dashboard-organization-filter") {
+      updateDashboardFilters();
+    }
+
     if (["pool-status", "pool-owner"].includes(event.target.id)) {
       updatePoolFilters();
     }
