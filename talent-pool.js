@@ -434,7 +434,10 @@ const state = {
   aiSearchLoading: false,
   aiSearchFileName: "",
   trendingReport: null,
+  trendingHistory: [],
+  trendingSelectedDate: "",
   trendingLoading: false,
+  trendingHistoryLoading: false,
   trendingError: "",
   trendingMailSettings: structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
   trendingMailLoading: false,
@@ -833,6 +836,8 @@ function persistState(options = {}) {
         memberFilters: state.memberFilters,
         currentUserId: state.currentUserId,
         trendingReport: state.trendingReport,
+        trendingHistory: state.trendingHistory,
+        trendingSelectedDate: state.trendingSelectedDate,
         trendingMailSettings: state.trendingMailSettings
       })
     );
@@ -882,6 +887,14 @@ function restorePersistedState() {
 
   if (persisted.trendingReport && typeof persisted.trendingReport === "object") {
     state.trendingReport = persisted.trendingReport;
+  }
+
+  if (Array.isArray(persisted.trendingHistory)) {
+    state.trendingHistory = persisted.trendingHistory;
+  }
+
+  if (persisted.trendingSelectedDate) {
+    state.trendingSelectedDate = persisted.trendingSelectedDate;
   }
 
   if (persisted.trendingMailSettings && typeof persisted.trendingMailSettings === "object") {
@@ -1739,6 +1752,10 @@ function setView(view) {
 
   if (view === "trending" && trendingReportNeedsRefresh(state.trendingReport) && !state.trendingLoading) {
     fetchTrendingPeople();
+  }
+
+  if (view === "trending" && !state.trendingHistory.length && !state.trendingHistoryLoading) {
+    fetchTrendingHistory();
   }
 
   if (view === "trending" && isAdmin()) {
@@ -2658,6 +2675,120 @@ function renderNewsLinks(reason) {
   `;
 }
 
+function normalizeReasonText(value) {
+  return String(value || "")
+    .replace(/^[-\s]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitReasonSentences(value) {
+  const text = normalizeReasonText(value);
+
+  if (!text) {
+    return [];
+  }
+
+  const parts = text
+    .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
+    .map(normalizeReasonText)
+    .filter(Boolean);
+
+  return parts.length ? parts : [text];
+}
+
+function asDisplaySentence(value) {
+  const text = normalizeReasonText(value);
+  return text && !/[.!?。！？]$/.test(text) ? `${text}.` : text;
+}
+
+function trendingReasonLines(reasons) {
+  const lines = [];
+  const linkCount = (reasons || [])
+    .filter((reason) => typeof reason === "object")
+    .flatMap((reason) => reason.links || [])
+    .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
+    .length;
+
+  (reasons || []).forEach((reason) => {
+    splitReasonSentences(typeof reason === "object" ? reason.text : reason).forEach((line) => {
+      if (line && !lines.includes(line)) {
+        lines.push(asDisplaySentence(line));
+      }
+    });
+  });
+
+  if (lines.length === 1) {
+    lines.push(linkCount
+      ? `근거 기사 ${linkCount}건에서 관련 이슈가 반복 보도되어 당일 화제성 확인.`
+      : "전일 DX 관심 분야 뉴스 흐름에서 주요 인물로 분류.");
+  }
+
+  return lines.slice(0, 2);
+}
+
+function renderSelectionReasons(reasons) {
+  const lines = trendingReasonLines(reasons);
+  const links = (reasons || [])
+    .filter((reason) => typeof reason === "object")
+    .flatMap((reason) => reason.links || [])
+    .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
+    .slice(0, 3);
+
+  if (!lines.length) {
+    return `<span class="muted-text">선정 사유 없음</span>`;
+  }
+
+  return `
+    <div class="reason-block reason-summary">
+      ${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+      ${renderNewsLinks({ links })}
+    </div>
+  `;
+}
+
+function renderTrendingHistoryPanel() {
+  const reports = state.trendingHistory || [];
+  const selectedDate = state.trendingReport?.targetDate || state.trendingSelectedDate || "";
+
+  if (state.trendingHistoryLoading && !reports.length) {
+    return `
+      <section class="trending-history-panel">
+        <div class="trending-history-header">
+          <strong>리포트 보관함</strong>
+          <span>날짜 목록을 불러오는 중입니다.</span>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="trending-history-panel">
+      <div class="trending-history-header">
+        <div>
+          <strong>리포트 보관함</strong>
+          <span>저장된 날짜를 클릭하면 해당 날짜 리포트를 그대로 조회합니다.</span>
+        </div>
+        <button class="ghost-button compact-button" type="button" data-refresh-trending-history ${state.trendingHistoryLoading ? "disabled" : ""}>목록 새로고침</button>
+      </div>
+      ${reports.length ? `
+        <div class="trending-history-list">
+          ${reports.map((report) => {
+            const date = report.targetDate || report.reportDate;
+            const names = (report.topPeople || []).slice(0, 3).join(", ");
+            return `
+              <button class="history-date-button ${date === selectedDate ? "is-active" : ""}" type="button" data-trending-date="${escapeHtml(date)}">
+                <strong>${escapeHtml(date)}</strong>
+                <span>${escapeHtml(names || `${report.peopleCount || 0}명`)}</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      ` : `<div class="empty-state compact-empty">저장된 리포트 날짜가 없습니다.</div>`}
+    </section>
+  `;
+}
+
 function trendingMailRecipientText() {
   return state.trendingMailSettings.recipients.join("\n");
 }
@@ -2753,17 +2884,12 @@ function trendingPersonCard(person) {
             ${career.length ? `<div class="plain-line-list">${career.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
           </section>
           <section>
-            <strong>핵심 성과/실적</strong>
+            <strong>주요 성과/실적</strong>
             ${renderDashList(achievements)}
           </section>
           <section>
-            <strong>Top5 선정 사유</strong>
-            ${reasons.length ? reasons.slice(0, 3).map((reason) => `
-              <div class="reason-block">
-                <p>- ${escapeHtml(reason.text || reason)}</p>
-                ${typeof reason === "object" ? renderNewsLinks(reason) : ""}
-              </div>
-            `).join("") : `<span class="muted-text">선정 사유 없음</span>`}
+            <strong>선정 사유</strong>
+            ${renderSelectionReasons(reasons)}
           </section>
         </div>
       </div>
@@ -2796,8 +2922,8 @@ function renderTrendingPeople() {
         ${report?.generatedAt ? `<span>생성 시각 ${escapeHtml(report.generatedAt)}</span>` : ""}
       </div>
       <div class="trending-toolbar-actions">
-        <button class="ghost-button" type="button" data-refresh-trending="cache" ${state.trendingLoading ? "disabled" : ""}>리포트 불러오기</button>
-        <button class="primary-button" type="button" data-refresh-trending="force" ${state.trendingLoading ? "disabled" : ""}>새로 생성</button>
+        <button class="ghost-button" type="button" data-refresh-trending="latest" ${state.trendingLoading ? "disabled" : ""}>최신 리포트</button>
+        <button class="primary-button" type="button" data-refresh-trending="force" ${state.trendingLoading ? "disabled" : ""}>현재 날짜 재생성</button>
       </div>
     </div>
     <div class="trending-scope">
@@ -2805,6 +2931,7 @@ function renderTrendingPeople() {
       <span class="status-chip chip-amber">추천 실행: 매일 06:00 KST Vercel Cron</span>
       <span class="status-chip chip-green">Pool 등록 가능</span>
     </div>
+    ${renderTrendingHistoryPanel()}
     ${renderTrendingMailPanel()}
     <div class="trending-list">
       ${body}
@@ -4886,7 +5013,19 @@ async function fetchTrendingPeople(options = {}) {
   renderTrendingPeople();
 
   try {
-    const query = options.force ? "?force=1" : "";
+    const params = new URLSearchParams();
+
+    if (options.force) {
+      params.set("force", "1");
+    }
+
+    if (options.date) {
+      params.set("date", options.date);
+    } else if (state.trendingSelectedDate && !options.forceLatest) {
+      params.set("date", state.trendingSelectedDate);
+    }
+
+    const query = params.toString() ? `?${params.toString()}` : "";
     const response = await fetch(`/api/trending-people${query}`);
     const payload = await response.json();
 
@@ -4895,16 +5034,50 @@ async function fetchTrendingPeople(options = {}) {
     }
 
     state.trendingReport = payload.report;
+    state.trendingSelectedDate = payload.report?.targetDate || options.date || "";
     state.trendingLoading = false;
     state.trendingError = "";
     persistState();
     renderTrendingPeople();
+    fetchTrendingHistory({ silent: true });
     showToast("오늘의 화제 인물 리포트를 불러왔습니다.");
   } catch (error) {
     console.warn("Trending people report failed.", error);
     state.trendingLoading = false;
     state.trendingError = "화제 인물 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
     renderTrendingPeople();
+  }
+}
+
+async function fetchTrendingHistory(options = {}) {
+  state.trendingHistoryLoading = true;
+
+  if (!options.silent) {
+    renderTrendingPeople();
+  }
+
+  try {
+    const response = await fetch("/api/trending-people?history=1");
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending history API failed: ${response.status}`);
+    }
+
+    state.trendingHistory = Array.isArray(payload.reports) ? payload.reports : [];
+    state.trendingHistoryLoading = false;
+    persistState();
+
+    if (!options.silent) {
+      renderTrendingPeople();
+    }
+  } catch (error) {
+    console.warn("Trending report history failed.", error);
+    state.trendingHistoryLoading = false;
+
+    if (!options.silent) {
+      renderTrendingPeople();
+    }
   }
 }
 
@@ -5658,7 +5831,23 @@ function bindEvents() {
 
     const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
     if (refreshTrendingButton) {
-      fetchTrendingPeople({ force: refreshTrendingButton.dataset.refreshTrending === "force" });
+      const mode = refreshTrendingButton.dataset.refreshTrending;
+      fetchTrendingPeople({
+        force: mode === "force",
+        forceLatest: mode === "latest"
+      });
+      return;
+    }
+
+    const refreshTrendingHistoryButton = event.target.closest("[data-refresh-trending-history]");
+    if (refreshTrendingHistoryButton) {
+      fetchTrendingHistory();
+      return;
+    }
+
+    const trendingDateButton = event.target.closest("[data-trending-date]");
+    if (trendingDateButton) {
+      fetchTrendingPeople({ date: trendingDateButton.dataset.trendingDate });
       return;
     }
 

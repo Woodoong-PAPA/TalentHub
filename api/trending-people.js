@@ -248,6 +248,11 @@ function forceRefresh(requestUrl) {
   return url.searchParams.get("force") === "1" || url.searchParams.get("cron") === "1";
 }
 
+function wantsHistory(requestUrl) {
+  const url = new URL(requestUrl, "http://localhost");
+  return url.searchParams.get("history") === "1";
+}
+
 function decodeXml(value) {
   return String(value || "")
     .replace(/<!\[CDATA\[(.*?)\]\]>/gs, "$1")
@@ -751,6 +756,29 @@ async function loadCachedReport(targetDate) {
   return Array.isArray(rows) && rows[0]?.payload ? rows[0].payload : null;
 }
 
+async function loadReportHistory() {
+  const rows = await supabaseRequest("trending_people_reports?select=report_date,target_date,generated_at,people&order=report_date.desc&limit=60");
+
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows
+    .map((row) => ({
+      reportDate: row.report_date || row.target_date || "",
+      targetDate: row.target_date || row.report_date || "",
+      generatedAt: row.generated_at || "",
+      peopleCount: Array.isArray(row.people) ? row.people.length : 0,
+      topPeople: Array.isArray(row.people)
+        ? row.people
+          .slice(0, 5)
+          .map((person) => String(person.name || "").trim())
+          .filter(Boolean)
+        : []
+    }))
+    .filter((row) => row.reportDate);
+}
+
 async function loadExcludedNames(targetDate) {
   const since = addDays(targetDate, -30);
   const rows = await supabaseRequest(`trending_people_reports?select=people&report_date=gte.${since}&report_date=lt.${targetDate}`);
@@ -904,6 +932,7 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
     "경력 country에서 대한민국 또는 South Korea는 반드시 한국으로 쓴다.",
     "경력 department에는 확인 가능한 소속부서, 연구실, 조직명, 사업부, 팀명을 쓴다. 없으면 빈 문자열.",
     "핵심 성과/실적과 선정 사유는 보고서 문장처럼 짧게 끊고, '~했습니다' 같은 종결 문장을 쓰지 않는다.",
+    "selectionReasons는 인물별 정확히 2개만 작성한다. 각 text는 한 문장으로 작성하고 서로 중복되지 않게 한다.",
     "선정 사유마다 근거 기사 id를 articleIds에 반드시 포함한다.",
     "",
     `최근 1개월 제외 이름: ${excludedNames.join(", ") || "없음"}`,
@@ -1026,7 +1055,7 @@ function normalizePerson(person, index, articleById) {
               url: article.url
             }))
         };
-      }).filter((reason) => reason.text).slice(0, 3)
+      }).filter((reason) => reason.text).slice(0, 2)
       : [],
     linkedinUrl: String(person.linkedinUrl || "").trim(),
     profileImageUrl: sanitizeUrl(person.profileImageUrl),
@@ -1657,6 +1686,14 @@ module.exports = async function trendingPeople(request, response) {
   loadLocalEnv();
 
   try {
+    if (wantsHistory(request.url)) {
+      sendJson(response, 200, {
+        ok: true,
+        reports: await loadReportHistory()
+      });
+      return;
+    }
+
     const targetDate = getTargetDate(request.url);
     const shouldForce = forceRefresh(request.url);
     const cached = shouldForce ? null : await loadCachedReport(targetDate);

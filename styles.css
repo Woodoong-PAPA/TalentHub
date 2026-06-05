@@ -1234,6 +1234,76 @@ tr:last-child td {
   gap: 14px;
 }
 
+.trending-history-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.trending-history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trending-history-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.trending-history-header strong {
+  color: var(--text);
+}
+
+.trending-history-header span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.trending-history-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 8px;
+}
+
+.history-date-button {
+  display: grid;
+  gap: 4px;
+  min-height: 62px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 11px;
+  color: var(--text);
+  background: var(--surface-soft);
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-date-button strong {
+  color: inherit;
+  font-size: 14px;
+}
+
+.history-date-button span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-date-button:hover,
+.history-date-button.is-active {
+  border-color: var(--blue);
+  color: var(--blue-700);
+  background: var(--blue-soft);
+}
+
 .trending-card {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr);
@@ -1367,12 +1437,23 @@ tr:last-child td {
   color: var(--text);
   line-height: 1.6;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .reason-block {
   display: grid;
   gap: 6px;
   min-width: 0;
+}
+
+.reason-summary {
+  gap: 8px;
+}
+
+.reason-summary p {
+  border-left: 3px solid var(--blue);
+  padding-left: 9px;
+  white-space: pre-line;
 }
 
 .news-link-row a {
@@ -1610,6 +1691,8 @@ tr:last-child td {
   margin: 0;
   color: var(--text);
   line-height: 1.65;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .competency-tags {
@@ -1677,7 +1760,8 @@ tr:last-child td {
   color: var(--text);
   font-size: 14px;
   line-height: 1.45;
-  white-space: normal;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .detail-card-list {
@@ -1719,6 +1803,9 @@ tr:last-child td {
 .achievement-box p {
   margin: 4px 0 0;
   color: var(--text);
+  line-height: 1.6;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .stat-box {
@@ -1769,6 +1856,10 @@ tr:last-child td {
   color: var(--muted);
   background: var(--surface-soft);
   text-align: center;
+}
+
+.compact-empty {
+  min-height: 72px;
 }
 
 .audit-grid {
@@ -1895,6 +1986,7 @@ tr:last-child td {
 
   .trending-toolbar,
   .trending-card-header,
+  .trending-history-header,
   .trending-mail-header,
   .trending-mail-actions {
     align-items: stretch;
