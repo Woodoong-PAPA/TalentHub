@@ -1333,6 +1333,60 @@ tr:last-child td {
   box-shadow: none;
 }
 
+.member-profile-modal {
+  width: min(720px, 100%);
+}
+
+.member-profile-form {
+  display: grid;
+  gap: 16px;
+}
+
+.readonly-profile-value {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--input-radius);
+  padding: 10px 14px;
+  background: var(--surface-soft);
+}
+
+.readonly-profile-value span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.readonly-profile-value strong {
+  color: var(--blue-700);
+  font-size: 12px;
+}
+
+.member-password-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.member-password-section > strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.member-password-section > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.member-profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .trending-list {
   display: grid;
   gap: 14px;
@@ -2424,6 +2478,11 @@ tr:last-child td {
 
   .trending-modal {
     max-height: calc(100vh - 24px);
+  }
+
+  .member-profile-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .detail-hero-card {

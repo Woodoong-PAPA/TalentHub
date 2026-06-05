@@ -416,6 +416,7 @@ const state = {
   authView: "login",
   currentUserId: "",
   authMessage: "",
+  memberProfileModalOpen: false,
   members: structuredClone(DEFAULT_MEMBERS),
   rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
   memberFilters: {
@@ -1801,7 +1802,92 @@ function renderUserMenu() {
       <span>${escapeHtml(member.name)}</span>
       <strong>${escapeHtml(getRoleLabel(member.role))}</strong>
     </div>
+    <button class="ghost-button compact-button" type="button" data-open-member-profile>내 정보 수정</button>
     <button class="ghost-button compact-button" type="button" id="logout-button">로그아웃</button>
+    ${renderMemberProfileModal(member)}
+  `;
+}
+
+function renderMemberProfileModal(member) {
+  if (!state.memberProfileModalOpen) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-member-profile-backdrop>
+      <section class="trending-modal member-profile-modal" role="dialog" aria-modal="true" aria-labelledby="member-profile-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="member-profile-title">내 정보 수정</strong>
+            <span>이름, 소속 정보, 연락처와 비밀번호를 직접 관리합니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-member-profile>닫기</button>
+        </div>
+        <div class="trending-modal-body">
+          <form class="member-profile-form" id="member-profile-form">
+            <div class="form-error" id="member-profile-error" hidden></div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="member-profile-name">이름</label>
+                <input class="control-input" id="member-profile-name" name="name" value="${inputValue(member.name)}" autocomplete="name" />
+              </div>
+              <div class="field">
+                <label for="member-profile-email">이메일</label>
+                <input class="control-input" id="member-profile-email" name="email" value="${inputValue(member.email)}" readonly />
+                <span class="field-caption">이메일은 로그인 ID로 사용되어 관리자에게 변경을 요청해주세요.</span>
+              </div>
+              <div class="field">
+                <label for="member-profile-department">부서</label>
+                <input class="control-input" id="member-profile-department" name="department" value="${inputValue(member.department)}" autocomplete="organization" />
+              </div>
+              <div class="field">
+                <label for="member-profile-position">직책</label>
+                <input class="control-input" id="member-profile-position" name="position" value="${inputValue(member.position)}" autocomplete="organization-title" />
+              </div>
+              <div class="field">
+                <label for="member-profile-phone">연락처</label>
+                <input class="control-input" id="member-profile-phone" name="phone" type="tel" value="${inputValue(member.phone)}" autocomplete="tel" />
+              </div>
+              <div class="field">
+                <label>회원 상태</label>
+                <div class="readonly-profile-value">
+                  <span>${escapeHtml(getRoleLabel(member.role))}</span>
+                  <strong>${escapeHtml(getMemberStatusLabel(member.status))}</strong>
+                </div>
+              </div>
+              <div class="field full">
+                <label for="member-profile-note">사용 목적 / 메모</label>
+                <textarea class="control-textarea" id="member-profile-note" name="note">${escapeHtml(member.note)}</textarea>
+              </div>
+            </div>
+
+            <div class="member-password-section">
+              <strong>비밀번호 변경</strong>
+              <span>비밀번호를 바꾸지 않으려면 아래 칸은 비워두세요.</span>
+              <div class="field-grid">
+                <div class="field">
+                  <label for="member-profile-current-password">현재 비밀번호</label>
+                  <input class="control-input" id="member-profile-current-password" name="currentPassword" type="password" autocomplete="current-password" />
+                </div>
+                <div class="field">
+                  <label for="member-profile-new-password">새 비밀번호</label>
+                  <input class="control-input" id="member-profile-new-password" name="newPassword" type="password" autocomplete="new-password" />
+                </div>
+                <div class="field">
+                  <label for="member-profile-confirm-password">새 비밀번호 확인</label>
+                  <input class="control-input" id="member-profile-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" />
+                </div>
+              </div>
+            </div>
+
+            <div class="member-profile-actions">
+              <button class="ghost-button" type="button" data-close-member-profile>취소</button>
+              <button class="primary-button" type="submit">저장</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -5976,6 +6062,99 @@ async function verifyMemberPassword(member, password) {
   return false;
 }
 
+function showMemberProfileError(message) {
+  const errorBox = $("#member-profile-error");
+
+  if (!errorBox) {
+    return;
+  }
+
+  errorBox.hidden = !message;
+  errorBox.innerHTML = message ? `<strong>저장 전 확인이 필요합니다.</strong><span>${escapeHtml(message)}</span>` : "";
+}
+
+function openMemberProfileModal() {
+  if (!getCurrentMember()) {
+    return;
+  }
+
+  state.memberProfileModalOpen = true;
+  renderUserMenu();
+}
+
+function closeMemberProfileModal() {
+  if (!state.memberProfileModalOpen) {
+    return;
+  }
+
+  state.memberProfileModalOpen = false;
+  renderUserMenu();
+}
+
+async function saveCurrentMemberProfile(form) {
+  const member = getCurrentMember();
+
+  if (!member || !form) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  const department = String(formData.get("department") || "").trim();
+  const position = String(formData.get("position") || "").trim();
+  const phone = String(formData.get("phone") || "").trim();
+  const note = String(formData.get("note") || "").trim();
+  const currentPassword = String(formData.get("currentPassword") || "");
+  const newPassword = String(formData.get("newPassword") || "");
+  const confirmPassword = String(formData.get("confirmPassword") || "");
+  const passwordChangeRequested = Boolean(currentPassword || newPassword || confirmPassword);
+
+  showMemberProfileError("");
+
+  if (passwordChangeRequested) {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      showMemberProfileError("비밀번호 변경 시 현재 비밀번호, 새 비밀번호, 새 비밀번호 확인을 모두 입력해주세요.");
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      showMemberProfileError("새 비밀번호는 8자 이상으로 입력해주세요.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      showMemberProfileError("새 비밀번호와 확인 값이 일치하지 않습니다.");
+      return;
+    }
+
+    if (!await verifyMemberPassword(member, currentPassword)) {
+      showMemberProfileError("현재 비밀번호가 일치하지 않습니다.");
+      return;
+    }
+
+    member.password = "";
+    member.passwordHash = await hashPassword(member.email, newPassword);
+  }
+
+  const beforeName = member.name;
+  member.name = name || member.name;
+  member.department = department;
+  member.position = position;
+  member.phone = phone;
+  member.note = note;
+
+  addAuditLog(
+    passwordChangeRequested ? "회원 정보 및 비밀번호 수정" : "회원 정보 수정",
+    member.name,
+    "본인 프로필 업데이트",
+    beforeName || member.name
+  );
+  state.memberProfileModalOpen = false;
+  persistState();
+  render();
+  showToast("내 정보를 저장했습니다.");
+}
+
 async function handleLoginSubmit(form) {
   const formData = new FormData(form);
   const email = String(formData.get("email") || "").trim().toLowerCase();
@@ -5995,6 +6174,7 @@ async function handleLoginSubmit(form) {
   member.lastLoginAt = getTimestampText();
   state.currentUserId = member.id;
   state.authMessage = "";
+  state.memberProfileModalOpen = false;
   state.view = canAccessView(state.view, member) ? state.view : getDefaultView(member);
   addAuditLog("로그인", member.name, "시스템 접속", member.name);
   persistState();
@@ -6061,6 +6241,7 @@ function logout() {
 
   state.currentUserId = "";
   state.authMessage = "";
+  state.memberProfileModalOpen = false;
   persistState();
   render();
 }
@@ -6202,6 +6383,16 @@ function bindEvents() {
 
     if (event.target.closest("#logout-button")) {
       logout();
+      return;
+    }
+
+    if (event.target.closest("[data-open-member-profile]")) {
+      openMemberProfileModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-member-profile]") || event.target.matches("[data-member-profile-backdrop]")) {
+      closeMemberProfileModal();
       return;
     }
 
@@ -6417,6 +6608,10 @@ function bindEvents() {
     if (event.key === "Escape" && state.trendingModal) {
       closeTrendingModal();
     }
+
+    if (event.key === "Escape" && state.memberProfileModalOpen) {
+      closeMemberProfileModal();
+    }
   });
 
   document.addEventListener("submit", (event) => {
@@ -6434,6 +6629,15 @@ function bindEvents() {
       handleSignupSubmit(event.target).catch((error) => {
         console.warn(error);
         setAuthMessage("가입 신청 처리 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    if (event.target.matches("#member-profile-form")) {
+      event.preventDefault();
+      saveCurrentMemberProfile(event.target).catch((error) => {
+        console.warn(error);
+        showMemberProfileError("내 정보 저장 중 오류가 발생했습니다.");
       });
       return;
     }
