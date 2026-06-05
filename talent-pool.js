@@ -29,13 +29,21 @@ const MENU_CONFIG = [
 ];
 
 const MEMBER_ROLES = {
-  associate: "준회원",
-  regular: "정회원",
-  operator: "운영진",
+  general: "일반회원",
+  search_firm: "서치펌 담당자",
+  hiring_manager: "현업 담당자",
+  business_recruiter: "사업부 채용 담당자",
+  division_recruiter: "부문 채용 담당자",
   admin: "관리자"
 };
 
-const MEMBER_ROLE_ORDER = ["associate", "regular", "operator", "admin"];
+const MEMBER_ROLE_ORDER = ["general", "search_firm", "hiring_manager", "business_recruiter", "division_recruiter", "admin"];
+const SIGNUP_ROLE_ORDER = MEMBER_ROLE_ORDER.filter((role) => role !== "admin");
+const LEGACY_MEMBER_ROLE_MAP = {
+  associate: "general",
+  regular: "business_recruiter",
+  operator: "division_recruiter"
+};
 
 const MEMBER_STATUSES = {
   pending: "승인 대기",
@@ -47,9 +55,11 @@ const MEMBER_STATUSES = {
 const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  associate: ["dashboard", "pool", "ai-search", "trending"],
-  regular: ["dashboard", "pool", "register", "ai-search", "trending"],
-  operator: ["dashboard", "pool", "register", "ai-search", "trending", "audit"],
+  general: ["dashboard", "pool", "trending"],
+  search_firm: ["dashboard", "pool", "register", "ai-search"],
+  hiring_manager: ["dashboard", "pool", "ai-search", "trending"],
+  business_recruiter: ["dashboard", "pool", "register", "ai-search", "trending"],
+  division_recruiter: ["dashboard", "pool", "register", "ai-search", "trending", "audit"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -713,7 +723,8 @@ function normalizeAuditLog(log) {
 }
 
 function normalizeMember(member) {
-  const role = MEMBER_ROLES[member.role] ? member.role : "associate";
+  const rawRole = String(member.role || "").trim();
+  const role = MEMBER_ROLES[rawRole] ? rawRole : LEGACY_MEMBER_ROLE_MAP[rawRole] || "general";
   const status = MEMBER_STATUSES[member.status] ? member.status : "pending";
 
   return {
@@ -816,11 +827,18 @@ async function ensureMemberPasswordHashes() {
 }
 
 function normalizeRolePermissions(permissions = {}) {
+  const sourcePermissions = { ...permissions };
   const normalized = structuredClone(DEFAULT_ROLE_PERMISSIONS);
 
+  Object.entries(LEGACY_MEMBER_ROLE_MAP).forEach(([legacyRole, currentRole]) => {
+    if (Array.isArray(sourcePermissions[legacyRole]) && !Array.isArray(sourcePermissions[currentRole])) {
+      sourcePermissions[currentRole] = sourcePermissions[legacyRole];
+    }
+  });
+
   MEMBER_ROLE_ORDER.forEach((role) => {
-    if (Array.isArray(permissions[role])) {
-      normalized[role] = permissions[role].filter((view) => MENU_CONFIG.some((item) => item.view === view));
+    if (Array.isArray(sourcePermissions[role])) {
+      normalized[role] = sourcePermissions[role].filter((view) => MENU_CONFIG.some((item) => item.view === view));
     }
 
     if (!normalized[role].includes("dashboard")) {
@@ -849,6 +867,10 @@ function ensureMemberDefaults() {
   }
 
   state.rolePermissions = normalizeRolePermissions(state.rolePermissions);
+
+  if (state.memberFilters.role !== "all" && !MEMBER_ROLES[state.memberFilters.role]) {
+    state.memberFilters.role = "all";
+  }
 
   const currentMember = state.members.find((member) => member.id === state.currentUserId);
   if (!currentMember || currentMember.status !== "active") {
@@ -1745,9 +1767,7 @@ function renderAuth() {
             <div class="field">
               <label for="signup-role">신청 등급</label>
               <select class="control-select" id="signup-role" name="role">
-                <option value="associate">준회원</option>
-                <option value="regular">정회원</option>
-                <option value="operator">운영진</option>
+                ${SIGNUP_ROLE_ORDER.map((role) => `<option value="${role}">${escapeHtml(MEMBER_ROLES[role])}</option>`).join("")}
               </select>
             </div>
           </div>
@@ -4212,9 +4232,11 @@ function getMemberStatusChip(status) {
 
 function getRoleChip(role) {
   const chipClass = {
-    associate: "chip-blue",
-    regular: "chip-green",
-    operator: "chip-violet",
+    general: "chip-blue",
+    search_firm: "chip-amber",
+    hiring_manager: "chip-green",
+    business_recruiter: "chip-violet",
+    division_recruiter: "chip-blue",
     admin: "chip-red"
   }[role] || "chip-blue";
 
@@ -4372,9 +4394,11 @@ function renderRolePermissionMatrix() {
 
 function rolePermissionDescription(role) {
   return {
-    associate: "조회와 AI 검색 중심의 제한 계정",
-    regular: "후보자 등록까지 가능한 실무 계정",
-    operator: "운영 로그까지 확인하는 운영 계정",
+    general: "기본 조회 중심의 일반 사용자 계정",
+    search_firm: "외부 서치펌 후보자 발굴과 등록 계정",
+    hiring_manager: "현업 검토와 후보자 탐색 중심 계정",
+    business_recruiter: "사업부 단위 후보자 등록과 운영 계정",
+    division_recruiter: "부문 단위 채용 운영과 감사 로그 확인 계정",
     admin: "회원 승인과 권한 설정까지 가능한 관리자"
   }[role] || "";
 }
@@ -6192,7 +6216,8 @@ async function handleSignupSubmit(form) {
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
   const passwordConfirm = String(formData.get("passwordConfirm") || "");
-  const requestedRole = String(formData.get("role") || "associate");
+  const rawRequestedRole = String(formData.get("role") || "general");
+  const requestedRole = LEGACY_MEMBER_ROLE_MAP[rawRequestedRole] || rawRequestedRole;
 
   if (!name || !email || !password) {
     setAuthMessage("이름, 이메일, 비밀번호를 입력해주세요.");
@@ -6220,7 +6245,7 @@ async function handleSignupSubmit(form) {
     email,
     password: "",
     passwordHash: await hashPassword(email, password),
-    role: requestedRole === "admin" ? "associate" : requestedRole,
+    role: requestedRole === "admin" || !MEMBER_ROLES[requestedRole] ? "general" : requestedRole,
     status: "pending",
     department: formData.get("department"),
     position: formData.get("position"),
@@ -6352,7 +6377,7 @@ function updateMemberRole(memberId, role) {
 }
 
 function updateRolePermission(role, view, enabled) {
-  if (!isAdmin() || role === "admin" || view === "dashboard" || view === "members") {
+  if (!isAdmin() || !MEMBER_ROLES[role] || role === "admin" || view === "dashboard" || view === "members") {
     renderMembers();
     return;
   }

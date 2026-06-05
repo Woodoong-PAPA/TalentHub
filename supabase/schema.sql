@@ -37,8 +37,8 @@ create table if not exists public.app_members (
   email text not null unique,
   name text not null,
   password_hash text,
-  role text not null default 'associate'
-    check (role in ('associate', 'regular', 'operator', 'admin')),
+  role text not null default 'general'
+    check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
   status text not null default 'pending'
     check (status in ('pending', 'active', 'suspended', 'rejected')),
   department text,
@@ -57,7 +57,7 @@ create index if not exists app_members_role_idx on public.app_members (role);
 create index if not exists app_members_status_idx on public.app_members (status);
 
 create table if not exists public.app_role_permissions (
-  role text not null check (role in ('associate', 'regular', 'operator', 'admin')),
+  role text not null check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
   view text not null check (view in ('dashboard', 'pool', 'register', 'ai-search', 'trending', 'audit', 'members')),
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
@@ -224,21 +224,28 @@ with check (true);
 
 insert into public.app_role_permissions (role, view, enabled)
 values
-  ('associate', 'dashboard', true),
-  ('associate', 'pool', true),
-  ('associate', 'ai-search', true),
-  ('associate', 'trending', true),
-  ('regular', 'dashboard', true),
-  ('regular', 'pool', true),
-  ('regular', 'register', true),
-  ('regular', 'ai-search', true),
-  ('regular', 'trending', true),
-  ('operator', 'dashboard', true),
-  ('operator', 'pool', true),
-  ('operator', 'register', true),
-  ('operator', 'ai-search', true),
-  ('operator', 'trending', true),
-  ('operator', 'audit', true),
+  ('general', 'dashboard', true),
+  ('general', 'pool', true),
+  ('general', 'trending', true),
+  ('search_firm', 'dashboard', true),
+  ('search_firm', 'pool', true),
+  ('search_firm', 'register', true),
+  ('search_firm', 'ai-search', true),
+  ('hiring_manager', 'dashboard', true),
+  ('hiring_manager', 'pool', true),
+  ('hiring_manager', 'ai-search', true),
+  ('hiring_manager', 'trending', true),
+  ('business_recruiter', 'dashboard', true),
+  ('business_recruiter', 'pool', true),
+  ('business_recruiter', 'register', true),
+  ('business_recruiter', 'ai-search', true),
+  ('business_recruiter', 'trending', true),
+  ('division_recruiter', 'dashboard', true),
+  ('division_recruiter', 'pool', true),
+  ('division_recruiter', 'register', true),
+  ('division_recruiter', 'ai-search', true),
+  ('division_recruiter', 'trending', true),
+  ('division_recruiter', 'audit', true),
   ('admin', 'dashboard', true),
   ('admin', 'pool', true),
   ('admin', 'register', true),
