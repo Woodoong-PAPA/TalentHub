@@ -67,6 +67,9 @@ const DEFAULT_TRENDING_MAIL_SETTINGS = {
   updatedBy: ""
 };
 const TRENDING_PROFILE_COMPLETENESS_VERSION = 5;
+const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
+const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
+const VISIT_SESSION_KEY = "samsung-talent-pool-visit-counted";
 
 const DEFAULT_MEMBERS = [
   {
@@ -475,6 +478,12 @@ function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function dateDaysAgo(days) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
 function getCurrentYear() {
   return new Date().getFullYear();
 }
@@ -488,6 +497,108 @@ function calculateAge(birthYear) {
   }
 
   return String(currentYear - year);
+}
+
+function renderBusinessUnitOptions(selectedValue = "") {
+  const selected = String(selectedValue || "").trim();
+
+  return `
+    <option value="">사업부 선택</option>
+    ${BUSINESS_UNITS.map((unit) => `<option value="${escapeHtml(unit)}" ${unit === selected ? "selected" : ""}>${escapeHtml(unit)}</option>`).join("")}
+  `;
+}
+
+function normalizeBusinessUnit(value) {
+  const rawValue = String(value || "").trim();
+  const compact = rawValue.replace(/\s+/g, "").toLowerCase();
+  const aliasMap = new Map([
+    ["vd", "VD"],
+    ["visualdisplay", "VD"],
+    ["영상디스플레이", "VD"],
+    ["mx", "MX"],
+    ["mobileexperience", "MX"],
+    ["모바일", "MX"],
+    ["da", "DA"],
+    ["digitalappliances", "DA"],
+    ["생활가전", "DA"],
+    ["nw", "NW"],
+    ["network", "NW"],
+    ["네트워크", "NW"],
+    ["cdo", "CDO"],
+    ["sr", "SR"],
+    ["samsungresearch", "SR"],
+    ["삼성리서치", "SR"],
+    ["한총", "한총"],
+    ["한국총괄", "한총"],
+    ["g.cs", "G.CS"],
+    ["gcs", "G.CS"],
+    ["globalcs", "G.CS"],
+    ["전사직속", "전사직속"]
+  ]);
+
+  if (BUSINESS_UNITS.includes(rawValue)) {
+    return rawValue;
+  }
+
+  return aliasMap.get(compact) || "";
+}
+
+function loadVisitStats() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(VISIT_STATS_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    console.warn("Visit stats could not be loaded.", error);
+    return {};
+  }
+}
+
+function saveVisitStats(stats) {
+  try {
+    window.localStorage.setItem(VISIT_STATS_KEY, JSON.stringify(stats));
+  } catch (error) {
+    console.warn("Visit stats could not be saved.", error);
+  }
+}
+
+function recordPageVisit() {
+  try {
+    const today = getTodayDate();
+    const sessionKey = `${VISIT_SESSION_KEY}:${today}`;
+
+    if (window.sessionStorage.getItem(sessionKey)) {
+      return;
+    }
+
+    const stats = loadVisitStats();
+    stats[today] = Number(stats[today] || 0) + 1;
+
+    Object.keys(stats).forEach((date) => {
+      if (date < dateDaysAgo(60)) {
+        delete stats[date];
+      }
+    });
+
+    saveVisitStats(stats);
+    window.sessionStorage.setItem(sessionKey, "1");
+  } catch (error) {
+    console.warn("Visit could not be recorded.", error);
+  }
+}
+
+function getVisitStatsSummary() {
+  const stats = loadVisitStats();
+  const today = getTodayDate();
+  const lastSevenDays = Array.from({ length: 7 }, (_, index) => dateDaysAgo(index));
+  const previousSevenDays = Array.from({ length: 7 }, (_, index) => dateDaysAgo(index + 7));
+  const weekTotal = lastSevenDays.reduce((sum, date) => sum + Number(stats[date] || 0), 0);
+  const previousWeekTotal = previousSevenDays.reduce((sum, date) => sum + Number(stats[date] || 0), 0);
+
+  return {
+    today: Number(stats[today] || 0),
+    weekTotal,
+    weekDelta: weekTotal - previousWeekTotal
+  };
 }
 
 function dateSortValue(value) {
@@ -1824,23 +1935,26 @@ function render() {
 }
 
 function renderSidePanel() {
-  const reviewRequired = state.candidates.filter((candidate) => candidate.parsingConfidence < 88).length;
-  $("#side-review-count").textContent = `${reviewRequired}명`;
+  const visitStats = getVisitStatsSummary();
+  const count = $("#side-visit-count");
+  const detail = $("#side-visit-detail");
+
+  if (count) {
+    count.textContent = `${visitStats.today}회`;
+  }
+
+  if (detail) {
+    const delta = visitStats.weekDelta > 0 ? `+${visitStats.weekDelta}` : String(visitStats.weekDelta);
+    detail.textContent = `최근 7일 ${visitStats.weekTotal}회 · 전주 대비 ${delta}`;
+  }
 }
 
 function renderDashboard() {
   const total = state.candidates.length;
-  const active = state.candidates.filter((candidate) => candidate.status !== "inactive").length;
-  const reviewRequired = state.candidates.filter((candidate) => candidate.parsingConfidence < 85).length;
-  const screening = state.candidates.filter((candidate) => candidate.status === "screening").length;
-
+  const monthlyDelta = countCandidatesCreatedSince(dateDaysAgo(30));
+  const weeklyDelta = countCandidatesCreatedSince(dateDaysAgo(7));
   const skillCounts = getSkillCounts().slice(0, 6);
   const maxSkill = Math.max(...skillCounts.map((item) => item.count), 1);
-  const statusCounts = STATUS_ORDER.map((status) => ({
-    status,
-    count: state.candidates.filter((candidate) => candidate.status === status).length
-  }));
-  const maxStatus = Math.max(...statusCounts.map((item) => item.count), 1);
   const actionCandidates = state.candidates
     .filter((candidate) => candidate.parsingConfidence < 88 || candidate.status === "contact_planned")
     .slice(0, 5);
@@ -1848,31 +1962,10 @@ function renderDashboard() {
   $("#dashboard-content").innerHTML = `
     <div class="dashboard-grid">
       <div class="kpi-row">
-        ${metricCard("전체 후보자", total, "전월 대비 +14명")}
-        ${metricCard("활성 후보자", active, "운영 중 후보")}
-        ${metricCard("검수 대기", reviewRequired, "파싱/필수 정보 확인")}
-        ${metricCard("전형 진행", screening, "현업 검토 포함")}
+        ${metricCard("전체 후보자", total, `전월 대비 ${formatSignedCount(monthlyDelta)}명 · 전주 대비 ${formatSignedCount(weeklyDelta)}명`)}
       </div>
 
-      <section class="content-panel span-7">
-        <div class="panel-header">
-          <h4>직무 상태 파이프라인</h4>
-          <span class="small-pill">MVP 운영</span>
-        </div>
-        <div class="pipeline">
-          ${statusCounts.map((item) => `
-            <div class="pipeline-row">
-              <span>${STATUS_LABELS[item.status]}</span>
-              <div class="pipeline-track">
-                <div class="pipeline-fill" style="width:${Math.max(10, (item.count / maxStatus) * 100)}%"></div>
-              </div>
-              <strong>${item.count}</strong>
-            </div>
-          `).join("")}
-        </div>
-      </section>
-
-      <section class="content-panel span-5">
+      <section class="content-panel span-12">
         <div class="panel-header">
           <h4>상위 기술 키워드</h4>
           <span class="small-pill">검색 인덱스</span>
@@ -1905,8 +1998,8 @@ function renderDashboard() {
         </div>
         <div class="bar-list">
           ${signalRow("재접촉 우선", 82, "green")}
-          ${signalRow("파싱 검수 필요", 34, "amber")}
-          ${signalRow("파싱 신뢰도 낮음", 26, "violet")}
+          ${signalRow("핵심 기술 적합", 74, "amber")}
+          ${signalRow("최근 업데이트", 41, "violet")}
           ${signalRow("전형 전환 가능", 67, "")}
         </div>
       </section>
@@ -1922,6 +2015,14 @@ function metricCard(label, value, trend) {
       <div class="metric-trend">${trend}</div>
     </article>
   `;
+}
+
+function countCandidatesCreatedSince(date) {
+  return state.candidates.filter((candidate) => String(candidate.createdAt || "") >= date).length;
+}
+
+function formatSignedCount(value) {
+  return value > 0 ? `+${value}` : String(value);
 }
 
 function signalRow(label, value, color) {
@@ -2073,7 +2174,9 @@ function renderRegister() {
           </div>
           <div class="field">
             <label for="candidate-organization">사업부</label>
-            <input class="control-input" id="candidate-organization" name="organization" autocomplete="off" />
+            <select class="control-select" id="candidate-organization" name="organization">
+              ${renderBusinessUnitOptions()}
+            </select>
           </div>
           <div class="field">
             <label for="candidate-owner">담당자</label>
@@ -2643,12 +2746,14 @@ function formatTrendingCareer(item) {
   const period = periodStart || periodEnd ? `(${periodStart || ""}~${periodEnd || ""})` : "";
   const rankTitle = [...new Set([item.rank, item.title || item.position].filter(Boolean))].join("/");
   const department = item.department || item.organization || item.org || item.team || item.division || "";
+  const details = [item.company, rankTitle, department].filter(Boolean).join(", ");
+  const careerText = [details, period].filter(Boolean).join(" ");
 
   if (country) {
-    return `${country} ${[item.company, rankTitle, department, period].filter(Boolean).join(", ")}`.trim();
+    return `${country} ${careerText}`.trim();
   }
 
-  return [item.company, rankTitle, department, period].filter(Boolean).join(", ");
+  return careerText;
 }
 
 function renderDashList(items) {
@@ -2662,7 +2767,7 @@ function renderDashList(items) {
 }
 
 function renderNewsLinks(reason) {
-  const links = (reason.links || []).filter((link) => link.url).slice(0, 3);
+  const links = (reason.links || []).filter((link) => link.url).slice(0, 1);
 
   if (!links.length) {
     return "";
@@ -2682,6 +2787,9 @@ function renderNewsLinks(reason) {
 function normalizeReasonText(value) {
   return String(value || "")
     .replace(/^[-\s]+/, "")
+    .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야에서\s*(?:주목받음|중요 인물로 부각|주요 인물로 부각)\.?/gi, "")
+    .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야\s*관련성이\s*(?:높음|확인됨)\.?/gi, "")
+    .replace(/전일\s*(?:DX|디엑스)\s*관심\s*분야\s*뉴스\s*흐름에서\s*주요\s*인물로\s*분류\.?/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -2708,11 +2816,11 @@ function asDisplaySentence(value) {
 
 function trendingReasonLines(reasons) {
   const lines = [];
-  const linkCount = (reasons || [])
+  const links = (reasons || [])
     .filter((reason) => typeof reason === "object")
     .flatMap((reason) => reason.links || [])
     .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
-    .length;
+    .slice(0, 1);
 
   (reasons || []).forEach((reason) => {
     splitReasonSentences(typeof reason === "object" ? reason.text : reason).forEach((line) => {
@@ -2722,10 +2830,16 @@ function trendingReasonLines(reasons) {
     });
   });
 
+  const link = links[0];
+
+  if (!lines.length && link?.title) {
+    lines.push(asDisplaySentence(`근거 기사 핵심: ${link.title}`));
+  }
+
   if (lines.length === 1) {
-    lines.push(linkCount
-      ? `근거 기사 ${linkCount}건에서 관련 이슈가 반복 보도되어 당일 화제성 확인.`
-      : "전일 DX 관심 분야 뉴스 흐름에서 주요 인물로 분류.");
+    if (link?.title) {
+      lines.push(asDisplaySentence(`근거 기사 핵심: ${link.title}`));
+    }
   }
 
   return lines.slice(0, 2);
@@ -2737,7 +2851,7 @@ function renderSelectionReasons(reasons) {
     .filter((reason) => typeof reason === "object")
     .flatMap((reason) => reason.links || [])
     .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
-    .slice(0, 3);
+    .slice(0, 1);
 
   if (!lines.length) {
     return `<span class="muted-text">선정 사유 없음</span>`;
@@ -3462,7 +3576,9 @@ function renderCandidateEditForm(candidate) {
           </div>
           <div class="field">
             <label for="edit-organization">사업부</label>
-            <input class="control-input" id="edit-organization" name="editOrganization" value="${inputValue(candidate.organization)}" />
+            <select class="control-select" id="edit-organization" name="editOrganization">
+              ${renderBusinessUnitOptions(candidate.organization)}
+            </select>
           </div>
           <div class="field">
             <label for="edit-owner">담당자</label>
@@ -3758,7 +3874,7 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.initials = `${name.slice(0, 1)}${name.slice(-1)}`;
   candidate.company = company;
   candidate.role = getFormText(form, "editRole") || candidate.role;
-  candidate.organization = getFormText(form, "editOrganization") || candidate.organization;
+  candidate.organization = normalizeBusinessUnit(getFormText(form, "editOrganization")) || candidate.organization;
   candidate.owner = getFormText(form, "editOwner") || candidate.owner;
   candidate.status = getFormText(form, "editStatus") || candidate.status;
   candidate.birthYear = getFormText(form, "editBirthYear");
@@ -5461,7 +5577,7 @@ function registerTrendingPerson(identifier) {
     company: person.currentOrg || "소속 확인 필요",
     years: 0,
     jobFamily: "DX News Radar",
-    organization: "DX",
+    organization: "",
     status: "interested",
     owner: getCurrentActorName(),
     createdAt: today,
@@ -5522,7 +5638,7 @@ async function registerCandidate(eventOrForm) {
   const name = form.get("name").toString().trim();
   const company = form.get("company").toString().trim();
   const role = form.get("role").toString().trim();
-  const organization = form.get("organization").toString().trim();
+  const organization = normalizeBusinessUnit(form.get("organization"));
   const birthYear = form.get("birthYear").toString().trim();
   const today = getTodayDate();
   const candidateName = name || "이름 미입력";
@@ -5576,7 +5692,7 @@ async function registerCandidate(eventOrForm) {
     company: candidateCompany,
     years: estimateCareerYears(career),
     jobFamily: "Equipment Software",
-    organization: organization || "미입력",
+    organization,
     status: "interested",
     owner: form.get("owner").toString(),
     createdAt: today,
@@ -6365,6 +6481,7 @@ function bindEvents() {
 async function initializeApp() {
   restorePersistedState();
   ensureMemberDefaults();
+  recordPageVisit();
   bindEvents();
 
   try {

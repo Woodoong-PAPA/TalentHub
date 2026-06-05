@@ -932,8 +932,11 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
     "경력 country에서 대한민국 또는 South Korea는 반드시 한국으로 쓴다.",
     "경력 department에는 확인 가능한 소속부서, 연구실, 조직명, 사업부, 팀명을 쓴다. 없으면 빈 문자열.",
     "핵심 성과/실적과 선정 사유는 보고서 문장처럼 짧게 끊고, '~했습니다' 같은 종결 문장을 쓰지 않는다.",
-    "selectionReasons는 인물별 정확히 2개만 작성한다. 각 text는 한 문장으로 작성하고 서로 중복되지 않게 한다.",
-    "선정 사유마다 근거 기사 id를 articleIds에 반드시 포함한다.",
+    "selectionReasons는 인물별 정확히 2개만 작성한다.",
+    "selectionReasons[0].text는 해당 인물이 Top5로 선정된 직접 사유만 한 문장으로 작성한다.",
+    "selectionReasons[1].text는 가장 중요한 근거 기사 1개의 핵심 내용을 요약한 문장으로 작성한다.",
+    "'DX 분야에서 주목받음', 'DX 사업분야에서 중요 인물로 부각'처럼 범용적이고 당연한 부연 설명은 쓰지 않는다.",
+    "두 selectionReason의 articleIds에는 동일한 핵심 근거 기사 id 1개만 포함한다.",
     "",
     `최근 1개월 제외 이름: ${excludedNames.join(", ") || "없음"}`,
     "",
@@ -1048,7 +1051,7 @@ function normalizePerson(person, index, articleById) {
           links: articleIds
             .map((idValue) => articleById.get(idValue))
             .filter(Boolean)
-            .slice(0, 3)
+            .slice(0, 1)
             .map((article) => ({
               title: article.title,
               source: article.source,

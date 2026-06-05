@@ -368,12 +368,21 @@ function formatCareer(item) {
   const period = periodStart || periodEnd ? `(${periodStart || ""}~${periodEnd || ""})` : "";
   const rankTitle = [...new Set([item.rank, item.title || item.position].filter(Boolean))].join("/");
   const department = item.department || item.organization || item.org || item.team || item.division || "";
-  const body = [item.company, rankTitle, department, period].filter(Boolean).join(", ");
+  const body = [[item.company, rankTitle, department].filter(Boolean).join(", "), period].filter(Boolean).join(" ");
   return `${country ? `${country}) ` : ""}${body}`.trim();
 }
 
 function listItems(items) {
   return (items || []).filter(Boolean).map((item) => `- ${item}`).join("\n") || "-";
+}
+
+function normalizeReasonText(value) {
+  return String(value || "")
+    .replace(/^[-\s]+/, "")
+    .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야에서\s*(?:주목받음|중요 인물로 부각|주요 인물로 부각)\.?/gi, "")
+    .replace(/(?:DX|디엑스)\s*(?:사업\s*)?분야\s*관련성이\s*(?:높음|확인됨)\.?/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildReportText(report) {
@@ -389,13 +398,13 @@ function buildReportText(report) {
       "핵심 성과/실적",
       listItems(person.achievements || []),
       "Top5 선정 사유",
-      listItems((person.selectionReasons || []).map((reason) => typeof reason === "string" ? reason : reason.text).filter(Boolean))
+      listItems((person.selectionReasons || []).map((reason) => normalizeReasonText(typeof reason === "string" ? reason : reason.text)).filter(Boolean))
     ].join("\n")).join("\n\n")
   ].join("\n");
 }
 
 function renderSourceLinks(reason) {
-  const links = (reason.links || []).filter((link) => link.url).slice(0, 3);
+  const links = (reason.links || []).filter((link) => link.url).slice(0, 1);
 
   if (!links.length) {
     return "";
@@ -420,10 +429,18 @@ function buildReportHtml(report) {
           <strong>핵심 성과/실적</strong>
           <ul>${(person.achievements || []).filter(Boolean).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>정보 없음</li>"}</ul>
           <strong>Top5 선정 사유</strong>
-          ${(person.selectionReasons || []).map((reason) => `
-            <p style="margin:8px 0 4px">- ${escapeHtml(typeof reason === "string" ? reason : reason.text)}</p>
-            ${typeof reason === "object" ? renderSourceLinks(reason) : ""}
-          `).join("") || "<p>정보 없음</p>"}
+          ${(person.selectionReasons || []).map((reason) => {
+            const text = normalizeReasonText(typeof reason === "string" ? reason : reason.text);
+
+            if (!text) {
+              return "";
+            }
+
+            return `
+              <p style="margin:8px 0 4px">- ${escapeHtml(text)}</p>
+              ${typeof reason === "object" ? renderSourceLinks(reason) : ""}
+            `;
+          }).join("") || "<p>정보 없음</p>"}
         </section>
       `).join("")}
     </div>
