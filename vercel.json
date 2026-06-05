@@ -61,6 +61,10 @@
       "dest": "/api/trending-mail.js"
     },
     {
+      "src": "/api/screening-mail",
+      "dest": "/api/screening-mail.js"
+    },
+    {
       "handle": "filesystem"
     },
     {

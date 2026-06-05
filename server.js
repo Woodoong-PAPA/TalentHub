@@ -43,6 +43,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/screening-mail") {
+    const screeningMail = require("./api/screening-mail.js");
+    screeningMail(request, response);
+    return;
+  }
+
   const filePath = resolveRequestPath(request.url);
 
   if (!filePath.startsWith(ROOT)) {

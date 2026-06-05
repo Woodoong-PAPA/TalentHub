@@ -32,6 +32,10 @@
             <span class="nav-icon">P</span>
             <span>인재 Pool</span>
           </button>
+          <button class="nav-item" type="button" data-view="screening">
+            <span class="nav-icon">S</span>
+            <span>Screening</span>
+          </button>
           <button class="nav-item" type="button" data-view="register">
             <span class="nav-icon">R</span>
             <span>인재 등록</span>
@@ -86,6 +90,17 @@
               <button class="primary-button" type="button" data-view="register">신규 등록</button>
             </div>
             <div id="pool-content"></div>
+          </section>
+
+          <section id="screening-view" class="view" aria-labelledby="screening-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Position Screening</p>
+                <h3 id="screening-title">Screening</h3>
+              </div>
+              <span class="status-chip chip-blue">포지션 폴더 기반</span>
+            </div>
+            <div id="screening-content"></div>
           </section>
 
           <section id="register-view" class="view" aria-labelledby="register-title">
