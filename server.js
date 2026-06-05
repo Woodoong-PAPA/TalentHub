@@ -37,6 +37,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (["/api/trending-mail", "/api/trending-mail-cron"].includes(request.url.split("?")[0])) {
+    const trendingMail = require("./api/trending-mail.js");
+    trendingMail(request, response);
+    return;
+  }
+
   const filePath = resolveRequestPath(request.url);
 
   if (!filePath.startsWith(ROOT)) {

@@ -356,6 +356,12 @@ The 오늘의 화제 인물 feature supports daily sourcing from Korean news:
 - Cards include cropped profile photos when a validated person image URL is available, and fall back to the rank badge when no reliable face image is found.
 - Cards include source news links in the Top 5 selection reason section. Long news titles and URLs must wrap inside the card without horizontal overflow.
 - A selected person can be converted to an 인재 Pool candidate with source, evidence, career, education, profile photo, and tags prefilled for recruiter review.
+- Admin users can manage daily mailing settings inside the view: enabled state, KST send time, subject prefix, and recipients.
+- Mailing settings are stored in Supabase `trending_mail_settings`; delivery attempts are logged in `trending_mail_events`.
+- Vercel Cron checks `/api/trending-mail-cron` periodically and sends the report once per report date after the configured KST time.
+- Email delivery uses Resend when `RESEND_API_KEY` and `RESEND_FROM` are configured.
+- Education display uses comma-separated report formatting, for example `박) 서울대학교, 재료공학 ('12)`.
+- Career display uses comma-separated report formatting and normalizes `대한민국`/`South Korea` to `한국`.
 
 Production hardening note:
 

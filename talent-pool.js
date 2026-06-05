@@ -54,6 +54,18 @@ const DEFAULT_ROLE_PERMISSIONS = {
 };
 
 const TEMP_PASSWORD = "Temp1234!";
+const DEFAULT_TRENDING_MAIL_SETTINGS = {
+  enabled: false,
+  sendTime: "07:30",
+  timezone: "Asia/Seoul",
+  recipients: [],
+  subjectPrefix: "[TalentHub] 오늘의 화제 인물",
+  lastSentReportDate: "",
+  lastSentAt: "",
+  providerConfigured: false,
+  updatedAt: "",
+  updatedBy: ""
+};
 
 const DEFAULT_MEMBERS = [
   {
@@ -423,6 +435,10 @@ const state = {
   trendingReport: null,
   trendingLoading: false,
   trendingError: "",
+  trendingMailSettings: structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
+  trendingMailLoading: false,
+  trendingMailError: "",
+  trendingMailStatus: "",
   registerExtractedPhotoUrl: "",
   remoteSyncStatus: REMOTE_SYNC_ENABLED ? "대기" : "로컬",
   auditLogs: [
@@ -598,6 +614,44 @@ function normalizeMember(member) {
     approvedBy: member.approvedBy || "",
     lastLoginAt: member.lastLoginAt || "",
     note: String(member.note || "").trim()
+  };
+}
+
+function normalizeEmailList(value) {
+  const rawList = Array.isArray(value)
+    ? value
+    : String(value || "").split(/[\n,;]+/);
+
+  return [...new Set(rawList
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function normalizeSendTime(value) {
+  const match = String(value || "").trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  return match ? `${match[1]}:${match[2]}` : DEFAULT_TRENDING_MAIL_SETTINGS.sendTime;
+}
+
+function normalizeTrendingMailSettings(settings = {}) {
+  const recipients = normalizeEmailList(settings.recipients);
+
+  return {
+    ...structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
+    ...settings,
+    enabled: Boolean(settings.enabled),
+    sendTime: normalizeSendTime(settings.sendTime || settings.send_time),
+    timezone: settings.timezone || "Asia/Seoul",
+    recipients,
+    subjectPrefix: String(settings.subjectPrefix || settings.subject_prefix || DEFAULT_TRENDING_MAIL_SETTINGS.subjectPrefix).trim(),
+    lastSentReportDate: String(settings.lastSentReportDate || settings.last_sent_report_date || "").trim(),
+    lastSentAt: String(settings.lastSentAt || settings.last_sent_at || "").trim(),
+    providerConfigured: Boolean(settings.providerConfigured || settings.provider_configured),
+    updatedAt: String(settings.updatedAt || settings.updated_at || "").trim(),
+    updatedBy: String(settings.updatedBy || settings.updated_by || "").trim()
   };
 }
 
@@ -777,7 +831,8 @@ function persistState(options = {}) {
         rolePermissions: state.rolePermissions,
         memberFilters: state.memberFilters,
         currentUserId: state.currentUserId,
-        trendingReport: state.trendingReport
+        trendingReport: state.trendingReport,
+        trendingMailSettings: state.trendingMailSettings
       })
     );
   } catch (error) {
@@ -826,6 +881,10 @@ function restorePersistedState() {
 
   if (persisted.trendingReport && typeof persisted.trendingReport === "object") {
     state.trendingReport = persisted.trendingReport;
+  }
+
+  if (persisted.trendingMailSettings && typeof persisted.trendingMailSettings === "object") {
+    state.trendingMailSettings = normalizeTrendingMailSettings(persisted.trendingMailSettings);
   }
 
   if (state.candidates.some((candidate) => candidate.id === persisted.selectedCandidateId)) {
@@ -1668,6 +1727,10 @@ function setView(view) {
   if (view === "trending" && !state.trendingReport && !state.trendingLoading) {
     fetchTrendingPeople();
   }
+
+  if (view === "trending" && isAdmin()) {
+    fetchTrendingMailSettings();
+  }
 }
 
 function getFilteredCandidates() {
@@ -2469,34 +2532,89 @@ function formatShortYear(value) {
   return `'${year.slice(-2)}`;
 }
 
+function normalizeTrendingSchoolName(value) {
+  const school = String(value || "").trim();
+  const compact = school.toLowerCase().replace(/[.\s-]+/g, "");
+  const mappings = new Map([
+    ["seoulnationaluniversity", "서울대학교"],
+    ["snu", "서울대학교"],
+    ["koreauniversity", "고려대학교"],
+    ["yonseiuniversity", "연세대학교"],
+    ["hanyanguniversity", "한양대학교"],
+    ["sungkyunkwanuniversity", "성균관대학교"],
+    ["skku", "성균관대학교"],
+    ["soganguniversity", "서강대학교"],
+    ["ewhawomansuniversity", "이화여자대학교"],
+    ["postech", "포항공과대학교"],
+    ["pohanguniversityofscienceandtechnology", "포항공과대학교"],
+    ["kaist", "KAIST"],
+    ["koreaadvancedinstituteofscienceandtechnology", "KAIST"],
+    ["unist", "UNIST"],
+    ["ulsannationalinstituteofscienceandtechnology", "UNIST"],
+    ["gist", "GIST"],
+    ["gwangjuinstituteofscienceandtechnology", "GIST"],
+    ["dgist", "DGIST"],
+    ["daegyeongbukinstituteofscienceandtechnology", "DGIST"],
+    ["pusannationaluniversity", "부산대학교"],
+    ["kyungpooknationaluniversity", "경북대학교"],
+    ["chungnamnationaluniversity", "충남대학교"]
+  ]);
+
+  return mappings.get(compact) || school;
+}
+
+function normalizeTrendingCountry(value) {
+  const country = String(value || "").trim();
+
+  if (/^(대한민국|한국|south korea|republic of korea|korea)$/i.test(country)) {
+    return "한국";
+  }
+
+  return country;
+}
+
+function inferTrendingCareerCountry(item) {
+  const company = String(item.company || "").toLowerCase();
+
+  if (/nvidia|엔비디아/.test(company)) {
+    return "미국";
+  }
+
+  if (/ncsoft|엔씨소프트|krafton|크래프톤|서울대학교|고려대학교|연세대학교|lg\b|삼성/.test(company)) {
+    return "한국";
+  }
+
+  return normalizeTrendingCountry(item.country);
+}
+
 function formatTrendingEducation(item) {
   const degree = { "박사": "박", "석사": "석", "학사": "학", "박": "박", "석": "석", "학": "학" }[item.degree] || item.degree || "";
   const year = formatShortYear(item.year || item.end || item.graduationYear);
-  const parts = [
-    degree ? `${degree})` : "",
-    item.school,
-    item.major,
-    year ? `(${year})` : ""
-  ].filter(Boolean);
+  const school = normalizeTrendingSchoolName(item.school);
+  const major = String(item.major || "").trim();
+  const body = [school, major].filter(Boolean).join(", ");
+  const prefix = degree ? `${degree}) ` : "";
+  const suffix = year ? ` (${year})` : "";
 
-  return parts.join(" ");
+  return `${prefix}${body}${suffix}`.trim();
 }
 
 function formatTrendingCareer(item) {
-  const country = item.country ? `${item.country})` : "";
+  const normalizedCountry = inferTrendingCareerCountry(item);
+  const country = normalizedCountry ? `${normalizedCountry})` : "";
   const periodStart = formatShortYear(item.start || item.startYear);
   const periodEnd = item.end === "현재" || item.endYear === "현재"
     ? "현재"
     : formatShortYear(item.end || item.endYear);
   const period = periodStart || periodEnd ? `(${periodStart || ""}~${periodEnd || ""})` : "";
+  const rankTitle = [...new Set([item.rank, item.title || item.position].filter(Boolean))].join("/");
+  const department = item.department || item.organization || item.org || item.team || item.division || "";
 
-  return [
-    country,
-    item.company,
-    item.rank,
-    item.title || item.position,
-    period
-  ].filter(Boolean).join(" ");
+  if (country) {
+    return `${country} ${[item.company, rankTitle, department, period].filter(Boolean).join(", ")}`.trim();
+  }
+
+  return [item.company, rankTitle, department, period].filter(Boolean).join(", ");
 }
 
 function renderDashList(items) {
@@ -2524,6 +2642,57 @@ function renderNewsLinks(reason) {
         </a>
       `).join("")}
     </div>
+  `;
+}
+
+function trendingMailRecipientText() {
+  return state.trendingMailSettings.recipients.join("\n");
+}
+
+function renderTrendingMailPanel() {
+  if (!isAdmin()) {
+    return "";
+  }
+
+  const settings = state.trendingMailSettings;
+  const providerLabel = settings.providerConfigured ? "메일 provider 연결됨" : "메일 provider 미설정";
+  const statusText = state.trendingMailError || state.trendingMailStatus || (
+    settings.lastSentReportDate
+      ? `마지막 발송: ${settings.lastSentReportDate}${settings.lastSentAt ? ` · ${settings.lastSentAt}` : ""}`
+      : "발송 이력 없음"
+  );
+
+  return `
+    <form class="trending-mail-panel" id="trending-mail-form">
+      <div class="trending-mail-header">
+        <div>
+          <strong>메일링 설정</strong>
+          <span>${escapeHtml(providerLabel)} · ${escapeHtml(statusText)}</span>
+        </div>
+        <label class="inline-check">
+          <input type="checkbox" id="trending-mail-enabled" name="enabled" ${settings.enabled ? "checked" : ""} />
+          매일 발송
+        </label>
+      </div>
+      <div class="trending-mail-grid">
+        <div class="field">
+          <label for="trending-mail-time">발송 시간</label>
+          <input class="control-input" id="trending-mail-time" name="sendTime" type="time" value="${escapeHtml(settings.sendTime)}" />
+        </div>
+        <div class="field">
+          <label for="trending-mail-subject">메일 제목</label>
+          <input class="control-input" id="trending-mail-subject" name="subjectPrefix" value="${escapeHtml(settings.subjectPrefix)}" />
+        </div>
+        <div class="field full">
+          <label for="trending-mail-recipients">수신처</label>
+          <textarea class="control-textarea" id="trending-mail-recipients" name="recipients" placeholder="name@samsung.com">${escapeHtml(trendingMailRecipientText())}</textarea>
+        </div>
+      </div>
+      <div class="trending-mail-actions">
+        <button class="ghost-button compact-button" type="button" data-save-trending-mail ${state.trendingMailLoading ? "disabled" : ""}>설정 저장</button>
+        <button class="primary-button compact-button" type="button" data-send-trending-mail-test ${state.trendingMailLoading ? "disabled" : ""}>테스트 발송</button>
+      </div>
+    </form>
   `;
 }
 
@@ -2623,6 +2792,7 @@ function renderTrendingPeople() {
       <span class="status-chip chip-amber">추천 실행: 매일 06:00 KST Vercel Cron</span>
       <span class="status-chip chip-green">Pool 등록 가능</span>
     </div>
+    ${renderTrendingMailPanel()}
     <div class="trending-list">
       ${body}
     </div>
@@ -4725,6 +4895,132 @@ async function fetchTrendingPeople(options = {}) {
   }
 }
 
+async function fetchTrendingMailSettings() {
+  if (!isAdmin() || state.trendingMailLoading) {
+    return;
+  }
+
+  state.trendingMailLoading = true;
+
+  try {
+    const response = await fetch("/api/trending-mail");
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending mail settings failed: ${response.status}`);
+    }
+
+    state.trendingMailSettings = normalizeTrendingMailSettings(payload.settings);
+    state.trendingMailError = "";
+    persistState({ skipRemoteSync: true });
+  } catch (error) {
+    console.warn("Trending mail settings failed.", error);
+    state.trendingMailError = "메일링 설정을 불러오지 못했습니다.";
+  } finally {
+    state.trendingMailLoading = false;
+    renderTrendingPeople();
+  }
+}
+
+function collectTrendingMailSettingsFromForm(form) {
+  const recipients = normalizeEmailList(form.recipients.value);
+  const invalidRecipients = recipients.filter((email) => !isValidEmail(email));
+
+  if (invalidRecipients.length) {
+    throw new Error(`수신처 이메일 형식을 확인해주세요: ${invalidRecipients.join(", ")}`);
+  }
+
+  return normalizeTrendingMailSettings({
+    enabled: form.enabled.checked,
+    sendTime: form.sendTime.value,
+    recipients,
+    subjectPrefix: form.subjectPrefix.value,
+    timezone: "Asia/Seoul",
+    updatedBy: getCurrentActorName()
+  });
+}
+
+async function saveTrendingMailSettings() {
+  const form = $("#trending-mail-form");
+
+  if (!form || !isAdmin()) {
+    return;
+  }
+
+  try {
+    state.trendingMailLoading = true;
+    state.trendingMailError = "";
+    renderTrendingPeople();
+    const settings = collectTrendingMailSettingsFromForm(form);
+    const response = await fetch("/api/trending-mail", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings)
+    });
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending mail save failed: ${response.status}`);
+    }
+
+    state.trendingMailSettings = normalizeTrendingMailSettings(payload.settings);
+    state.trendingMailStatus = "메일링 설정을 저장했습니다.";
+    addAuditLog("화제 인물 메일링 설정", "오늘의 화제 인물", `${settings.sendTime} · ${settings.recipients.length}명`);
+    persistState();
+    showToast("메일링 설정을 저장했습니다.");
+  } catch (error) {
+    console.warn("Trending mail save failed.", error);
+    state.trendingMailError = error.message || "메일링 설정 저장에 실패했습니다.";
+    showToast(state.trendingMailError);
+  } finally {
+    state.trendingMailLoading = false;
+    renderTrendingPeople();
+  }
+}
+
+async function sendTrendingMailTest() {
+  const form = $("#trending-mail-form");
+
+  if (!form || !isAdmin()) {
+    return;
+  }
+
+  try {
+    state.trendingMailLoading = true;
+    state.trendingMailError = "";
+    renderTrendingPeople();
+    const settings = collectTrendingMailSettingsFromForm(form);
+    const response = await fetch("/api/trending-mail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "test",
+        settings,
+        report: state.trendingReport,
+        requestedBy: getCurrentActorName()
+      })
+    });
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending mail send failed: ${response.status}`);
+    }
+
+    state.trendingMailSettings = normalizeTrendingMailSettings(payload.settings || settings);
+    state.trendingMailStatus = payload.message || "테스트 메일 발송을 요청했습니다.";
+    addAuditLog("화제 인물 테스트 메일", "오늘의 화제 인물", `${settings.recipients.length}명`);
+    persistState();
+    showToast(state.trendingMailStatus);
+  } catch (error) {
+    console.warn("Trending mail send failed.", error);
+    state.trendingMailError = error.message || "테스트 메일 발송에 실패했습니다.";
+    showToast(state.trendingMailError);
+  } finally {
+    state.trendingMailLoading = false;
+    renderTrendingPeople();
+  }
+}
+
 function normalizeTrendingDegree(value) {
   return { 박: "박사", 석: "석사", 학: "학사", 박사: "박사", 석사: "석사", 학사: "학사" }[value] || "";
 }
@@ -4734,7 +5030,7 @@ function trendingEducationToCandidateEducation(item) {
 
   return {
     degree: normalizeTrendingDegree(item.degree),
-    school: item.school || "",
+    school: normalizeTrendingSchoolName(item.school),
     major: item.major || "",
     start: "",
     end: year
@@ -4743,10 +5039,10 @@ function trendingEducationToCandidateEducation(item) {
 
 function trendingCareerToCandidateCareer(item) {
   return {
-    country: item.country || "",
+    country: normalizeTrendingCountry(item.country),
     company: item.company || "",
     rank: item.rank || "",
-    position: item.title || item.position || "",
+    position: [item.title || item.position || "", item.department || item.organization || item.team || ""].filter(Boolean).join(" · "),
     start: item.start || item.startYear || "",
     end: item.end || item.endYear || "",
     achievements: ""
@@ -5358,6 +5654,16 @@ function bindEvents() {
     const registerTrendingButton = event.target.closest("[data-register-trending-person]");
     if (registerTrendingButton) {
       registerTrendingPerson(registerTrendingButton.dataset.registerTrendingPerson);
+      return;
+    }
+
+    if (event.target.closest("[data-save-trending-mail]")) {
+      saveTrendingMailSettings();
+      return;
+    }
+
+    if (event.target.closest("[data-send-trending-mail-test]")) {
+      sendTrendingMailTest();
       return;
     }
 

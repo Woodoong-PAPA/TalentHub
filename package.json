@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "node scripts/build-runtime-config.js",
-    "check": "node --check talent-pool.js && node --check server.js && node --check scripts/build-runtime-config.js && node --check api/parse-resume.js && node --check api/search-candidates.js && node --check api/trending-people.js",
+    "check": "node --check talent-pool.js && node --check server.js && node --check scripts/build-runtime-config.js && node --check api/parse-resume.js && node --check api/search-candidates.js && node --check api/trending-people.js && node --check api/trending-mail.js",
     "dev": "node server.js",
     "start": "node server.js"
   },

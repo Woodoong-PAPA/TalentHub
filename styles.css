@@ -1182,6 +1182,53 @@ tr:last-child td {
   white-space: normal;
 }
 
+.trending-mail-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.trending-mail-header,
+.trending-mail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trending-mail-header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.trending-mail-header strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.trending-mail-header span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.trending-mail-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.trending-mail-grid .full {
+  grid-column: 1 / -1;
+}
+
 .trending-list {
   display: grid;
   gap: 14px;
@@ -1847,13 +1894,16 @@ tr:last-child td {
   }
 
   .trending-toolbar,
-  .trending-card-header {
+  .trending-card-header,
+  .trending-mail-header,
+  .trending-mail-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
   .trending-card,
-  .trending-profile-grid {
+  .trending-profile-grid,
+  .trending-mail-grid {
     grid-template-columns: 1fr;
   }
 

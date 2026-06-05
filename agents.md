@@ -13,6 +13,7 @@ The current app is a frontend-first prototype. Candidate, audit, member, and rol
 - Candidate registration form with resume upload simulation.
 - AI search simulation with recommendation evidence.
 - Today's trending people view for previous-day Korean DX news, Top 5 people, source article links, and direct talent-pool registration.
+- Today's trending people mailing settings for admin-managed daily report email time and recipients.
 - Candidate detail profile reachable from candidate pool rows and AI search results.
 - Candidate profile includes overview, resume, education, career, activity, applications, and compliance.
 - Candidate detail profiles are editable, and education/career records can contain multiple entries.
@@ -73,6 +74,7 @@ Then verify in the browser:
 - Face profile photo upload preview appears in the registration form.
 - Today's trending people menu loads a report from `/api/trending-people`.
 - Trending people cards show source news links and can register a selected person into the talent pool.
+- Admins can configure trending people mailing settings and test-send from the trending people menu.
 - Login blocks unauthenticated access.
 - Default admin login works with `admin@samsung.com` / `Admin1234!`.
 - Signup creates an approval-pending member that cannot log in until approved.
@@ -136,6 +138,16 @@ Trending people profile enrichment:
 - Keep LinkedIn blank unless a reliable personal `/in/` profile is found.
 - Use only validated direct image URLs for profile photos; reject logos, SVGs, broken URLs, and ambiguous non-person images.
 - Long source news links must wrap inside cards without horizontal overflow on mobile.
+- Education lines should use commas, e.g. `박) 서울대학교, 재료공학 ('12)`.
+- Career lines should use commas, e.g. `한국) 삼성전자, 상무/People팀장, People팀 ('14~'20)`.
+- Normalize `대한민국`, `South Korea`, and `Republic of Korea` to `한국` in report display.
+
+Trending people mailing uses:
+
+- `api/trending-mail.js` for settings, test sends, and cron sends.
+- Supabase tables `trending_mail_settings` and `trending_mail_events`.
+- Vercel Cron path `/api/trending-mail-cron`.
+- Resend environment variables `RESEND_API_KEY` and `RESEND_FROM` for real email delivery.
 
 When adding new sample candidates, include education and career data so the detail profile stays complete.
 

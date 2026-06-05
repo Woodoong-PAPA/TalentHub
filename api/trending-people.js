@@ -50,12 +50,13 @@ const TRENDING_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["country", "company", "rank", "title", "start", "end"],
+              required: ["country", "company", "rank", "title", "department", "start", "end"],
               properties: {
                 country: { type: "string" },
                 company: { type: "string" },
                 rank: { type: "string" },
                 title: { type: "string" },
+                department: { type: "string" },
                 start: { type: "string" },
                 end: { type: "string" }
               }
@@ -138,12 +139,13 @@ const PROFILE_ENRICHMENT_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["country", "company", "rank", "title", "start", "end"],
+              required: ["country", "company", "rank", "title", "department", "start", "end"],
               properties: {
                 country: { type: "string" },
                 company: { type: "string" },
                 rank: { type: "string" },
                 title: { type: "string" },
+                department: { type: "string" },
                 start: { type: "string" },
                 end: { type: "string" }
               }
@@ -561,7 +563,11 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
     "대표 프로필 사진 URL은 이 단계에서 확실하지 않으면 빈 문자열로 둔다. 후속 공개 웹 프로필 보강 단계에서 다시 조사한다.",
     "현재소속, 현재직책, 과거경력, 핵심 성과는 공개적으로 널리 알려진 사실이면 기사 스니펫에 없더라도 작성한다.",
     "학력은 박사, 석사, 학사 순서로 정리한다. 고등학교 학력은 제외한다.",
+    "한국 학교명은 반드시 한국 공식 표기명으로 쓴다. 예: Seoul National University가 아니라 서울대학교, Korea University가 아니라 고려대학교.",
     "경력은 최근 경력부터 나열하고 각 경력의 최종 직급/직책 기준으로 쓴다.",
+    "경력 country는 기사 발행국이 아니라 해당 직장/학교/기관의 소재국가다. 예: NVIDIA는 미국, 서울대학교는 한국.",
+    "경력 country에서 대한민국 또는 South Korea는 반드시 한국으로 쓴다.",
+    "경력 department에는 확인 가능한 소속부서, 연구실, 조직명, 사업부, 팀명을 쓴다. 없으면 빈 문자열.",
     "핵심 성과/실적과 선정 사유는 보고서 문장처럼 짧게 끊고, '~했습니다' 같은 종결 문장을 쓰지 않는다.",
     "선정 사유마다 근거 기사 id를 articleIds에 반드시 포함한다.",
     "",
@@ -597,8 +603,12 @@ async function callOpenAIForProfileEnrichment(targetDate, people) {
     "검색은 한국어와 영어를 모두 활용하고, 이름만으로 동명이인 혼동이 있으면 현재소속/현재직책/뉴스 근거 링크와 맞는 인물만 사용한다.",
     "반드시 같은 이름과 같은 순서로 반환한다. 새 인물을 추가하거나 삭제하지 않는다.",
     "학력은 고등학교를 제외하고 박사, 석사, 학사 순으로 모든 확인 가능한 학위 정보를 기재한다.",
+    "한국 학교명은 반드시 한국 공식 표기명으로 쓴다. 예: Seoul National University가 아니라 서울대학교, Korea University가 아니라 고려대학교.",
     "학력 year는 학위취득년도를 YYYY 또는 'YY 형태로 쓴다. 확인 불가하면 빈 문자열.",
     "경력은 역대 확인 가능한 모든 주요 경력을 최근 경력부터 기재한다.",
+    "경력 country는 기사 발행국이 아니라 해당 직장/학교/기관의 소재국가다. 예: NVIDIA는 미국, 서울대학교는 한국.",
+    "경력 country에서 대한민국 또는 South Korea는 반드시 한국으로 쓴다.",
+    "경력 department에는 확인 가능한 소속부서, 연구실, 조직명, 사업부, 팀명을 쓴다. 없으면 빈 문자열.",
     "경력 start/end는 YYYY-MM, YYYY, 현재 중 가능한 수준으로만 기재한다. 월 정보가 없으면 YYYY만 쓴다.",
     "직급/직책은 각 경력에서 확인 가능한 최종 직급/직책 기준으로 쓴다. 불확실하면 빈 문자열.",
     "LinkedIn은 공식 개인 프로필이라고 판단되는 경우만 URL을 기재한다. 동명이인 가능성이 있거나 확증이 없으면 빈 문자열.",
@@ -656,8 +666,8 @@ function normalizePerson(person, index, articleById) {
     birthYear: String(person.birthYear || "").match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
     currentOrg: String(person.currentOrg || "").trim(),
     currentTitle: String(person.currentTitle || "").trim(),
-    education: Array.isArray(person.education) ? person.education.slice(0, 8) : [],
-    career: Array.isArray(person.career) ? person.career.slice(0, 20) : [],
+    education: normalizeEducationRecords(person.education).slice(0, 8),
+    career: normalizeCareerRecords(person.career).slice(0, 20),
     achievements: Array.isArray(person.achievements)
       ? person.achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 3)
       : [],
@@ -700,6 +710,78 @@ function sanitizeUrl(value) {
   }
 }
 
+function normalizeKoreanSchoolName(value) {
+  const school = String(value || "").trim();
+  const compact = school.toLowerCase().replace(/[.\s-]+/g, "");
+  const mappings = new Map([
+    ["seoulnationaluniversity", "서울대학교"],
+    ["snu", "서울대학교"],
+    ["koreauniversity", "고려대학교"],
+    ["yonseiuniversity", "연세대학교"],
+    ["hanyanguniversity", "한양대학교"],
+    ["sungkyunkwanuniversity", "성균관대학교"],
+    ["skku", "성균관대학교"],
+    ["soganguniversity", "서강대학교"],
+    ["ewhawomansuniversity", "이화여자대학교"],
+    ["postech", "포항공과대학교"],
+    ["pohanguniversityofscienceandtechnology", "포항공과대학교"],
+    ["kaist", "KAIST"],
+    ["koreaadvancedinstituteofscienceandtechnology", "KAIST"],
+    ["unist", "UNIST"],
+    ["ulsannationalinstituteofscienceandtechnology", "UNIST"],
+    ["gist", "GIST"],
+    ["gwangjuinstituteofscienceandtechnology", "GIST"],
+    ["dgist", "DGIST"]
+  ]);
+
+  return mappings.get(compact) || school;
+}
+
+function normalizeCountryLabel(value) {
+  const country = String(value || "").trim();
+
+  if (/^(대한민국|한국|south korea|republic of korea|korea)$/i.test(country)) {
+    return "한국";
+  }
+
+  return country;
+}
+
+function inferCareerCountry(item) {
+  const company = String(item.company || "").toLowerCase();
+
+  if (/nvidia|엔비디아/.test(company)) {
+    return "미국";
+  }
+
+  if (/ncsoft|엔씨소프트|krafton|크래프톤|서울대학교|고려대학교|연세대학교|lg\b|삼성/.test(company)) {
+    return "한국";
+  }
+
+  return normalizeCountryLabel(item.country);
+}
+
+function normalizeEducationRecords(records) {
+  return (Array.isArray(records) ? records : []).map((item) => ({
+    degree: String(item.degree || "").trim(),
+    school: normalizeKoreanSchoolName(item.school),
+    major: String(item.major || "").trim(),
+    year: String(item.year || item.graduationYear || item.end || "").trim()
+  })).filter((item) => item.degree || item.school || item.major || item.year);
+}
+
+function normalizeCareerRecords(records) {
+  return (Array.isArray(records) ? records : []).map((item) => ({
+    country: inferCareerCountry(item),
+    company: String(item.company || "").trim(),
+    rank: String(item.rank || "").trim(),
+    title: String(item.title || item.position || "").trim(),
+    department: String(item.department || item.organization || item.org || item.team || item.division || "").trim(),
+    start: String(item.start || item.startYear || "").trim(),
+    end: String(item.end || item.endYear || "").trim()
+  })).filter((item) => item.country || item.company || item.rank || item.title || item.department || item.start || item.end);
+}
+
 function mergePersonProfile(basePerson, enrichedPerson) {
   if (!enrichedPerson) {
     return basePerson;
@@ -720,8 +802,8 @@ function mergePersonProfile(basePerson, enrichedPerson) {
     birthYear: String(enrichedPerson.birthYear || basePerson.birthYear || "").match(/\b(19\d{2}|20\d{2})\b/)?.[1] || basePerson.birthYear,
     currentOrg: String(enrichedPerson.currentOrg || basePerson.currentOrg || "").trim(),
     currentTitle: String(enrichedPerson.currentTitle || basePerson.currentTitle || "").trim(),
-    education: education.slice(0, 8),
-    career: career.slice(0, 20),
+    education: normalizeEducationRecords(education).slice(0, 8),
+    career: normalizeCareerRecords(career).slice(0, 20),
     achievements: achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 5),
     linkedinUrl: sanitizeUrl(enrichedPerson.linkedinUrl) || basePerson.linkedinUrl,
     profileImageUrl: sanitizeUrl(enrichedPerson.profileImageUrl) || basePerson.profileImageUrl
