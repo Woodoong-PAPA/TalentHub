@@ -512,6 +512,7 @@ const state = {
   editSnapshot: null,
   screeningFolders: structuredClone(DEFAULT_SCREENING_FOLDERS),
   selectedScreeningFolderId: "screening-folder-001",
+  screeningPositionModalOpen: false,
   poolReturnScrollY: 0,
   poolFilters: {
     query: "",
@@ -2250,6 +2251,9 @@ function setView(view) {
   if (view !== "trending") {
     state.trendingModal = "";
   }
+  if (view !== "screening") {
+    state.screeningPositionModalOpen = false;
+  }
   if (view !== "detail" && state.isEditingCandidate) {
     discardCandidateEditDraft();
   }
@@ -2867,59 +2871,74 @@ function renderScreeningAccessOptions(folder = null) {
   `;
 }
 
-function renderPositionFolderForm() {
-  if (!canCreateScreeningFolder()) {
+function renderPositionCreateModal() {
+  if (!state.screeningPositionModalOpen || !canCreateScreeningFolder()) {
     return "";
   }
 
   return `
-    <form id="screening-folder-form" class="form-panel screening-create-form">
-      <div class="panel-header">
-        <h4>포지션 폴더 생성</h4>
-        <span class="small-pill">JD 첨부 또는 직접 입력</span>
-      </div>
-      <div class="field-grid">
-        <div class="field">
-          <label for="screening-folder-title">폴더명</label>
-          <input class="control-input" id="screening-folder-title" name="title" placeholder="예: MX 생성형 AI 서비스 PM" />
+    <div class="trending-modal-backdrop" data-screening-position-modal-backdrop>
+      <section class="trending-modal screening-position-modal" role="dialog" aria-modal="true" aria-labelledby="screening-position-modal-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="screening-position-modal-title">포지션 생성</strong>
+            <span>JD 첨부 또는 직접 입력 후 저장하면 포지션 리스트에 추가됩니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-screening-position-modal>닫기</button>
         </div>
-        <div class="field">
-          <label for="screening-folder-business-unit">사업부</label>
-          <select class="control-select" id="screening-folder-business-unit" name="businessUnit">
-            ${renderBusinessUnitOptions()}
-          </select>
+        <div class="trending-modal-body">
+          <form id="screening-folder-form" class="screening-create-form">
+            <div class="field-grid">
+              <div class="field">
+                <label for="screening-folder-title">포지션 리스트명</label>
+                <input class="control-input" id="screening-folder-title" name="title" placeholder="예: MX 생성형 AI 서비스 PM" />
+              </div>
+              <div class="field">
+                <label for="screening-folder-business-unit">사업부</label>
+                <select class="control-select" id="screening-folder-business-unit" name="businessUnit">
+                  ${renderBusinessUnitOptions()}
+                </select>
+              </div>
+              <div class="field">
+                <label for="screening-folder-department">채용 부서명</label>
+                <input class="control-input" id="screening-folder-department" name="department" />
+              </div>
+              <div class="field">
+                <label for="screening-folder-position">포지션명</label>
+                <input class="control-input" id="screening-folder-position" name="positionName" />
+              </div>
+              <div class="field full">
+                <label for="screening-folder-jd">JD 직접 입력</label>
+                <textarea class="control-textarea" id="screening-folder-jd" name="jdText" rows="5"></textarea>
+              </div>
+              <div class="field full">
+                <label for="screening-folder-jd-file">JD 첨부</label>
+                <input class="control-input" id="screening-folder-jd-file" name="jdFile" type="file" />
+              </div>
+              <div class="field full">
+                <label>접근 가능 회원</label>
+                ${renderScreeningAccessOptions()}
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-close-screening-position-modal>취소</button>
+              <button class="primary-button" type="submit">저장</button>
+            </div>
+          </form>
         </div>
-        <div class="field">
-          <label for="screening-folder-department">채용 부서명</label>
-          <input class="control-input" id="screening-folder-department" name="department" />
-        </div>
-        <div class="field">
-          <label for="screening-folder-position">포지션명</label>
-          <input class="control-input" id="screening-folder-position" name="positionName" />
-        </div>
-        <div class="field full">
-          <label for="screening-folder-jd">JD 직접 입력</label>
-          <textarea class="control-textarea" id="screening-folder-jd" name="jdText" rows="5"></textarea>
-        </div>
-        <div class="field full">
-          <label for="screening-folder-jd-file">JD 첨부</label>
-          <input class="control-input" id="screening-folder-jd-file" name="jdFile" type="file" />
-        </div>
-        <div class="field full">
-          <label>접근 가능 회원</label>
-          ${renderScreeningAccessOptions()}
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="primary-button" type="submit">폴더 생성</button>
-      </div>
-    </form>
+      </section>
+    </div>
   `;
+}
+
+function getScreeningFolderCreatorName(folder) {
+  const creator = state.members.find((member) => member.id === folder.createdById);
+  return folder.createdByName || creator?.name || "담당자 미입력";
 }
 
 function renderScreeningFolderList(folders) {
   if (!folders.length) {
-    return `<div class="empty-state">접근 가능한 포지션 폴더가 없습니다.</div>`;
+    return `<div class="empty-state">접근 가능한 포지션이 없습니다.</div>`;
   }
 
   return `
@@ -2932,7 +2951,8 @@ function renderScreeningFolderList(folders) {
           <button class="screening-folder-card ${active ? "is-active" : ""}" type="button" data-select-screening-folder="${escapeHtml(folder.id)}">
             <strong>${escapeHtml(folder.title)}</strong>
             <span>${escapeHtml(folder.department || "채용 부서 미입력")} · ${escapeHtml(folder.positionName || "포지션 미입력")}</span>
-            <small>${escapeHtml(folder.businessUnit || "사업부 미입력")} · 지원자 ${folder.applicants.length}명 · 2차 통과 ${passed}명</small>
+            <small>${escapeHtml(folder.businessUnit || "사업부 미입력")} · 담당자 ${escapeHtml(getScreeningFolderCreatorName(folder))}</small>
+            <small>지원자 ${folder.applicants.length}명 · 2차 통과 ${passed}명</small>
           </button>
         `;
       }).join("")}
@@ -2948,7 +2968,7 @@ function renderFolderAccessEditor(folder) {
   return `
     <form class="profile-panel screening-access-panel" data-screening-access-form="${escapeHtml(folder.id)}">
       <div class="panel-header">
-        <h4>폴더 접근 회원</h4>
+        <h4>포지션 접근 회원</h4>
         <button class="soft-button compact-button" type="submit">접근 권한 저장</button>
       </div>
       ${renderScreeningAccessOptions(folder)}
@@ -3174,7 +3194,7 @@ function renderScreeningFolderDetail(folder) {
   if (!folder) {
     return `
       <section class="content-panel">
-        <div class="empty-state">포지션 폴더를 선택하거나 새로 생성해주세요.</div>
+        <div class="empty-state">포지션 리스트에서 포지션을 선택하거나 새로 생성해주세요.</div>
       </section>
     `;
   }
@@ -3239,17 +3259,20 @@ function renderScreening() {
   container.innerHTML = `
     <div class="screening-layout">
       <aside class="screening-sidebar">
-        ${renderPositionFolderForm()}
         <section class="content-panel">
           <div class="panel-header">
-            <h4>포지션 폴더</h4>
-            <span class="small-pill">${folders.length}개</span>
+            <h4>포지션 리스트</h4>
+            <div class="panel-actions">
+              <span class="small-pill">${folders.length}개</span>
+              ${canCreateScreeningFolder() ? `<button class="primary-button compact-button" type="button" data-open-screening-position-modal>포지션 생성</button>` : ""}
+            </div>
           </div>
           ${renderScreeningFolderList(folders)}
         </section>
       </aside>
       ${renderScreeningFolderDetail(selectedFolder)}
     </div>
+    ${renderPositionCreateModal()}
   `;
 }
 
@@ -7002,7 +7025,7 @@ async function attachmentFromFile(file) {
 
 async function createScreeningFolder(form) {
   if (!canCreateScreeningFolder()) {
-    showToast("포지션 폴더 생성 권한이 없습니다.");
+    showToast("포지션 생성 권한이 없습니다.");
     return;
   }
 
@@ -7029,9 +7052,10 @@ async function createScreeningFolder(form) {
 
   state.screeningFolders.unshift(folder);
   state.selectedScreeningFolderId = folder.id;
-  addAuditLog("Screening 포지션 폴더 생성", folder.title, "포지션 스크리닝 생성");
+  state.screeningPositionModalOpen = false;
+  addAuditLog("Screening 포지션 생성", folder.title, "포지션 스크리닝 생성");
   persistState();
-  showToast(`${folder.title} 포지션 폴더를 생성했습니다.`);
+  showToast(`${folder.title} 포지션을 생성했습니다.`);
   render();
 }
 
@@ -7039,7 +7063,7 @@ async function registerScreeningApplicant(form) {
   const folder = getScreeningFolder(getFormText(form, "folderId"));
 
   if (!folder || !canAccessScreeningFolder(folder)) {
-    showToast("지원자를 등록할 수 없는 포지션 폴더입니다.");
+    showToast("지원자를 등록할 수 없는 포지션입니다.");
     return;
   }
 
@@ -7133,16 +7157,16 @@ function saveScreeningAccess(form) {
   const folder = getScreeningFolder(form.dataset.screeningAccessForm);
 
   if (!folder || !canManageScreeningFolder(folder)) {
-    showToast("폴더 접근 권한을 수정할 수 없습니다.");
+    showToast("포지션 접근 권한을 수정할 수 없습니다.");
     return;
   }
 
   folder.accessMemberIds = [...new Set([folder.createdById, ...getCheckedValues(form, "accessMemberIds")].filter(Boolean))];
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
-  addAuditLog("Screening 접근 권한 수정", folder.title, "포지션 폴더 접근 회원 변경");
+  addAuditLog("Screening 접근 권한 수정", folder.title, "포지션 접근 회원 변경");
   persistState();
-  showToast("폴더 접근 회원을 저장했습니다.");
+  showToast("포지션 접근 회원을 저장했습니다.");
   renderScreening();
 }
 
@@ -7895,6 +7919,18 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-open-screening-position-modal]")) {
+      state.screeningPositionModalOpen = true;
+      renderScreening();
+      return;
+    }
+
+    if (event.target.closest("[data-close-screening-position-modal]") || event.target.matches("[data-screening-position-modal-backdrop]")) {
+      state.screeningPositionModalOpen = false;
+      renderScreening();
+      return;
+    }
+
     const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
     if (refreshTrendingButton) {
       const mode = refreshTrendingButton.dataset.refreshTrending;
@@ -8113,6 +8149,11 @@ function bindEvents() {
       closeTrendingModal();
     }
 
+    if (event.key === "Escape" && state.screeningPositionModalOpen) {
+      state.screeningPositionModalOpen = false;
+      renderScreening();
+    }
+
     if (event.key === "Escape" && state.memberProfileModalOpen) {
       closeMemberProfileModal();
     }
@@ -8150,7 +8191,7 @@ function bindEvents() {
       event.preventDefault();
       createScreeningFolder(event.target).catch((error) => {
         console.warn(error);
-        showToast("포지션 폴더 생성 중 오류가 발생했습니다.");
+        showToast("포지션 생성 중 오류가 발생했습니다.");
       });
       return;
     }
