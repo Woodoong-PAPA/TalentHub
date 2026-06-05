@@ -1,4 +1,7 @@
 const MAX_ARTICLES = 90;
+const GOOGLE_NEWS_DECODE_CONCURRENCY = 4;
+const GOOGLE_NEWS_BATCH_URL = "https://news.google.com/_/DotsSplashUi/data/batchexecute";
+const GOOGLE_NEWS_USER_AGENT = "Mozilla/5.0 (compatible; SamsungTalentPoolNewsRadar/1.0)";
 const TOPIC_KEYWORDS = ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"];
 const EXCLUDE_KEYWORDS = ["반도체", "DS부문", "DS 부문", "HBM", "메모리", "파운드리", "웨이퍼", "낸드", "D램"];
 
@@ -306,6 +309,321 @@ function isDxArticle(article) {
   const hasTopic = TOPIC_KEYWORDS.some((keyword) => text.toLowerCase().includes(keyword.toLowerCase()));
   const hasExcluded = EXCLUDE_KEYWORDS.some((keyword) => text.toLowerCase().includes(keyword.toLowerCase()));
   return hasTopic && !hasExcluded;
+}
+
+function extractGoogleNewsArticleId(url) {
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.hostname !== "news.google.com") {
+      return "";
+    }
+
+    const match = parsed.pathname.match(/\/(?:rss\/)?articles\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function isGoogleNewsArticleUrl(url) {
+  return Boolean(extractGoogleNewsArticleId(url));
+}
+
+function isPublisherUrl(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    return !hostname.endsWith("google.com") && !hostname.endsWith("googleusercontent.com");
+  } catch (error) {
+    return false;
+  }
+}
+
+async function mapWithConcurrency(items, limit, iteratee) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await iteratee(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function loadGoogleNewsDecodeParams(articleId) {
+  const candidates = [
+    `https://news.google.com/articles/${encodeURIComponent(articleId)}`,
+    `https://news.google.com/rss/articles/${encodeURIComponent(articleId)}`
+  ];
+
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": GOOGLE_NEWS_USER_AGENT
+        }
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const html = await response.text();
+      const signature = html.match(/data-n-a-sg=["']([^"']+)["']/)?.[1];
+      const timestamp = html.match(/data-n-a-ts=["']([^"']+)["']/)?.[1];
+
+      if (signature && timestamp) {
+        return { signature, timestamp };
+      }
+    } catch (error) {
+      console.warn("Google News decode params failed.", error.message);
+    }
+  }
+
+  return null;
+}
+
+function findPublisherUrl(value) {
+  if (typeof value === "string") {
+    if (value.includes("garturlres")) {
+      try {
+        return findPublisherUrl(JSON.parse(value));
+      } catch (error) {
+        // Continue with regex fallback below.
+      }
+    }
+
+    const unescaped = value
+      .replace(/\\"/g, '"')
+      .replace(/\\u003d/g, "=")
+      .replace(/\\u0026/g, "&");
+    const matches = [...unescaped.matchAll(/https?:\/\/[^"\\\]\s]+/g)].map((match) => match[0]);
+    return matches.find(isPublisherUrl) || "";
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findPublisherUrl(item);
+
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return "";
+}
+
+function extractPublisherUrlFromBatchResponse(text) {
+  const lines = String(text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("["));
+
+  for (const line of lines) {
+    try {
+      const found = findPublisherUrl(JSON.parse(line));
+
+      if (found) {
+        return found;
+      }
+    } catch (error) {
+      const found = findPublisherUrl(line);
+
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return findPublisherUrl(text);
+}
+
+async function decodeGoogleNewsArticleUrl(url) {
+  const articleId = extractGoogleNewsArticleId(url);
+
+  if (!articleId) {
+    return url;
+  }
+
+  const params = await loadGoogleNewsDecodeParams(articleId);
+
+  if (!params) {
+    return url;
+  }
+
+  try {
+    const request = [
+      "garturlreq",
+      [["X", "X", ["X", "X"], null, null, 1, 1, "KR:ko", null, 1, null, null, null, null, null, 0, 1], "X", "X", 1, [1, 1, 1], 1, 1, null, 0, 0, null, 0],
+      articleId,
+      Number(params.timestamp),
+      params.signature
+    ];
+    const body = new URLSearchParams({
+      "f.req": JSON.stringify([[["Fbv4je", JSON.stringify(request)]]])
+    });
+    const response = await fetch(GOOGLE_NEWS_BATCH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "User-Agent": GOOGLE_NEWS_USER_AGENT
+      },
+      body
+    });
+
+    if (!response.ok) {
+      return url;
+    }
+
+    const publisherUrl = sanitizeUrl(extractPublisherUrlFromBatchResponse(await response.text()));
+    return publisherUrl || url;
+  } catch (error) {
+    console.warn("Google News article URL decode failed.", error.message);
+    return url;
+  }
+}
+
+async function resolveArticleUrl(article) {
+  if (!isGoogleNewsArticleUrl(article.url)) {
+    return article;
+  }
+
+  const resolvedUrl = await decodeGoogleNewsArticleUrl(article.url);
+
+  if (!resolvedUrl || resolvedUrl === article.url) {
+    return article;
+  }
+
+  return {
+    ...article,
+    googleNewsUrl: article.googleNewsUrl || article.url,
+    url: resolvedUrl
+  };
+}
+
+function collectSelectionArticleIds(people) {
+  const ids = new Set();
+
+  (people || []).forEach((person) => {
+    (person.selectionReasons || []).forEach((reason) => {
+      (reason.articleIds || []).forEach((id) => {
+        if (id) {
+          ids.add(id);
+        }
+      });
+    });
+  });
+
+  return [...ids];
+}
+
+async function resolveReferencedArticleUrls(articleById, people) {
+  const articles = collectSelectionArticleIds(people)
+    .map((id) => articleById.get(id))
+    .filter((article) => article && isGoogleNewsArticleUrl(article.url));
+
+  if (!articles.length) {
+    return;
+  }
+
+  const resolvedArticles = await mapWithConcurrency(
+    articles,
+    GOOGLE_NEWS_DECODE_CONCURRENCY,
+    resolveArticleUrl
+  );
+
+  resolvedArticles.forEach((article) => {
+    articleById.set(article.id, article);
+  });
+}
+
+async function resolveReportNewsLinks(report) {
+  if (!report || !Array.isArray(report.people)) {
+    return report;
+  }
+
+  const urls = new Set();
+
+  report.people.forEach((person) => {
+    (person.selectionReasons || []).forEach((reason) => {
+      (reason.links || []).forEach((link) => {
+        if (isGoogleNewsArticleUrl(link.url)) {
+          urls.add(link.url);
+        }
+      });
+    });
+  });
+
+  if (Array.isArray(report.articles)) {
+    report.articles.forEach((article) => {
+      if (isGoogleNewsArticleUrl(article.url)) {
+        urls.add(article.url);
+      }
+    });
+  }
+
+  if (!urls.size) {
+    return report;
+  }
+
+  const resolvedPairs = await mapWithConcurrency(
+    [...urls],
+    GOOGLE_NEWS_DECODE_CONCURRENCY,
+    async (url) => [url, await decodeGoogleNewsArticleUrl(url)]
+  );
+  const resolvedByUrl = new Map(resolvedPairs.filter(([original, resolved]) => resolved && resolved !== original));
+
+  if (!resolvedByUrl.size) {
+    return report;
+  }
+
+  const rewriteLink = (link) => {
+    const resolvedUrl = resolvedByUrl.get(link.url);
+
+    if (!resolvedUrl) {
+      return link;
+    }
+
+    return {
+      ...link,
+      googleNewsUrl: link.googleNewsUrl || link.url,
+      url: resolvedUrl
+    };
+  };
+  const people = report.people.map((person) => ({
+    ...person,
+    selectionReasons: (person.selectionReasons || []).map((reason) => ({
+      ...reason,
+      links: (reason.links || []).map(rewriteLink)
+    }))
+  }));
+  const articles = Array.isArray(report.articles)
+    ? report.articles.map((article) => {
+      const resolvedUrl = resolvedByUrl.get(article.url);
+
+      if (!resolvedUrl) {
+        return article;
+      }
+
+      return {
+        ...article,
+        googleNewsUrl: article.googleNewsUrl || article.url,
+        url: resolvedUrl
+      };
+    })
+    : report.articles;
+
+  return {
+    ...report,
+    articles,
+    people
+  };
 }
 
 async function fetchNewsArticles(targetDate) {
@@ -1138,10 +1456,13 @@ async function generateReport(targetDate) {
 
   const articleById = new Map(articles.map((article) => [article.id, article]));
   const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames);
-  const rankedPeople = (ranked.people || [])
+  const rankedCandidates = (ranked.people || [])
     .filter((person) => person.name && !excludedNames.includes(person.name) && isLikelyPersonName(person))
-    .slice(0, 5)
-    .map((person, index) => normalizePerson(person, index, articleById));
+    .slice(0, 5);
+  await resolveReferencedArticleUrls(articleById, rankedCandidates);
+
+  const articlesWithResolvedLinks = articles.map((article) => articleById.get(article.id) || article);
+  const rankedPeople = rankedCandidates.map((person, index) => normalizePerson(person, index, articleById));
   const enrichedPeople = await enrichPeopleProfiles(targetDate, rankedPeople);
   const people = await supplementPublicProfileAssets(enrichedPeople);
   const report = {
@@ -1151,8 +1472,8 @@ async function generateReport(targetDate) {
     searchScope: "Google News 한국판 RSS, hl=ko, gl=KR, ceid=KR:ko",
     topics: TOPIC_KEYWORDS,
     excludedNames,
-    articleCount: articles.length,
-    articles,
+    articleCount: articlesWithResolvedLinks.length,
+    articles: articlesWithResolvedLinks,
     people
   };
 
@@ -1172,7 +1493,13 @@ module.exports = async function trendingPeople(request, response) {
     const targetDate = getTargetDate(request.url);
     const shouldForce = forceRefresh(request.url);
     const cached = shouldForce ? null : await loadCachedReport(targetDate);
-    const report = cached || await generateReport(targetDate);
+    const report = await resolveReportNewsLinks(cached || await generateReport(targetDate));
+
+    if (cached && report !== cached) {
+      await saveReport(report).catch((saveError) => {
+        console.warn("Trending people report link migration save failed.", saveError.message);
+      });
+    }
 
     sendJson(response, 200, {
       ok: true,
