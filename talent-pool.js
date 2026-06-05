@@ -2875,22 +2875,26 @@ function trendingPersonCard(person) {
         </div>
 
         <div class="trending-profile-grid">
-          <section>
-            <strong>학력</strong>
-            ${education.length ? `<div class="plain-line-list">${education.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
-          </section>
-          <section>
-            <strong>경력</strong>
-            ${career.length ? `<div class="plain-line-list">${career.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
-          </section>
-          <section>
-            <strong>주요 성과/실적</strong>
-            ${renderDashList(achievements)}
-          </section>
-          <section>
-            <strong>선정 사유</strong>
-            ${renderSelectionReasons(reasons)}
-          </section>
+          <div class="trending-profile-column">
+            <section>
+              <strong>학력</strong>
+              ${education.length ? `<div class="plain-line-list">${education.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
+            </section>
+            <section>
+              <strong>경력</strong>
+              ${career.length ? `<div class="plain-line-list">${career.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
+            </section>
+          </div>
+          <div class="trending-profile-column">
+            <section>
+              <strong>주요 성과/실적</strong>
+              ${renderDashList(achievements)}
+            </section>
+            <section>
+              <strong>선정 사유</strong>
+              ${renderSelectionReasons(reasons)}
+            </section>
+          </div>
         </div>
       </div>
     </article>
@@ -3653,13 +3657,6 @@ function validateCandidateEditForm(form) {
 }
 
 async function saveCandidateEdits(form, options = {}) {
-  const validationErrors = options.preserveBlankRecords ? [] : validateCandidateEditForm(form);
-
-  if (validationErrors.length) {
-    showEditError(validationErrors);
-    return false;
-  }
-
   showEditError([]);
   const candidate = getCandidate();
   const formData = new FormData(form);

@@ -1401,6 +1401,13 @@ tr:last-child td {
   gap: 14px;
 }
 
+.trending-profile-column {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+}
+
 .trending-profile-grid section {
   display: grid;
   align-content: start;
