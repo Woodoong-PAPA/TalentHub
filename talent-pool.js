@@ -439,6 +439,7 @@ const state = {
   trendingLoading: false,
   trendingHistoryLoading: false,
   trendingError: "",
+  trendingModal: "",
   trendingMailSettings: structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
   trendingMailLoading: false,
   trendingMailError: "",
@@ -1744,6 +1745,9 @@ function setView(view) {
   }
 
   state.view = view;
+  if (view !== "trending") {
+    state.trendingModal = "";
+  }
   if (view !== "detail" && state.isEditingCandidate) {
     discardCandidateEditDraft();
   }
@@ -2747,15 +2751,24 @@ function renderSelectionReasons(reasons) {
   `;
 }
 
-function renderTrendingHistoryPanel() {
+function renderTrendingHistoryPanel(options = {}) {
   const reports = state.trendingHistory || [];
   const selectedDate = state.trendingReport?.targetDate || state.trendingSelectedDate || "";
+  const hideTitle = Boolean(options.hideTitle);
+  const headerContent = hideTitle
+    ? `<div><span>저장된 날짜를 클릭하면 해당 날짜 리포트를 그대로 조회합니다.</span></div>`
+    : `
+        <div>
+          <strong>리포트 보관함</strong>
+          <span>저장된 날짜를 클릭하면 해당 날짜 리포트를 그대로 조회합니다.</span>
+        </div>
+      `;
 
   if (state.trendingHistoryLoading && !reports.length) {
     return `
       <section class="trending-history-panel">
         <div class="trending-history-header">
-          <strong>리포트 보관함</strong>
+          ${hideTitle ? "" : "<strong>리포트 보관함</strong>"}
           <span>날짜 목록을 불러오는 중입니다.</span>
         </div>
       </section>
@@ -2765,10 +2778,7 @@ function renderTrendingHistoryPanel() {
   return `
     <section class="trending-history-panel">
       <div class="trending-history-header">
-        <div>
-          <strong>리포트 보관함</strong>
-          <span>저장된 날짜를 클릭하면 해당 날짜 리포트를 그대로 조회합니다.</span>
-        </div>
+        ${headerContent}
         <button class="ghost-button compact-button" type="button" data-refresh-trending-history ${state.trendingHistoryLoading ? "disabled" : ""}>목록 새로고침</button>
       </div>
       ${reports.length ? `
@@ -2793,12 +2803,27 @@ function trendingMailRecipientText() {
   return state.trendingMailSettings.recipients.join("\n");
 }
 
-function renderTrendingMailPanel() {
+function renderTrendingMailRecipientPreview() {
+  const recipients = state.trendingMailSettings.recipients || [];
+
+  if (!recipients.length) {
+    return `<span class="muted-text">등록된 수신처 없음</span>`;
+  }
+
+  return `
+    <div class="recipient-chip-list" aria-label="저장된 메일 수신처">
+      ${recipients.map((recipient) => `<span class="recipient-chip">${escapeHtml(recipient)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderTrendingMailPanel(options = {}) {
   if (!isAdmin()) {
     return "";
   }
 
   const settings = state.trendingMailSettings;
+  const hideTitle = Boolean(options.hideTitle);
   const providerLabel = settings.providerConfigured ? "메일 provider 연결됨" : "메일 provider 미설정";
   const statusText = state.trendingMailError || state.trendingMailStatus || (
     settings.lastSentReportDate
@@ -2810,7 +2835,7 @@ function renderTrendingMailPanel() {
     <form class="trending-mail-panel" id="trending-mail-form">
       <div class="trending-mail-header">
         <div>
-          <strong>메일링 설정</strong>
+          ${hideTitle ? "" : "<strong>메일링 설정</strong>"}
           <span>${escapeHtml(providerLabel)} · ${escapeHtml(statusText)}</span>
         </div>
         <label class="inline-check">
@@ -2829,7 +2854,12 @@ function renderTrendingMailPanel() {
         </div>
         <div class="field full">
           <label for="trending-mail-recipients">수신처</label>
-          <textarea class="control-textarea" id="trending-mail-recipients" name="recipients" placeholder="name@samsung.com">${escapeHtml(trendingMailRecipientText())}</textarea>
+          <textarea class="control-textarea" id="trending-mail-recipients" name="recipients" rows="6" placeholder="name@samsung.com&#10;leader@samsung.com&#10;hr@samsung.com">${escapeHtml(trendingMailRecipientText())}</textarea>
+          <div class="field-caption">줄바꿈, 쉼표, 세미콜론으로 여러 주소를 입력할 수 있습니다.</div>
+          <div class="mail-recipient-summary">
+            <strong>현재 수신처 ${settings.recipients.length}명</strong>
+            ${renderTrendingMailRecipientPreview()}
+          </div>
         </div>
       </div>
       <div class="trending-mail-actions">
@@ -2838,6 +2868,61 @@ function renderTrendingMailPanel() {
       </div>
     </form>
   `;
+}
+
+function renderTrendingModal() {
+  if (!state.trendingModal) {
+    return "";
+  }
+
+  const isMailModal = state.trendingModal === "mail";
+  const title = isMailModal ? "메일링 설정" : "리포트 보관함";
+  const description = isMailModal
+    ? "발송 시간과 복수 수신처를 설정하고 테스트 메일을 발송합니다."
+    : "저장된 날짜를 선택해 과거 오늘의 화제 인물 리포트를 조회합니다.";
+  const content = isMailModal
+    ? renderTrendingMailPanel({ hideTitle: true })
+    : renderTrendingHistoryPanel({ hideTitle: true });
+
+  if (!content) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-trending-modal-backdrop>
+      <section class="trending-modal" role="dialog" aria-modal="true" aria-labelledby="trending-modal-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="trending-modal-title">${escapeHtml(title)}</strong>
+            <span>${escapeHtml(description)}</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-trending-modal>닫기</button>
+        </div>
+        <div class="trending-modal-body">
+          ${content}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function openTrendingModal(type) {
+  if (type === "mail" && !isAdmin()) {
+    showToast("관리자만 메일링 설정을 변경할 수 있습니다.");
+    return;
+  }
+
+  state.trendingModal = type === "mail" ? "mail" : "history";
+  renderTrendingPeople();
+}
+
+function closeTrendingModal() {
+  if (!state.trendingModal) {
+    return;
+  }
+
+  state.trendingModal = "";
+  renderTrendingPeople();
 }
 
 function trendingPersonCard(person) {
@@ -2926,6 +3011,8 @@ function renderTrendingPeople() {
         ${report?.generatedAt ? `<span>생성 시각 ${escapeHtml(report.generatedAt)}</span>` : ""}
       </div>
       <div class="trending-toolbar-actions">
+        <button class="ghost-button" type="button" data-open-trending-modal="history">리포트 보관함</button>
+        ${isAdmin() ? `<button class="ghost-button" type="button" data-open-trending-modal="mail">메일링 설정</button>` : ""}
         <button class="ghost-button" type="button" data-refresh-trending="latest" ${state.trendingLoading ? "disabled" : ""}>최신 리포트</button>
         <button class="primary-button" type="button" data-refresh-trending="force" ${state.trendingLoading ? "disabled" : ""}>현재 날짜 재생성</button>
       </div>
@@ -2935,11 +3022,10 @@ function renderTrendingPeople() {
       <span class="status-chip chip-amber">추천 실행: 매일 06:00 KST Vercel Cron</span>
       <span class="status-chip chip-green">Pool 등록 가능</span>
     </div>
-    ${renderTrendingHistoryPanel()}
-    ${renderTrendingMailPanel()}
     <div class="trending-list">
       ${body}
     </div>
+    ${renderTrendingModal()}
   `;
 }
 
@@ -5931,6 +6017,17 @@ function bindEvents() {
       return;
     }
 
+    const openTrendingModalButton = event.target.closest("[data-open-trending-modal]");
+    if (openTrendingModalButton) {
+      openTrendingModal(openTrendingModalButton.dataset.openTrendingModal);
+      return;
+    }
+
+    if (event.target.closest("[data-close-trending-modal]") || event.target.matches("[data-trending-modal-backdrop]")) {
+      closeTrendingModal();
+      return;
+    }
+
     const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
     if (refreshTrendingButton) {
       const mode = refreshTrendingButton.dataset.refreshTrending;
@@ -5949,6 +6046,7 @@ function bindEvents() {
 
     const trendingDateButton = event.target.closest("[data-trending-date]");
     if (trendingDateButton) {
+      state.trendingModal = "";
       fetchTrendingPeople({ date: trendingDateButton.dataset.trendingDate });
       return;
     }
@@ -6091,6 +6189,12 @@ function bindEvents() {
       });
       persistState();
       showToast(`${candidate.name} 후보자를 Shortlist에 추가했습니다.`);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.trendingModal) {
+      closeTrendingModal();
     }
   });
 

@@ -1229,6 +1229,110 @@ tr:last-child td {
   grid-column: 1 / -1;
 }
 
+.field-caption {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mail-recipient-summary {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.mail-recipient-summary > strong {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recipient-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.recipient-chip {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.trending-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(25, 31, 40, 0.34);
+}
+
+.trending-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(760px, 100%);
+  max-height: min(82vh, 760px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 18px 45px rgba(25, 31, 40, 0.18);
+  overflow: hidden;
+}
+
+.trending-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px;
+}
+
+.trending-modal-header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trending-modal-header strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.trending-modal-header span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.trending-modal-body {
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.trending-modal .trending-history-panel,
+.trending-modal .trending-mail-panel {
+  border: 0;
+  margin-bottom: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .trending-list {
   display: grid;
   gap: 14px;
@@ -2255,15 +2359,33 @@ tr:last-child td {
   .trending-card-header,
   .trending-history-header,
   .trending-mail-header,
-  .trending-mail-actions {
+  .trending-mail-actions,
+  .trending-modal-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .trending-toolbar-actions {
+    width: 100%;
+  }
+
+  .trending-toolbar-actions .ghost-button,
+  .trending-toolbar-actions .primary-button {
+    flex: 1 1 160px;
   }
 
   .trending-card,
   .trending-profile-grid,
   .trending-mail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .trending-modal-backdrop {
+    padding: 12px;
+  }
+
+  .trending-modal {
+    max-height: calc(100vh - 24px);
   }
 
   .detail-hero-card {
