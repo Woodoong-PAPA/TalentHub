@@ -2986,25 +2986,121 @@ function renderDetail() {
   }
 
   $("#detail-content").innerHTML = `
-    <div class="profile-panel detail-profile-panel">
-      <div class="detail-profile-header">
-        <div class="profile-hero profile-hero-large">
-          ${candidateVisual(candidate, "large")}
+    <div class="detail-page-shell">
+      <main class="detail-main-column">
+        ${renderDetailHero(candidate)}
+        ${renderDetailTabStrip()}
+        ${renderFullDetailContent(candidate)}
+      </main>
+      <aside class="detail-side-column">
+        ${renderDetailHistoryPanel(candidate)}
+        ${renderDetailMemoPanel(candidate)}
+      </aside>
+    </div>
+  `;
+}
+
+function renderDetailHero(candidate) {
+  const primaryEducation = getPrimaryEducation(candidate);
+  const primaryCareer = getPrimaryCareer(candidate);
+  const titleLines = [
+    [candidate.company, candidate.role].filter(Boolean).join(", "),
+    primaryCareer
+      ? [primaryCareer.company, primaryCareer.position || primaryCareer.rank, formatPeriod(primaryCareer.start, primaryCareer.end)].filter(Boolean).join(" · ")
+      : "",
+    primaryEducation
+      ? [primaryEducation.school, primaryEducation.major, primaryEducation.degree].filter(Boolean).join(", ")
+      : ""
+  ].filter(Boolean);
+  const linkedin = normalizeExternalUrl(candidate.linkedinUrl);
+  const attachment = candidate.resumeAttachment?.dataUrl;
+
+  return `
+    <section class="detail-hero-card">
+      <div class="detail-hero-photo">
+        ${candidateVisual(candidate, "large")}
+      </div>
+      <div class="detail-hero-body">
+        <div class="detail-hero-topline">
           <div>
-            <h4>${escapeHtml(candidate.name)}</h4>
-            <span class="muted">${escapeHtml(candidate.company)} · ${escapeHtml(candidate.role)}</span>
+            <h3>${escapeHtml(candidate.name)}</h3>
+            <div class="detail-hero-badges">
+              ${getStatusChip(candidate.status)}
+              ${candidate.organization ? `<span class="status-chip chip-violet">${escapeHtml(candidate.organization)}</span>` : ""}
+            </div>
+          </div>
+          <div class="detail-hero-actions">
+            ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
+            ${attachment ? `<a class="icon-link-button" href="${escapeHtml(attachment)}" download="${escapeHtml(candidate.resumeAttachment.name || `${candidate.name}_resume`)}" title="첨부 파일 다운로드">⇩</a>` : ""}
+            <button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>
           </div>
         </div>
-        <div class="profile-stats detail-header-stats">
-          ${statBox("담당자", candidate.owner)}
-          ${statBox("사업부", candidate.organization)}
-          ${statBox("상태", STATUS_LABELS[candidate.status])}
-          ${statBox("최종 업데이트", candidate.updatedAt)}
-          ${statBox("최초 등록일", candidate.createdAt)}
+        <div class="detail-hero-lines">
+          ${titleLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+        </div>
+        <div class="detail-hero-footer">
+          <span>Pool 관리 담당 : ${escapeHtml(candidate.owner || "-")}</span>
+          <span>최초 등록일 : ${escapeHtml(candidate.createdAt || "-")}</span>
+          <span>최종 업데이트 : ${escapeHtml(candidate.updatedAt || "-")}</span>
         </div>
       </div>
-      ${renderFullDetailContent(candidate)}
-    </div>
+    </section>
+  `;
+}
+
+function renderDetailTabStrip() {
+  const tabs = [
+    ["#detail-profile-section", "주요 프로필"],
+    ["#detail-competency-section", "전문역량"],
+    ["#detail-plan-section", "활용계획"],
+    ["#detail-activity-section", "면담 기록"],
+    ["#detail-application-section", "채용진행"]
+  ];
+
+  return `
+    <nav class="detail-tab-strip" aria-label="상세 프로필 섹션">
+      ${tabs.map(([href, label], index) => `<a class="${index === 0 ? "is-active" : ""}" href="${href}">${escapeHtml(label)}</a>`).join("")}
+    </nav>
+  `;
+}
+
+function renderDetailHistoryPanel(candidate) {
+  const items = [
+    { label: "최초 등록", text: `${candidate.source || "직접 등록"} · ${candidate.createdAt || "-"}` },
+    { label: "최근 업데이트", text: `${candidate.updatedAt || "-"} · ${candidate.owner || "담당자 미입력"}` },
+    ...((candidate.timeline || []).slice(0, 3).map((item) => ({
+      label: item.type,
+      text: `${item.text} · ${item.date}`
+    })))
+  ];
+
+  return `
+    <section class="detail-side-card">
+      <div class="detail-side-card-header">
+        <strong>Pool 관리 주요 히스토리</strong>
+        <span class="side-subtle-action">재산정</span>
+      </div>
+      <div class="side-history-list">
+        ${items.map((item) => `
+          <div>
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.text)}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderDetailMemoPanel(candidate) {
+  return `
+    <section class="detail-side-card">
+      <div class="detail-side-card-header">
+        <strong>메모</strong>
+        <button class="icon-mini-button" type="button" data-start-edit title="메모 수정">＋</button>
+      </div>
+      <p class="side-note">${candidate.summary ? escapeHtml(candidate.summary) : "등록된 메모가 없습니다."}</p>
+    </section>
   `;
 }
 
@@ -3012,7 +3108,7 @@ function statBox(label, value) {
   return `
     <div class="stat-box">
       <span>${label}</span>
-      <strong>${escapeHtml(value)}</strong>
+      <strong>${escapeHtml(value || "-")}</strong>
     </div>
   `;
 }
@@ -3050,9 +3146,9 @@ function detailLink(value) {
   return `<a class="detail-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(value)}</a>`;
 }
 
-function detailSection(title, content, className = "") {
+function detailSection(title, content, className = "", sectionId = "") {
   return `
-    <section class="detail-section ${className}">
+    <section class="detail-section ${className}" ${sectionId ? `id="${escapeHtml(sectionId)}"` : ""}>
       <div class="detail-section-header">
         <h4>${escapeHtml(title)}</h4>
       </div>
@@ -3155,16 +3251,34 @@ function renderApplicationsSection(candidate) {
   `;
 }
 
+function renderUtilizationPlanSection(candidate) {
+  const applications = candidate.applications || [];
+  const latestApplication = applications[0];
+  const focusText = candidate.skills?.length
+    ? `${candidate.skills.slice(0, 4).join(", ")} 역량 기반 포지션 검토`
+    : "후보자 역량 확인 후 적합 포지션 매칭";
+
+  return `
+    <div class="detail-plan-grid">
+      ${statBox("활용 방향", focusText)}
+      ${statBox("추천 액션", candidate.status === "contacted" ? "후속 면담 및 포지션 제안" : "담당자 검토 후 접촉")}
+      ${statBox("최근 지원", latestApplication ? `${latestApplication.title} · ${latestApplication.stage}` : "등록된 지원 이력 없음")}
+      ${statBox("관리 상태", STATUS_LABELS[candidate.status] || "-")}
+    </div>
+  `;
+}
+
 function renderFullDetailContent(candidate) {
   return `
     <div class="detail-section-stack">
-      ${detailSection("주요 역량/성과", renderCompetencySection(candidate), "is-primary")}
-      ${detailSection("학력", renderEducationTab(candidate))}
-      ${detailSection("경력", renderCareerTab(candidate))}
-      ${detailSection("이력서", renderResumeAttachmentSection(candidate))}
-      ${detailSection("기본 정보", renderOverviewSection(candidate))}
-      ${detailSection("이력", renderActivitySection(candidate))}
-      ${detailSection("지원", renderApplicationsSection(candidate))}
+      ${detailSection("경력사항", renderCareerTab(candidate), "", "detail-profile-section")}
+      ${detailSection("학력사항", renderEducationTab(candidate))}
+      ${detailSection("인적사항", renderOverviewSection(candidate))}
+      ${detailSection("주요 역량/성과", renderCompetencySection(candidate), "is-primary", "detail-competency-section")}
+      ${detailSection("활용계획", renderUtilizationPlanSection(candidate), "", "detail-plan-section")}
+      ${detailSection("첨부파일", renderResumeAttachmentSection(candidate))}
+      ${detailSection("면담 기록", renderActivitySection(candidate), "", "detail-activity-section")}
+      ${detailSection("채용진행", renderApplicationsSection(candidate), "", "detail-application-section")}
     </div>
   `;
 }
@@ -3177,18 +3291,14 @@ function renderEducationTab(candidate) {
   return `
     <div class="detail-card-list">
       ${candidate.education.map((item) => `
-        <article class="detail-record-card">
-          <div class="record-card-header">
-            <strong>${escapeHtml(item.school)}</strong>
-            <span class="status-chip chip-blue">${escapeHtml(item.degree)}</span>
+        <article class="detail-record-card record-list-item">
+          <div class="record-mainline">
+            <strong>${escapeHtml(`${item.degree ? `${item.degree}) ` : ""}${[item.school, item.major].filter(Boolean).join(", ")}`.trim())}</strong>
+            <span>${escapeHtml(formatPeriod(item.start, item.end))}</span>
           </div>
-          ${detailInfoGrid([
-            { label: "학위", value: item.degree },
-            { label: "학교명", value: item.school },
-            { label: "전공명", value: item.major },
-            { label: "학위 시작", value: formatYearMonth(item.start) || "-" },
-            { label: "학위 종료", value: formatYearMonth(item.end) || "-" }
-          ])}
+          <div class="record-subline">
+            ${[item.school, item.major, item.degree].filter(Boolean).map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+          </div>
         </article>
       `).join("")}
     </div>
@@ -3203,23 +3313,18 @@ function renderCareerTab(candidate) {
   return `
     <div class="detail-card-list">
       ${candidate.career.map((item) => `
-        <article class="detail-record-card">
-          <div class="record-card-header">
-            <strong>${escapeHtml(item.company)}</strong>
-            <span class="status-chip ${item.end === "현재" ? "chip-green" : "chip-blue"}">${escapeHtml(item.end === "현재" ? "현재 재직" : "경력")}</span>
+        <article class="detail-record-card record-list-item">
+          <div class="record-mainline">
+            <strong>${escapeHtml([item.company, item.rank || item.position].filter(Boolean).join(", "))}</strong>
+            <span>${escapeHtml(formatPeriod(item.start, item.end))}</span>
           </div>
-          ${detailInfoGrid([
-            { label: "직장 소재 국가", value: item.country },
-            { label: "직장명", value: item.company },
-            { label: "직급", value: item.rank },
-            { label: "직책", value: item.position },
-            { label: "근무 시작", value: formatYearMonth(item.start) || "-" },
-            { label: "근무 종료", value: item.end === "현재" ? "현재" : formatYearMonth(item.end) || "-" }
-          ])}
-          <div class="achievement-box">
+          <div class="record-subline">
+            ${[item.position, item.country, item.end === "현재" ? "현재 재직" : "경력"].filter(Boolean).map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+          </div>
+          ${item.achievements ? `<div class="achievement-box">
             <span>직장에서의 주요성과/실적</span>
             <p>${escapeHtml(item.achievements)}</p>
-          </div>
+          </div>` : ""}
         </article>
       `).join("")}
     </div>
