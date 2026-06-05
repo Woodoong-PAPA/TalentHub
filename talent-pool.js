@@ -66,6 +66,7 @@ const DEFAULT_TRENDING_MAIL_SETTINGS = {
   updatedAt: "",
   updatedBy: ""
 };
+const TRENDING_PROFILE_COMPLETENESS_VERSION = 5;
 
 const DEFAULT_MEMBERS = [
   {
@@ -1706,6 +1707,18 @@ function syncActiveViewState() {
   $("#page-title").textContent = viewTitles[state.view] || "Talent Pool";
 }
 
+function trendingReportNeedsRefresh(report) {
+  if (!report || !Array.isArray(report.people) || !report.people.length) {
+    return true;
+  }
+
+  if (Number(report.profileCompletenessVersion || 0) < TRENDING_PROFILE_COMPLETENESS_VERSION) {
+    return true;
+  }
+
+  return false;
+}
+
 function setView(view) {
   if (!isAuthenticated()) {
     renderAuth();
@@ -1724,7 +1737,7 @@ function setView(view) {
   syncActiveViewState();
   render();
 
-  if (view === "trending" && !state.trendingReport && !state.trendingLoading) {
+  if (view === "trending" && trendingReportNeedsRefresh(state.trendingReport) && !state.trendingLoading) {
     fetchTrendingPeople();
   }
 
@@ -2027,15 +2040,15 @@ function renderRegister() {
           </div>
           <div class="field">
             <label for="candidate-name">이름</label>
-            <input class="control-input" id="candidate-name" name="name" required autocomplete="off" />
+            <input class="control-input" id="candidate-name" name="name" autocomplete="off" />
           </div>
           <div class="field">
             <label for="candidate-company">현재/최근 회사</label>
-            <input class="control-input" id="candidate-company" name="company" required autocomplete="organization" />
+            <input class="control-input" id="candidate-company" name="company" autocomplete="organization" />
           </div>
           <div class="field">
             <label for="candidate-role">직무</label>
-            <input class="control-input" id="candidate-role" name="role" required autocomplete="off" />
+            <input class="control-input" id="candidate-role" name="role" autocomplete="off" />
           </div>
           <div class="field">
             <label for="candidate-organization">사업부</label>
@@ -2712,7 +2725,7 @@ function trendingPersonCard(person) {
 
   return `
     <article class="trending-card">
-      <div class="trending-media">
+      <div class="trending-media" data-trending-rank="${escapeHtml(rank)}">
         ${photo}
         ${person.profileImageUrl ? `<span class="trending-rank-badge">${rank}</span>` : ""}
       </div>
@@ -5151,11 +5164,9 @@ async function registerCandidate(eventOrForm) {
   const organization = form.get("organization").toString().trim();
   const birthYear = form.get("birthYear").toString().trim();
   const today = getTodayDate();
-
-  if (!name || !company || !role) {
-    showToast("이름, 현재/최근 회사, 직무를 입력해주세요.");
-    return;
-  }
+  const candidateName = name || "이름 미입력";
+  const candidateCompany = company || "미입력";
+  const candidateRole = role || "미입력";
 
   const education = collectRegisterEducationFromForm(formElement);
   const career = collectRegisterCareerFromForm(formElement);
@@ -5198,10 +5209,10 @@ async function registerCandidate(eventOrForm) {
 
   const candidate = {
     id: `cand-${Date.now()}`,
-    name,
-    initials: `${name.slice(0, 1)}${name.slice(-1)}`,
-    role,
-    company,
+    name: candidateName,
+    initials: name ? `${name.slice(0, 1)}${name.slice(-1)}` : "미",
+    role: candidateRole,
+    company: candidateCompany,
     years: estimateCareerYears(career),
     jobFamily: "Equipment Software",
     organization: organization || "미입력",
@@ -5872,6 +5883,19 @@ function bindEvents() {
       updateAgeOutput("#edit-birth-year", "#edit-age");
     }
   });
+
+  document.addEventListener("error", (event) => {
+    if (!event.target.classList?.contains("trending-photo")) {
+      return;
+    }
+
+    const media = event.target.closest(".trending-media");
+    const rank = media?.dataset.trendingRank || "";
+    const fallback = document.createElement("div");
+    fallback.className = "trending-rank";
+    fallback.textContent = rank;
+    event.target.replaceWith(fallback);
+  }, true);
 
   document.addEventListener("change", (event) => {
     if (["pool-status", "pool-owner"].includes(event.target.id)) {

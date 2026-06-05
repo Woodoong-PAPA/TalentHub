@@ -2,6 +2,14 @@ const MAX_ARTICLES = 90;
 const GOOGLE_NEWS_DECODE_CONCURRENCY = 4;
 const GOOGLE_NEWS_BATCH_URL = "https://news.google.com/_/DotsSplashUi/data/batchexecute";
 const GOOGLE_NEWS_USER_AGENT = "Mozilla/5.0 (compatible; SamsungTalentPoolNewsRadar/1.0)";
+const PROFILE_COMPLETENESS_VERSION = 5;
+const KNOWN_PROFILE_IMAGE_URLS = [
+  {
+    name: "구광모",
+    organizationPattern: /lg|엘지/i,
+    url: "https://www.businesspost.co.kr/news/photo/202307/20230704112634_119248.jpg"
+  }
+];
 const TOPIC_KEYWORDS = ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"];
 const EXCLUDE_KEYWORDS = ["반도체", "DS부문", "DS 부문", "HBM", "메모리", "파운드리", "웨이퍼", "낸드", "D램"];
 
@@ -705,15 +713,13 @@ async function supabaseRequest(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-async function fetchText(url, options = {}) {
+async function fetchWithTimeout(url, options = {}) {
   const { timeoutMs = 15000, ...fetchOptions } = options;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response;
-
   try {
-    response = await fetch(url, {
+    return await fetch(url, {
       ...fetchOptions,
       signal: controller.signal,
       headers: {
@@ -724,6 +730,10 @@ async function fetchText(url, options = {}) {
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function fetchText(url, options = {}) {
+  const response = await fetchWithTimeout(url, options);
 
   if (!response.ok) {
     throw new Error(`Fetch failed: ${response.status}`);
@@ -830,10 +840,17 @@ async function requestOpenAIJson({ apiKey, model, prompt, schema, schemaName, er
     body.tools = [
       {
         type: "web_search",
-        external_web_access: true
+        external_web_access: true,
+        search_context_size: "high",
+        user_location: {
+          type: "approximate",
+          country: "KR",
+          city: "Seoul",
+          timezone: "Asia/Seoul"
+        }
       }
     ];
-    body.tool_choice = "auto";
+    body.tool_choice = "required";
   }
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -918,12 +935,17 @@ async function callOpenAIForProfileEnrichment(targetDate, people) {
     `대상 리포트 기사일: ${targetDate}.`,
     "아래 인물에 대해 반드시 web_search 도구로 공개 웹을 검색하고 신뢰 가능한 프로필 정보를 다시 조사해 보강한다.",
     "모델의 기억만으로 빈 값을 확정하지 말고, 공개 웹 검색에서 확인되는 자료를 우선한다.",
+    "검색은 인물명+현재소속, 인물명+현재직책, 인물명+학력, 인물명+경력, 영문 이름 조합을 각각 확인한다.",
+    "인물 본인/소속기관/상장사 공시/공식 약력/신뢰 가능한 언론 인물소개 자료를 우선한다.",
     "검색은 한국어와 영어를 모두 활용하고, 이름만으로 동명이인 혼동이 있으면 현재소속/현재직책/뉴스 근거 링크와 맞는 인물만 사용한다.",
     "반드시 같은 이름과 같은 순서로 반환한다. 새 인물을 추가하거나 삭제하지 않는다.",
     "학력은 고등학교를 제외하고 박사, 석사, 학사 순으로 모든 확인 가능한 학위 정보를 기재한다.",
+    "학위취득년도나 전공 일부만 확인되어도 해당 학력 항목을 포함한다. 학위 자체가 불명확하면 degree는 빈 문자열로 두되 학교/전공/연도는 기재한다.",
     "한국 학교명은 반드시 한국 공식 표기명으로 쓴다. 예: Seoul National University가 아니라 서울대학교, Korea University가 아니라 고려대학교.",
     "학력 year는 학위취득년도를 YYYY 또는 'YY 형태로 쓴다. 확인 불가하면 빈 문자열.",
     "경력은 역대 확인 가능한 모든 주요 경력을 최근 경력부터 기재한다.",
+    "현재소속과 현재직책은 반드시 career의 첫 항목에 포함한다. 시작시점을 모르면 start는 빈 문자열, end는 현재로 둔다.",
+    "임원 승진, 창업, 교수 임용, 연구원/포닥, 이전 회사 재직처럼 공개 약력에서 확인 가능한 경력은 빠뜨리지 않는다.",
     "경력 country는 기사 발행국이 아니라 해당 직장/학교/기관의 소재국가다. 예: NVIDIA는 미국, 서울대학교는 한국.",
     "경력 country에서 대한민국 또는 South Korea는 반드시 한국으로 쓴다.",
     "경력 department에는 확인 가능한 소속부서, 연구실, 조직명, 사업부, 팀명을 쓴다. 없으면 빈 문자열.",
@@ -1100,9 +1122,43 @@ function normalizeCareerRecords(records) {
   })).filter((item) => item.country || item.company || item.rank || item.title || item.department || item.start || item.end);
 }
 
+function normalizePersonProfileBasics(person) {
+  const currentOrg = String(person.currentOrg || "").trim();
+  const currentTitle = String(person.currentTitle || "").trim();
+  const career = normalizeCareerRecords(person.career);
+
+  if (!career.length && (currentOrg || currentTitle)) {
+    career.push({
+      country: inferCareerCountry({ company: currentOrg }),
+      company: currentOrg,
+      rank: "",
+      title: currentTitle,
+      department: "",
+      start: "",
+      end: "현재"
+    });
+  }
+
+  return {
+    ...person,
+    education: normalizeEducationRecords(person.education).slice(0, 8),
+    career: career.slice(0, 20),
+    profileImageUrl: sanitizeUrl(person.profileImageUrl),
+    linkedinUrl: sanitizeUrl(person.linkedinUrl)
+  };
+}
+
+function reportNeedsProfileRepair(report) {
+  if (!report || !Array.isArray(report.people) || !report.people.length) {
+    return false;
+  }
+
+  return Number(report.profileCompletenessVersion || 0) < PROFILE_COMPLETENESS_VERSION;
+}
+
 function mergePersonProfile(basePerson, enrichedPerson) {
   if (!enrichedPerson) {
-    return basePerson;
+    return normalizePersonProfileBasics(basePerson);
   }
 
   const education = Array.isArray(enrichedPerson.education) && enrichedPerson.education.length
@@ -1115,7 +1171,7 @@ function mergePersonProfile(basePerson, enrichedPerson) {
     ? enrichedPerson.achievements
     : basePerson.achievements;
 
-  return {
+  return normalizePersonProfileBasics({
     ...basePerson,
     birthYear: String(enrichedPerson.birthYear || basePerson.birthYear || "").match(/\b(19\d{2}|20\d{2})\b/)?.[1] || basePerson.birthYear,
     currentOrg: String(enrichedPerson.currentOrg || basePerson.currentOrg || "").trim(),
@@ -1125,7 +1181,7 @@ function mergePersonProfile(basePerson, enrichedPerson) {
     achievements: achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 5),
     linkedinUrl: sanitizeUrl(enrichedPerson.linkedinUrl) || basePerson.linkedinUrl,
     profileImageUrl: sanitizeUrl(enrichedPerson.profileImageUrl) || basePerson.profileImageUrl
-  };
+  });
 }
 
 async function enrichPeopleProfiles(targetDate, people) {
@@ -1265,8 +1321,37 @@ function extractSearchResultUrls(html) {
     .slice(0, 8);
 }
 
-function extractMetaImageUrl(html, pageUrl, person) {
-  const name = String(person.name || "").replace(/\s+/g, "").toLowerCase();
+function expandImageUrlCandidates(url) {
+  const safeUrl = sanitizeUrl(url);
+
+  if (!safeUrl) {
+    return [];
+  }
+
+  const candidates = new Set([safeUrl]);
+
+  if (safeUrl.includes("/thumbnail/")) {
+    const photoUrl = safeUrl
+      .replace("/thumbnail/", "/photo/")
+      .replace(/_v\d+(?=\.[a-z0-9]+(?:[?#]|$))/i, "");
+    candidates.add(photoUrl);
+
+    if (/\.jpg(?:[?#]|$)/i.test(photoUrl)) {
+      candidates.add(photoUrl.replace(/\.jpg(?=([?#]|$))/i, ".jpeg"));
+    }
+
+    if (/\.jpeg(?:[?#]|$)/i.test(photoUrl)) {
+      candidates.add(photoUrl.replace(/\.jpeg(?=([?#]|$))/i, ".jpg"));
+    }
+  }
+
+  return [...candidates];
+}
+
+function extractImageCandidateUrls(html, pageUrl, options = {}) {
+  const { person = null, requireNameInImageTag = false } = options;
+  const name = String(person?.name || "").replace(/\s+/g, "").toLowerCase();
+  const urls = new Set();
 
   for (const match of String(html || "").matchAll(/<meta\b[^>]+>/gi)) {
     const tag = match[0];
@@ -1278,7 +1363,7 @@ function extractMetaImageUrl(html, pageUrl, person) {
     const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
 
     if (content) {
-      return new URL(decodeHtml(content), pageUrl).href;
+      expandImageUrlCandidates(new URL(decodeHtml(content), pageUrl).href).forEach((url) => urls.add(url));
     }
   }
 
@@ -1286,14 +1371,63 @@ function extractMetaImageUrl(html, pageUrl, person) {
     const tag = match[0];
     const compactTag = decodeHtml(tag).replace(/\s+/g, "").toLowerCase();
 
-    if (name && !compactTag.includes(name)) {
+    if (requireNameInImageTag && name && !compactTag.includes(name)) {
       continue;
     }
 
     const src = tag.match(/\bsrc=["']([^"']+)["']/i)?.[1] || tag.match(/\bdata-src=["']([^"']+)["']/i)?.[1];
 
     if (src) {
-      return new URL(decodeHtml(src), pageUrl).href;
+      expandImageUrlCandidates(new URL(decodeHtml(src), pageUrl).href).forEach((url) => urls.add(url));
+    }
+  }
+
+  return [...urls]
+    .filter((url) => !/logo|symbol|emblem|banner|share_sns|printlogo|toplogo|icon[-_]/i.test(url))
+    .slice(0, 16);
+}
+
+function findKnownProfileImageUrl(person) {
+  const name = String(person.name || "").trim();
+  const organization = String(person.currentOrg || "").trim();
+  const match = KNOWN_PROFILE_IMAGE_URLS.find((item) =>
+    item.name === name &&
+    (!item.organizationPattern || item.organizationPattern.test(organization))
+  );
+
+  return match?.url || "";
+}
+
+function collectPersonSourceUrls(person) {
+  const urls = new Set();
+
+  (person.selectionReasons || []).forEach((reason) => {
+    (reason.links || []).forEach((link) => {
+      const safeUrl = sanitizeUrl(link.url);
+
+      if (safeUrl) {
+        urls.add(safeUrl);
+      }
+    });
+  });
+
+  return [...urls].slice(0, 8);
+}
+
+async function fetchProfileImageFromSourceLinks(person) {
+  for (const sourceUrl of collectPersonSourceUrls(person)) {
+    try {
+      const html = await fetchText(sourceUrl, { timeoutMs: 12000 });
+
+      for (const candidateUrl of extractImageCandidateUrls(html, sourceUrl, { person })) {
+        const imageUrl = await validateImageUrl(candidateUrl);
+
+        if (imageUrl) {
+          return imageUrl;
+        }
+      }
+    } catch (error) {
+      console.warn(`Source article image lookup failed for ${person.name}.`, error.message);
     }
   }
 
@@ -1322,10 +1456,13 @@ async function fetchProfileImageFromSearch(person) {
 
         try {
           const pageHtml = await fetchText(resultUrl, { timeoutMs: 12000 });
-          const imageUrl = await validateImageUrl(extractMetaImageUrl(pageHtml, resultUrl, person));
 
-          if (imageUrl) {
-            return imageUrl;
+          for (const candidateUrl of extractImageCandidateUrls(pageHtml, resultUrl, { person, requireNameInImageTag: true })) {
+            const imageUrl = await validateImageUrl(candidateUrl);
+
+            if (imageUrl) {
+              return imageUrl;
+            }
           }
         } catch (error) {
           // Continue through other public profile result pages.
@@ -1374,16 +1511,18 @@ async function validateImageUrl(url) {
   }
 
   try {
-    let response = await fetch(safeUrl, {
+    let response = await fetchWithTimeout(safeUrl, {
       method: "HEAD",
-      headers: { "User-Agent": "SamsungTalentPoolNewsRadar/1.0" }
+      timeoutMs: 8000,
+      headers: { "User-Agent": "Mozilla/5.0 SamsungTalentPoolNewsRadar/1.0" }
     });
 
     if (response.status === 405 || response.status === 403) {
-      response = await fetch(safeUrl, {
+      response = await fetchWithTimeout(safeUrl, {
         method: "GET",
+        timeoutMs: 8000,
         headers: {
-          "User-Agent": "SamsungTalentPoolNewsRadar/1.0",
+          "User-Agent": "Mozilla/5.0 SamsungTalentPoolNewsRadar/1.0",
           Range: "bytes=0-0"
         }
       });
@@ -1397,11 +1536,20 @@ async function validateImageUrl(url) {
 }
 
 async function supplementPublicProfileAssets(people) {
-  const results = await Promise.allSettled(people.map(async (person) => {
+  const results = await Promise.allSettled(people.map(async (rawPerson) => {
+    const person = normalizePersonProfileBasics(rawPerson);
     let imageUrl = await validateImageUrl(person.profileImageUrl);
 
     if (!imageUrl) {
       imageUrl = await validateImageUrl(await fetchWikipediaProfileImage(person));
+    }
+
+    if (!imageUrl) {
+      imageUrl = await validateImageUrl(findKnownProfileImageUrl(person));
+    }
+
+    if (!imageUrl) {
+      imageUrl = await fetchProfileImageFromSourceLinks(person);
     }
 
     if (!imageUrl) {
@@ -1421,6 +1569,24 @@ async function supplementPublicProfileAssets(people) {
     const result = results[index];
     return result.status === "fulfilled" ? result.value : person;
   });
+}
+
+async function repairReportProfiles(report) {
+  if (!report || !Array.isArray(report.people)) {
+    return report;
+  }
+
+  const targetDate = report.targetDate || report.reportDate || kstDateKeyOffset(-1);
+  const normalizedPeople = report.people.map(normalizePersonProfileBasics);
+  const enrichedPeople = await enrichPeopleProfiles(targetDate, normalizedPeople);
+  const people = await supplementPublicProfileAssets(enrichedPeople);
+
+  return {
+    ...report,
+    people,
+    profileCompletenessVersion: PROFILE_COMPLETENESS_VERSION,
+    profileRepairedAt: new Date().toISOString()
+  };
 }
 
 function isLikelyPersonName(person) {
@@ -1469,6 +1635,7 @@ async function generateReport(targetDate) {
     reportDate: targetDate,
     targetDate,
     generatedAt: new Date().toISOString(),
+    profileCompletenessVersion: PROFILE_COMPLETENESS_VERSION,
     searchScope: "Google News 한국판 RSS, hl=ko, gl=KR, ceid=KR:ko",
     topics: TOPIC_KEYWORDS,
     excludedNames,
@@ -1493,11 +1660,16 @@ module.exports = async function trendingPeople(request, response) {
     const targetDate = getTargetDate(request.url);
     const shouldForce = forceRefresh(request.url);
     const cached = shouldForce ? null : await loadCachedReport(targetDate);
-    const report = await resolveReportNewsLinks(cached || await generateReport(targetDate));
+    const sourceReport = cached || await generateReport(targetDate);
+    let report = await resolveReportNewsLinks(sourceReport);
 
-    if (cached && report !== cached) {
+    if (cached && reportNeedsProfileRepair(report)) {
+      report = await repairReportProfiles(report);
+    }
+
+    if (cached && report !== sourceReport) {
       await saveReport(report).catch((saveError) => {
-        console.warn("Trending people report link migration save failed.", saveError.message);
+        console.warn("Trending people report migration save failed.", saveError.message);
       });
     }
 
