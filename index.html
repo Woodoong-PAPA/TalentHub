@@ -9,6 +9,10 @@
     <script src="talent-pool.js" defer></script>
   </head>
   <body>
+    <div id="auth-screen" class="auth-screen" aria-label="로그인 및 회원가입">
+      <div id="auth-content"></div>
+    </div>
+
     <div class="app-shell">
       <aside class="sidebar" aria-label="주요 메뉴">
         <div class="brand-block">
@@ -40,6 +44,10 @@
             <span class="nav-icon">L</span>
             <span>감사 로그</span>
           </button>
+          <button class="nav-item" type="button" data-view="members">
+            <span class="nav-icon">M</span>
+            <span>회원관리</span>
+          </button>
         </nav>
 
         <div class="sidebar-panel">
@@ -62,6 +70,7 @@
             </div>
             <button class="ghost-button" type="button" data-view="register">등록</button>
             <button class="primary-button" type="button" data-view="ai-search">AI 검색</button>
+            <div id="user-menu" class="user-menu"></div>
           </div>
         </header>
 
@@ -130,6 +139,17 @@
               <span class="status-chip chip-amber">다운로드 추적</span>
             </div>
             <div id="audit-content"></div>
+          </section>
+
+          <section id="members-view" class="view" aria-labelledby="members-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Access Control</p>
+                <h3 id="members-title">회원관리</h3>
+              </div>
+              <span class="status-chip chip-blue">승인 기반 접속</span>
+            </div>
+            <div id="members-content"></div>
           </section>
         </main>
       </div>

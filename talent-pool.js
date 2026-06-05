@@ -18,6 +18,59 @@ const STATUS_ORDER = [
   "inactive"
 ];
 
+const MENU_CONFIG = [
+  { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
+  { view: "pool", label: "인재 Pool", description: "후보자 목록과 상세 프로필 조회" },
+  { view: "register", label: "인재 등록", description: "후보자 신규 등록과 이력서 파싱" },
+  { view: "ai-search", label: "AI 검색", description: "자연어/JD 기반 후보자 검색" },
+  { view: "audit", label: "감사 로그", description: "사용자·AI 처리 이력 확인" },
+  { view: "members", label: "회원관리", description: "회원 승인, 등급, 메뉴 권한 관리" }
+];
+
+const MEMBER_ROLES = {
+  associate: "준회원",
+  regular: "정회원",
+  operator: "운영진",
+  admin: "관리자"
+};
+
+const MEMBER_ROLE_ORDER = ["associate", "regular", "operator", "admin"];
+
+const MEMBER_STATUSES = {
+  pending: "승인 대기",
+  active: "활성",
+  suspended: "정지",
+  rejected: "반려"
+};
+
+const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
+
+const DEFAULT_ROLE_PERMISSIONS = {
+  associate: ["dashboard", "pool", "ai-search"],
+  regular: ["dashboard", "pool", "register", "ai-search"],
+  operator: ["dashboard", "pool", "register", "ai-search", "audit"],
+  admin: MENU_CONFIG.map((item) => item.view)
+};
+
+const DEFAULT_MEMBERS = [
+  {
+    id: "member-admin",
+    name: "시스템 관리자",
+    email: "admin@samsung.com",
+    password: "Admin1234!",
+    role: "admin",
+    status: "active",
+    department: "People Team",
+    position: "Talent Pool Owner",
+    phone: "",
+    requestedAt: "2026-06-05",
+    approvedAt: "2026-06-05",
+    approvedBy: "시스템",
+    lastLoginAt: "",
+    note: "초기 관리자 계정"
+  }
+];
+
 const SAMPLE_CANDIDATES = [
   {
     id: "cand-001",
@@ -340,6 +393,16 @@ const REMOTE_SYNC_ENABLED = DATA_SOURCE === "supabase" && SUPABASE_URL && SUPABA
 
 const state = {
   view: "dashboard",
+  authView: "login",
+  currentUserId: "",
+  authMessage: "",
+  members: structuredClone(DEFAULT_MEMBERS),
+  rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
+  memberFilters: {
+    query: "",
+    role: "all",
+    status: "all"
+  },
   candidates: structuredClone(ENRICHED_CANDIDATES),
   selectedCandidateId: "cand-001",
   isEditingCandidate: false,
@@ -369,7 +432,8 @@ const viewTitles = {
   register: "인재 등록",
   "ai-search": "AI 검색",
   detail: "상세 프로필",
-  audit: "감사 로그"
+  audit: "감사 로그",
+  members: "회원관리"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -506,6 +570,124 @@ function normalizeAuditLog(log) {
   };
 }
 
+function normalizeMember(member) {
+  const role = MEMBER_ROLES[member.role] ? member.role : "associate";
+  const status = MEMBER_STATUSES[member.status] ? member.status : "pending";
+
+  return {
+    id: member.id || createId("member"),
+    name: String(member.name || "").trim(),
+    email: String(member.email || "").trim().toLowerCase(),
+    password: String(member.password || ""),
+    role,
+    status,
+    department: String(member.department || "").trim(),
+    position: String(member.position || "").trim(),
+    phone: String(member.phone || "").trim(),
+    requestedAt: member.requestedAt || getTodayDate(),
+    approvedAt: member.approvedAt || "",
+    approvedBy: member.approvedBy || "",
+    lastLoginAt: member.lastLoginAt || "",
+    note: String(member.note || "").trim()
+  };
+}
+
+function normalizeRolePermissions(permissions = {}) {
+  const normalized = structuredClone(DEFAULT_ROLE_PERMISSIONS);
+
+  MEMBER_ROLE_ORDER.forEach((role) => {
+    if (Array.isArray(permissions[role])) {
+      normalized[role] = permissions[role].filter((view) => MENU_CONFIG.some((item) => item.view === view));
+    }
+
+    if (!normalized[role].includes("dashboard")) {
+      normalized[role].unshift("dashboard");
+    }
+  });
+
+  normalized.admin = MENU_CONFIG.map((item) => item.view);
+
+  return normalized;
+}
+
+function ensureMemberDefaults() {
+  state.members = state.members.map(normalizeMember);
+
+  if (!state.members.some((member) => member.role === "admin" && member.status === "active")) {
+    state.members.unshift(...structuredClone(DEFAULT_MEMBERS).map(normalizeMember));
+  }
+
+  state.rolePermissions = normalizeRolePermissions(state.rolePermissions);
+
+  const currentMember = state.members.find((member) => member.id === state.currentUserId);
+  if (!currentMember || currentMember.status !== "active") {
+    state.currentUserId = "";
+  }
+}
+
+function getCurrentMember() {
+  return state.members.find((member) => member.id === state.currentUserId) || null;
+}
+
+function isAuthenticated() {
+  return Boolean(getCurrentMember());
+}
+
+function isAdmin(member = getCurrentMember()) {
+  return member?.role === "admin" && member.status === "active";
+}
+
+function getRoleLabel(role) {
+  return MEMBER_ROLES[role] || role || "-";
+}
+
+function getMemberStatusLabel(status) {
+  return MEMBER_STATUSES[status] || status || "-";
+}
+
+function getAllowedViewsForRole(role) {
+  return state.rolePermissions[role] || [];
+}
+
+function canAccessView(view, member = getCurrentMember()) {
+  if (!member || member.status !== "active") {
+    return false;
+  }
+
+  if (view === "detail") {
+    return getAllowedViewsForRole(member.role).includes("pool");
+  }
+
+  return getAllowedViewsForRole(member.role).includes(view);
+}
+
+function getDefaultView(member = getCurrentMember()) {
+  return getAllowedViewsForRole(member?.role)
+    .find((view) => MENU_CONFIG.some((item) => item.view === view)) || "dashboard";
+}
+
+function getCurrentActorName() {
+  return getCurrentMember()?.name || "시스템";
+}
+
+function getTimestampText() {
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const time = now.toTimeString().slice(0, 5);
+  return `${date} ${time}`;
+}
+
+function addAuditLog(action, resource, purpose, actor = getCurrentActorName()) {
+  state.auditLogs.unshift({
+    id: createId("audit"),
+    actor,
+    action,
+    resource,
+    purpose,
+    time: getTimestampText()
+  });
+}
+
 function loadPersistedState() {
   try {
     const rawState = window.localStorage.getItem(STORAGE_KEY);
@@ -532,7 +714,11 @@ function persistState(options = {}) {
         candidates: state.candidates,
         auditLogs: state.auditLogs,
         selectedCandidateId: state.selectedCandidateId,
-        poolFilters: state.poolFilters
+        poolFilters: state.poolFilters,
+        members: state.members,
+        rolePermissions: state.rolePermissions,
+        memberFilters: state.memberFilters,
+        currentUserId: state.currentUserId
       })
     );
   } catch (error) {
@@ -563,6 +749,22 @@ function restorePersistedState() {
     state.poolFilters = { ...state.poolFilters, ...persisted.poolFilters };
   }
 
+  if (Array.isArray(persisted.members) && persisted.members.length) {
+    state.members = persisted.members.map(normalizeMember);
+  }
+
+  if (persisted.rolePermissions && typeof persisted.rolePermissions === "object") {
+    state.rolePermissions = normalizeRolePermissions(persisted.rolePermissions);
+  }
+
+  if (persisted.memberFilters && typeof persisted.memberFilters === "object") {
+    state.memberFilters = { ...state.memberFilters, ...persisted.memberFilters };
+  }
+
+  if (persisted.currentUserId) {
+    state.currentUserId = persisted.currentUserId;
+  }
+
   if (state.candidates.some((candidate) => candidate.id === persisted.selectedCandidateId)) {
     state.selectedCandidateId = persisted.selectedCandidateId;
   } else {
@@ -570,6 +772,7 @@ function restorePersistedState() {
   }
 
   ensureAuditLogIds();
+  ensureMemberDefaults();
 }
 
 function getSupabaseHeaders(extraHeaders = {}) {
@@ -1091,17 +1294,180 @@ function showToast(message) {
   }, 2400);
 }
 
+function renderAuth() {
+  const authContent = $("#auth-content");
+  const authenticated = isAuthenticated();
+
+  document.body.classList.toggle("is-authenticated", authenticated);
+
+  if (!authContent) {
+    return;
+  }
+
+  if (authenticated) {
+    authContent.innerHTML = "";
+    return;
+  }
+
+  const message = state.authMessage
+    ? `<div class="auth-message">${escapeHtml(state.authMessage)}</div>`
+    : "";
+
+  authContent.innerHTML = state.authView === "signup"
+    ? `
+      <section class="auth-card">
+        <div class="auth-brand">
+          <div class="brand-mark">S</div>
+          <div>
+            <p class="brand-kicker">Samsung HR</p>
+            <h1>회원가입 신청</h1>
+          </div>
+        </div>
+        <p class="auth-copy">가입 신청은 관리자 승인 후 활성화됩니다. 승인 전에는 시스템에 접속할 수 없습니다.</p>
+        ${message}
+        <form id="signup-form" class="auth-form">
+          <div class="field">
+            <label for="signup-name">이름</label>
+            <input class="control-input" id="signup-name" name="name" required autocomplete="name" />
+          </div>
+          <div class="field">
+            <label for="signup-email">이메일</label>
+            <input class="control-input" id="signup-email" name="email" type="email" required autocomplete="email" />
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="signup-password">비밀번호</label>
+              <input class="control-input" id="signup-password" name="password" type="password" required autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="signup-password-confirm">비밀번호 확인</label>
+              <input class="control-input" id="signup-password-confirm" name="passwordConfirm" type="password" required autocomplete="new-password" />
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="signup-department">부서</label>
+              <input class="control-input" id="signup-department" name="department" autocomplete="organization" />
+            </div>
+            <div class="field">
+              <label for="signup-position">직책</label>
+              <input class="control-input" id="signup-position" name="position" autocomplete="organization-title" />
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="signup-phone">연락처</label>
+              <input class="control-input" id="signup-phone" name="phone" type="tel" autocomplete="tel" />
+            </div>
+            <div class="field">
+              <label for="signup-role">신청 등급</label>
+              <select class="control-select" id="signup-role" name="role">
+                <option value="associate">준회원</option>
+                <option value="regular">정회원</option>
+                <option value="operator">운영진</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="signup-note">사용 목적</label>
+            <textarea class="control-textarea" id="signup-note" name="note" placeholder="담당 포지션, 소속 조직, 필요한 메뉴 등을 간단히 입력"></textarea>
+          </div>
+          <button class="primary-button" type="submit">가입 신청</button>
+          <button class="ghost-button" type="button" data-auth-view="login">로그인으로 돌아가기</button>
+        </form>
+      </section>
+    `
+    : `
+      <section class="auth-card">
+        <div class="auth-brand">
+          <div class="brand-mark">S</div>
+          <div>
+            <p class="brand-kicker">Samsung HR</p>
+            <h1>Talent Pool 로그인</h1>
+          </div>
+        </div>
+        <p class="auth-copy">승인된 회원만 인재 Pool 시스템에 접속할 수 있습니다.</p>
+        ${message}
+        <form id="login-form" class="auth-form">
+          <div class="field">
+            <label for="login-email">이메일</label>
+            <input class="control-input" id="login-email" name="email" type="email" required autocomplete="email" />
+          </div>
+          <div class="field">
+            <label for="login-password">비밀번호</label>
+            <input class="control-input" id="login-password" name="password" type="password" required autocomplete="current-password" />
+          </div>
+          <button class="primary-button" type="submit">로그인</button>
+          <button class="ghost-button" type="button" data-auth-view="signup">회원가입 신청</button>
+        </form>
+        <div class="auth-demo-note">
+          <strong>초기 관리자 계정</strong>
+          <span>admin@samsung.com / Admin1234!</span>
+        </div>
+      </section>
+    `;
+}
+
+function renderUserMenu() {
+  const userMenu = $("#user-menu");
+  const member = getCurrentMember();
+
+  if (!userMenu || !member) {
+    return;
+  }
+
+  userMenu.innerHTML = `
+    <div class="user-summary">
+      <span>${escapeHtml(member.name)}</span>
+      <strong>${escapeHtml(getRoleLabel(member.role))}</strong>
+    </div>
+    <button class="ghost-button compact-button" type="button" id="logout-button">로그아웃</button>
+  `;
+}
+
+function applyAccessControls() {
+  document.querySelectorAll("[data-view]").forEach((element) => {
+    const view = element.dataset.view;
+    element.hidden = !canAccessView(view);
+  });
+
+  $(".global-search")?.classList.toggle("is-hidden", !canAccessView("pool"));
+}
+
+function ensureActiveViewAllowed() {
+  if (!canAccessView(state.view)) {
+    state.view = getDefaultView();
+  }
+}
+
+function syncActiveViewState() {
+  document.querySelectorAll(".view").forEach((section) => {
+    section.classList.toggle("is-active", section.id === `${state.view}-view`);
+  });
+
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.view === state.view || (state.view === "detail" && button.dataset.view === "pool"));
+  });
+
+  $("#page-title").textContent = viewTitles[state.view] || "Talent Pool";
+}
+
 function setView(view) {
+  if (!isAuthenticated()) {
+    renderAuth();
+    return;
+  }
+
+  if (!canAccessView(view)) {
+    showToast("현재 회원등급으로 접근할 수 없는 메뉴입니다.");
+    view = getDefaultView();
+  }
+
   state.view = view;
   if (view !== "detail" && state.isEditingCandidate) {
     discardCandidateEditDraft();
   }
-  $(".view.is-active")?.classList.remove("is-active");
-  $(`#${view}-view`)?.classList.add("is-active");
-  document.querySelectorAll(".nav-item").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === view || (view === "detail" && button.dataset.view === "pool"));
-  });
-  $("#page-title").textContent = viewTitles[view] || "Talent Pool";
+  syncActiveViewState();
   render();
 }
 
@@ -1139,6 +1505,15 @@ function getFilteredCandidates() {
 }
 
 function render() {
+  ensureMemberDefaults();
+  renderAuth();
+
+  if (!isAuthenticated()) {
+    return;
+  }
+
+  ensureActiveViewAllowed();
+  syncActiveViewState();
   renderSidePanel();
   renderDashboard();
   renderPool();
@@ -1146,6 +1521,9 @@ function render() {
   renderAiSearch();
   renderDetail();
   renderAudit();
+  renderMembers();
+  renderUserMenu();
+  applyAccessControls();
 }
 
 function renderSidePanel() {
@@ -2641,6 +3019,256 @@ function renderAudit() {
   `;
 }
 
+function getMemberStatusChip(status) {
+  const chipClass = {
+    pending: "chip-amber",
+    active: "chip-green",
+    suspended: "chip-red",
+    rejected: "chip-violet"
+  }[status] || "chip-blue";
+
+  return `<span class="status-chip ${chipClass}">${escapeHtml(getMemberStatusLabel(status))}</span>`;
+}
+
+function getRoleChip(role) {
+  const chipClass = {
+    associate: "chip-blue",
+    regular: "chip-green",
+    operator: "chip-violet",
+    admin: "chip-red"
+  }[role] || "chip-blue";
+
+  return `<span class="status-chip ${chipClass}">${escapeHtml(getRoleLabel(role))}</span>`;
+}
+
+function getFilteredMembers() {
+  const query = state.memberFilters.query.trim().toLowerCase();
+
+  return state.members
+    .filter((member) => {
+      const text = [
+        member.name,
+        member.email,
+        member.department,
+        member.position,
+        member.phone,
+        member.note,
+        getRoleLabel(member.role),
+        getMemberStatusLabel(member.status)
+      ].join(" ").toLowerCase();
+
+      const queryMatch = !query || text.includes(query);
+      const roleMatch = state.memberFilters.role === "all" || member.role === state.memberFilters.role;
+      const statusMatch = state.memberFilters.status === "all" || member.status === state.memberFilters.status;
+
+      return queryMatch && roleMatch && statusMatch;
+    })
+    .sort((a, b) =>
+      MEMBER_STATUS_ORDER.indexOf(a.status) - MEMBER_STATUS_ORDER.indexOf(b.status) ||
+      dateSortValue(b.requestedAt) - dateSortValue(a.requestedAt) ||
+      a.name.localeCompare(b.name)
+    );
+}
+
+function renderMemberActionButtons(member) {
+  if (member.id === state.currentUserId) {
+    return `<span class="muted-text">본인 계정</span>`;
+  }
+
+  const actions = [];
+
+  if (member.status === "pending" || member.status === "rejected") {
+    actions.push(`<button class="soft-button compact-button" type="button" data-approve-member="${member.id}">승인</button>`);
+  }
+
+  if (member.status === "pending") {
+    actions.push(`<button class="ghost-button danger-button compact-button" type="button" data-reject-member="${member.id}">반려</button>`);
+  }
+
+  if (member.status === "active") {
+    actions.push(`<button class="ghost-button danger-button compact-button" type="button" data-suspend-member="${member.id}">정지</button>`);
+  }
+
+  if (member.status === "suspended") {
+    actions.push(`<button class="soft-button compact-button" type="button" data-activate-member="${member.id}">재활성</button>`);
+  }
+
+  actions.push(`<button class="ghost-button compact-button" type="button" data-reset-member-password="${member.id}">비밀번호 초기화</button>`);
+
+  return `<div class="member-actions">${actions.join("")}</div>`;
+}
+
+function memberTable(members) {
+  if (!members.length) {
+    return `<div class="empty-state">조건에 맞는 회원이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="table-wrap">
+      <table class="member-table">
+        <thead>
+          <tr>
+            <th>회원</th>
+            <th>등급</th>
+            <th>상태</th>
+            <th>소속</th>
+            <th>가입 신청</th>
+            <th>최근 로그인</th>
+            <th>관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${members.map((member) => `
+            <tr>
+              <td>
+                <div class="member-identity">
+                  <strong>${escapeHtml(member.name)}</strong>
+                  <span>${escapeHtml(member.email)}</span>
+                  ${member.note ? `<small>${escapeHtml(member.note)}</small>` : ""}
+                </div>
+              </td>
+              <td>
+                <select class="control-select compact-select" data-member-role="${member.id}" ${member.id === state.currentUserId ? "disabled" : ""}>
+                  ${MEMBER_ROLE_ORDER.map((role) => `<option value="${role}" ${member.role === role ? "selected" : ""}>${MEMBER_ROLES[role]}</option>`).join("")}
+                </select>
+              </td>
+              <td>${getMemberStatusChip(member.status)}</td>
+              <td>
+                <div class="summary-cell">
+                  <strong>${escapeHtml(member.department || "-")}</strong>
+                  <span>${escapeHtml(member.position || "직책 미입력")}</span>
+                </div>
+              </td>
+              <td>${escapeHtml(member.requestedAt || "-")}</td>
+              <td>${escapeHtml(member.lastLoginAt || "-")}</td>
+              <td>${renderMemberActionButtons(member)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderRolePermissionMatrix() {
+  return `
+    <div class="table-wrap">
+      <table class="permission-table">
+        <thead>
+          <tr>
+            <th>회원등급</th>
+            ${MENU_CONFIG.map((menu) => `<th>${escapeHtml(menu.label)}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>
+          ${MEMBER_ROLE_ORDER.map((role) => `
+            <tr>
+              <th>
+                <div class="member-role-cell">
+                  ${getRoleChip(role)}
+                  <span>${escapeHtml(rolePermissionDescription(role))}</span>
+                </div>
+              </th>
+              ${MENU_CONFIG.map((menu) => {
+                const checked = getAllowedViewsForRole(role).includes(menu.view);
+                const locked = role === "admin" || menu.view === "dashboard" || menu.view === "members";
+
+                return `
+                  <td>
+                    <label class="permission-toggle" title="${escapeHtml(menu.description)}">
+                      <input type="checkbox" data-role-permission-role="${role}" data-role-permission-view="${menu.view}" ${checked ? "checked" : ""} ${locked ? "disabled" : ""} />
+                      <span>${checked ? "허용" : "차단"}</span>
+                    </label>
+                  </td>
+                `;
+              }).join("")}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function rolePermissionDescription(role) {
+  return {
+    associate: "조회와 AI 검색 중심의 제한 계정",
+    regular: "후보자 등록까지 가능한 실무 계정",
+    operator: "운영 로그까지 확인하는 운영 계정",
+    admin: "회원 승인과 권한 설정까지 가능한 관리자"
+  }[role] || "";
+}
+
+function renderMembers() {
+  const content = $("#members-content");
+
+  if (!content) {
+    return;
+  }
+
+  if (!isAdmin()) {
+    content.innerHTML = `<div class="empty-state">회원관리 메뉴는 관리자만 사용할 수 있습니다.</div>`;
+    return;
+  }
+
+  const pending = state.members.filter((member) => member.status === "pending").length;
+  const active = state.members.filter((member) => member.status === "active").length;
+  const suspended = state.members.filter((member) => member.status === "suspended").length;
+  const filteredMembers = getFilteredMembers();
+
+  content.innerHTML = `
+    <div class="dashboard-grid member-dashboard">
+      <div class="kpi-row">
+        ${metricCard("전체 회원", state.members.length, "등록된 계정")}
+        ${metricCard("승인 대기", pending, "관리자 확인 필요")}
+        ${metricCard("활성 회원", active, "로그인 가능")}
+        ${metricCard("정지 회원", suspended, "접속 차단")}
+        ${metricCard("회원 등급", MEMBER_ROLE_ORDER.length, "권한표 운영")}
+      </div>
+
+      <section class="content-panel span-12">
+        <div class="panel-header">
+          <h4>회원 목록 및 승인 관리</h4>
+          <span class="small-pill">승인 후 접속 가능</span>
+        </div>
+        <div class="filter-strip">
+          <input class="control-input" id="member-query" type="search" value="${escapeHtml(state.memberFilters.query)}" placeholder="이름, 이메일, 부서, 사용 목적 검색" />
+          <select class="control-select" id="member-role-filter">
+            <option value="all">전체 등급</option>
+            ${MEMBER_ROLE_ORDER.map((role) => `<option value="${role}" ${state.memberFilters.role === role ? "selected" : ""}>${MEMBER_ROLES[role]}</option>`).join("")}
+          </select>
+          <select class="control-select" id="member-status-filter">
+            <option value="all">전체 상태</option>
+            ${MEMBER_STATUS_ORDER.map((status) => `<option value="${status}" ${state.memberFilters.status === status ? "selected" : ""}>${MEMBER_STATUSES[status]}</option>`).join("")}
+          </select>
+        </div>
+        <div id="member-table-content">
+          ${memberTable(filteredMembers)}
+        </div>
+      </section>
+
+      <section class="content-panel span-12">
+        <div class="panel-header">
+          <h4>등급별 메뉴 접근 권한</h4>
+          <span class="small-pill">관리자 등급은 전체 권한 고정</span>
+        </div>
+        ${renderRolePermissionMatrix()}
+      </section>
+    </div>
+  `;
+}
+
+function renderMemberTable() {
+  const tableContent = $("#member-table-content");
+
+  if (!tableContent) {
+    renderMembers();
+    return;
+  }
+
+  tableContent.innerHTML = memberTable(getFilteredMembers());
+}
+
 function collectRegisterEducationFromForm(formElement, preserveBlank = false) {
   const formData = new FormData(formElement);
   const records = [...formElement.querySelectorAll("[data-register-education-index]")]
@@ -3932,8 +4560,268 @@ async function handleAiSearchFileUpload(file) {
   }
 }
 
+function setAuthMessage(message) {
+  state.authMessage = message;
+  render();
+}
+
+function handleLoginSubmit(form) {
+  const formData = new FormData(form);
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+  const password = String(formData.get("password") || "");
+  const member = state.members.find((item) => item.email === email);
+
+  if (!member || member.password !== password) {
+    setAuthMessage("이메일 또는 비밀번호가 일치하지 않습니다.");
+    return;
+  }
+
+  if (member.status !== "active") {
+    setAuthMessage(`${getMemberStatusLabel(member.status)} 상태입니다. 관리자 승인 또는 상태 변경 후 접속할 수 있습니다.`);
+    return;
+  }
+
+  member.lastLoginAt = getTimestampText();
+  state.currentUserId = member.id;
+  state.authMessage = "";
+  state.view = canAccessView(state.view, member) ? state.view : getDefaultView(member);
+  addAuditLog("로그인", member.name, "시스템 접속", member.name);
+  persistState();
+  render();
+  showToast(`${member.name}님, 로그인되었습니다.`);
+}
+
+function handleSignupSubmit(form) {
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+  const password = String(formData.get("password") || "");
+  const passwordConfirm = String(formData.get("passwordConfirm") || "");
+  const requestedRole = String(formData.get("role") || "associate");
+
+  if (!name || !email || !password) {
+    setAuthMessage("이름, 이메일, 비밀번호를 입력해주세요.");
+    return;
+  }
+
+  if (state.members.some((member) => member.email === email)) {
+    setAuthMessage("이미 등록되었거나 승인 대기 중인 이메일입니다.");
+    return;
+  }
+
+  if (password.length < 8) {
+    setAuthMessage("비밀번호는 8자 이상으로 입력해주세요.");
+    return;
+  }
+
+  if (password !== passwordConfirm) {
+    setAuthMessage("비밀번호 확인이 일치하지 않습니다.");
+    return;
+  }
+
+  const member = normalizeMember({
+    id: createId("member"),
+    name,
+    email,
+    password,
+    role: requestedRole === "admin" ? "associate" : requestedRole,
+    status: "pending",
+    department: formData.get("department"),
+    position: formData.get("position"),
+    phone: formData.get("phone"),
+    requestedAt: getTodayDate(),
+    note: formData.get("note")
+  });
+
+  state.members.unshift(member);
+  state.authView = "login";
+  state.authMessage = "가입 신청이 접수되었습니다. 관리자가 승인하면 로그인할 수 있습니다.";
+  addAuditLog("회원가입 신청", member.name, `${getRoleLabel(member.role)} 권한 요청`, "가입 신청자");
+  persistState();
+  render();
+}
+
+function logout() {
+  const member = getCurrentMember();
+  if (member) {
+    addAuditLog("로그아웃", member.name, "시스템 접속 종료", member.name);
+  }
+
+  state.currentUserId = "";
+  state.authMessage = "";
+  persistState();
+  render();
+}
+
+function updateMemberFilters() {
+  state.memberFilters.query = $("#member-query")?.value || "";
+  state.memberFilters.role = $("#member-role-filter")?.value || "all";
+  state.memberFilters.status = $("#member-status-filter")?.value || "all";
+  persistState();
+  renderMemberTable();
+}
+
+function findMember(memberId) {
+  return state.members.find((member) => member.id === memberId);
+}
+
+function approveMember(memberId) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin()) {
+    return;
+  }
+
+  member.status = "active";
+  member.approvedAt = getTodayDate();
+  member.approvedBy = getCurrentActorName();
+  addAuditLog("회원 승인", member.name, `${getRoleLabel(member.role)} 등급 활성화`);
+  persistState();
+  render();
+  showToast(`${member.name} 회원을 승인했습니다.`);
+}
+
+function rejectMember(memberId) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin()) {
+    return;
+  }
+
+  member.status = "rejected";
+  addAuditLog("회원 반려", member.name, "가입 신청 반려");
+  persistState();
+  render();
+  showToast(`${member.name} 회원 신청을 반려했습니다.`);
+}
+
+function suspendMember(memberId) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin() || member.id === state.currentUserId) {
+    return;
+  }
+
+  member.status = "suspended";
+  addAuditLog("회원 정지", member.name, "시스템 접속 차단");
+  persistState();
+  render();
+  showToast(`${member.name} 회원을 정지했습니다.`);
+}
+
+function activateMember(memberId) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin()) {
+    return;
+  }
+
+  member.status = "active";
+  member.approvedAt = member.approvedAt || getTodayDate();
+  member.approvedBy = member.approvedBy || getCurrentActorName();
+  addAuditLog("회원 재활성", member.name, "시스템 접속 재허용");
+  persistState();
+  render();
+  showToast(`${member.name} 회원을 재활성화했습니다.`);
+}
+
+function resetMemberPassword(memberId) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin()) {
+    return;
+  }
+
+  member.password = "Temp1234!";
+  addAuditLog("회원 비밀번호 초기화", member.name, "임시 비밀번호 발급");
+  persistState();
+  renderMembers();
+  showToast(`${member.name} 회원의 임시 비밀번호는 Temp1234! 입니다.`);
+}
+
+function updateMemberRole(memberId, role) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin() || member.id === state.currentUserId || !MEMBER_ROLES[role]) {
+    return;
+  }
+
+  member.role = role;
+  addAuditLog("회원 등급 변경", member.name, getRoleLabel(role));
+  persistState();
+  render();
+  showToast(`${member.name} 회원 등급을 ${getRoleLabel(role)}으로 변경했습니다.`);
+}
+
+function updateRolePermission(role, view, enabled) {
+  if (!isAdmin() || role === "admin" || view === "dashboard" || view === "members") {
+    renderMembers();
+    return;
+  }
+
+  const permissions = new Set(getAllowedViewsForRole(role));
+
+  if (enabled) {
+    permissions.add(view);
+  } else {
+    permissions.delete(view);
+  }
+
+  permissions.add("dashboard");
+  state.rolePermissions[role] = MENU_CONFIG
+    .map((item) => item.view)
+    .filter((menuView) => permissions.has(menuView));
+
+  addAuditLog("등급 메뉴 권한 변경", getRoleLabel(role), `${MENU_CONFIG.find((item) => item.view === view)?.label || view} ${enabled ? "허용" : "차단"}`);
+  persistState();
+  render();
+}
+
 function bindEvents() {
   document.addEventListener("click", (event) => {
+    const authViewButton = event.target.closest("[data-auth-view]");
+    if (authViewButton) {
+      state.authView = authViewButton.dataset.authView;
+      state.authMessage = "";
+      render();
+      return;
+    }
+
+    if (event.target.closest("#logout-button")) {
+      logout();
+      return;
+    }
+
+    const approveMemberButton = event.target.closest("[data-approve-member]");
+    if (approveMemberButton) {
+      approveMember(approveMemberButton.dataset.approveMember);
+      return;
+    }
+
+    const rejectMemberButton = event.target.closest("[data-reject-member]");
+    if (rejectMemberButton) {
+      rejectMember(rejectMemberButton.dataset.rejectMember);
+      return;
+    }
+
+    const suspendMemberButton = event.target.closest("[data-suspend-member]");
+    if (suspendMemberButton) {
+      suspendMember(suspendMemberButton.dataset.suspendMember);
+      return;
+    }
+
+    const activateMemberButton = event.target.closest("[data-activate-member]");
+    if (activateMemberButton) {
+      activateMember(activateMemberButton.dataset.activateMember);
+      return;
+    }
+
+    const resetMemberPasswordButton = event.target.closest("[data-reset-member-password]");
+    if (resetMemberPasswordButton) {
+      resetMemberPassword(resetMemberPasswordButton.dataset.resetMemberPassword);
+      return;
+    }
+
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       setView(viewButton.dataset.view);
@@ -4060,6 +4948,18 @@ function bindEvents() {
   });
 
   document.addEventListener("submit", (event) => {
+    if (event.target.matches("#login-form")) {
+      event.preventDefault();
+      handleLoginSubmit(event.target);
+      return;
+    }
+
+    if (event.target.matches("#signup-form")) {
+      event.preventDefault();
+      handleSignupSubmit(event.target);
+      return;
+    }
+
     if (event.target.matches("#register-form")) {
       registerCandidate(event);
     }
@@ -4095,6 +4995,10 @@ function bindEvents() {
       updatePoolFilters();
     }
 
+    if (["member-query", "member-role-filter", "member-status-filter"].includes(event.target.id)) {
+      updateMemberFilters();
+    }
+
     if (event.target.id === "global-search") {
       state.poolFilters.query = event.target.value;
       persistState();
@@ -4121,6 +5025,24 @@ function bindEvents() {
   document.addEventListener("change", (event) => {
     if (["pool-status", "pool-owner"].includes(event.target.id)) {
       updatePoolFilters();
+    }
+
+    if (["member-role-filter", "member-status-filter"].includes(event.target.id)) {
+      updateMemberFilters();
+    }
+
+    const memberRoleSelect = event.target.closest("[data-member-role]");
+    if (memberRoleSelect) {
+      updateMemberRole(memberRoleSelect.dataset.memberRole, memberRoleSelect.value);
+    }
+
+    const rolePermissionToggle = event.target.closest("[data-role-permission-role]");
+    if (rolePermissionToggle) {
+      updateRolePermission(
+        rolePermissionToggle.dataset.rolePermissionRole,
+        rolePermissionToggle.dataset.rolePermissionView,
+        rolePermissionToggle.checked
+      );
     }
 
     if (event.target.id === "profile-photo") {
@@ -4171,6 +5093,7 @@ function bindEvents() {
 }
 
 restorePersistedState();
+ensureMemberDefaults();
 bindEvents();
 render();
 loadStateFromSupabase();

@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-This project is a static MVP prototype for a Samsung recruiter talent pool management system. The product helps recruiters manage candidate pools, register candidates, simulate resume parsing, run AI-based candidate search, view detailed candidate profiles, track candidate history, and inspect audit/compliance status.
+This project is a static MVP prototype for a Samsung recruiter talent pool management system. The product helps recruiters manage candidate pools, register candidates, parse resumes, run AI-based candidate search, view detailed candidate profiles, track candidate history, inspect audit/compliance status, and operate member access control.
 
-The current app is a frontend-only prototype. All candidate data lives in browser memory inside `app.js`.
+The current app is a frontend-first prototype. Candidate and member operations run in `talent-pool.js`; candidate/audit data can sync to Supabase when runtime config is enabled, while member access control is still stored in browser storage for the MVP.
 
 ## Current Product Scope
 
@@ -16,13 +16,14 @@ The current app is a frontend-only prototype. All candidate data lives in browse
 - Candidate profile includes overview, resume, education, career, activity, applications, and compliance.
 - Candidate detail profiles are editable, and education/career records can contain multiple entries.
 - Audit log view for important user and AI actions.
+- Login gate, signup request, administrator approval, member status controls, role changes, and role-based menu permissions.
 - Local static server for preview.
 
 ## Tech Stack
 
 - HTML: `index.html`
 - CSS: `styles.css`
-- JavaScript: `app.js`
+- JavaScript: `talent-pool.js`
 - Local server: `server.js`
 - Documentation:
   - `design.md`
@@ -55,7 +56,7 @@ node server.js 5178
 Use these checks after editing:
 
 ```powershell
-node --check app.js
+node --check talent-pool.js
 node --check server.js
 ```
 
@@ -69,6 +70,10 @@ Then verify in the browser:
 - AI search renders results and detail navigation works.
 - Candidate registration creates a new profile.
 - Face profile photo upload preview appears in the registration form.
+- Login blocks unauthenticated access.
+- Default admin login works with `admin@samsung.com` / `Admin1234!`.
+- Signup creates an approval-pending member that cannot log in until approved.
+- Admin can approve, reject, suspend, reactivate, reset password, change role, and configure role menu permissions.
 
 ## Design System
 
@@ -87,7 +92,7 @@ Key rules:
 
 ## Data Model Notes
 
-Candidate objects in `app.js` should include:
+Candidate objects in `talent-pool.js` should include:
 
 - Basic profile: `id`, `name`, `role`, `company`, `years`, `jobFamily`, `status`, `consent`, `owner`
 - Visual profile: `initials`, `photoUrl`, `avatarColor`
@@ -107,6 +112,13 @@ Candidate objects in `app.js` should include:
   - `end`
   - `achievements`
 - Activity and hiring context: `applications`, `timeline`
+
+Member objects in `talent-pool.js` should include:
+
+- Identity and login: `id`, `name`, `email`, `password`
+- Access control: `role`, `status`
+- Organization: `department`, `position`, `phone`
+- Approval history: `requestedAt`, `approvedAt`, `approvedBy`, `lastLoginAt`, `note`
 
 When adding new sample candidates, include education and career data so the detail profile stays complete.
 

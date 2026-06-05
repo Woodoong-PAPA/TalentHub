@@ -10,7 +10,7 @@
 - Implementation references:
   - `index.html`
   - `styles.css`
-  - `app.js`
+  - `talent-pool.js`
   - `server.js`
   - `design.md`
   - `agents.md`
@@ -54,7 +54,7 @@ Prototype coverage gives half credit for partial items.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Dashboard view | Implemented | Summary metrics, pipeline, skill distribution, action queue in `app.js` and `index.html` |
+| Dashboard view | Implemented | Summary metrics, pipeline, skill distribution, action queue in `talent-pool.js` and `index.html` |
 | Talent pool list | Implemented | Candidate table with photo, name, education, career, role, status, owner |
 | Clear list cell separation | Implemented | Dedicated table layout and summary cells in `styles.css` |
 | Candidate name opens detail | Implemented | Candidate row/name click routes into detail view |
@@ -188,9 +188,9 @@ Completed items:
 
 Verification:
 
-- `node --check app.js` passed.
+- `node --check talent-pool.js` passed.
 - `node --check server.js` passed.
-- Local server returned `200` for `/` and `/app.js`.
+- Local server returned `200` for `/` and `/talent-pool.js`.
 - Chrome headless rendered the dashboard, talent pool headers, education/career columns, registration form, detail tabs, and audit log.
 - Chrome DevTools Protocol smoke test confirmed edit form open, education delete, validation error display, save to `localStorage`, and persistence after reload.
 

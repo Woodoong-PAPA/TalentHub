@@ -18,7 +18,7 @@ Implemented a static MVP prototype for the Samsung recruiter talent pool managem
 |------|---------|
 | `index.html` | App shell, navigation, semantic view containers |
 | `styles.css` | Dashboard, table, form, search, profile, compliance UI styles |
-| `app.js` | Sample candidate data, view rendering, filtering, AI search simulation, registration flow, audit log updates |
+| `talent-pool.js` | Sample candidate data, view rendering, filtering, AI search, registration flow, member access control, audit log updates |
 | `server.js` | Local static file server for browser verification and preview |
 
 ## 3. Implemented Features
@@ -33,6 +33,7 @@ Implemented a static MVP prototype for the Samsung recruiter talent pool managem
 - Shortlist action from AI results
 - Audit log view for candidate lookup, AI processing, registration, status changes, and shortlist activity
 - Consent status handling in search and dashboard indicators
+- Login gate, signup approval request, administrator member management, role changes, status controls, and role-based menu permissions
 
 ## 4. Design Alignment
 
