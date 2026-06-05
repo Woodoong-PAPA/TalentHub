@@ -31,6 +31,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/trending-people") {
+    const trendingPeople = require("./api/trending-people.js");
+    trendingPeople(request, response);
+    return;
+  }
+
   const filePath = resolveRequestPath(request.url);
 
   if (!filePath.startsWith(ROOT)) {

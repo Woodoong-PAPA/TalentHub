@@ -23,6 +23,7 @@ const MENU_CONFIG = [
   { view: "pool", label: "인재 Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "register", label: "인재 등록", description: "후보자 신규 등록과 이력서 파싱" },
   { view: "ai-search", label: "AI 검색", description: "자연어/JD 기반 후보자 검색" },
+  { view: "trending", label: "오늘의 화제 인물", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "audit", label: "감사 로그", description: "사용자·AI 처리 이력 확인" },
   { view: "members", label: "회원관리", description: "회원 승인, 등급, 메뉴 권한 관리" }
 ];
@@ -46,9 +47,9 @@ const MEMBER_STATUSES = {
 const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  associate: ["dashboard", "pool", "ai-search"],
-  regular: ["dashboard", "pool", "register", "ai-search"],
-  operator: ["dashboard", "pool", "register", "ai-search", "audit"],
+  associate: ["dashboard", "pool", "ai-search", "trending"],
+  regular: ["dashboard", "pool", "register", "ai-search", "trending"],
+  operator: ["dashboard", "pool", "register", "ai-search", "trending", "audit"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -419,6 +420,9 @@ const state = {
   aiResults: [],
   aiSearchLoading: false,
   aiSearchFileName: "",
+  trendingReport: null,
+  trendingLoading: false,
+  trendingError: "",
   registerExtractedPhotoUrl: "",
   remoteSyncStatus: REMOTE_SYNC_ENABLED ? "대기" : "로컬",
   auditLogs: [
@@ -434,6 +438,7 @@ const viewTitles = {
   pool: "인재 Pool",
   register: "인재 등록",
   "ai-search": "AI 검색",
+  trending: "오늘의 화제 인물",
   detail: "상세 프로필",
   audit: "감사 로그",
   members: "회원관리"
@@ -648,6 +653,14 @@ function normalizeRolePermissions(permissions = {}) {
     if (!normalized[role].includes("dashboard")) {
       normalized[role].unshift("dashboard");
     }
+
+    if (DEFAULT_ROLE_PERMISSIONS[role]?.includes("trending") && !normalized[role].includes("trending")) {
+      normalized[role].push("trending");
+    }
+
+    normalized[role] = MENU_CONFIG
+      .map((item) => item.view)
+      .filter((view) => normalized[role].includes(view));
   });
 
   normalized.admin = MENU_CONFIG.map((item) => item.view);
@@ -763,7 +776,8 @@ function persistState(options = {}) {
         members: state.members.map(sanitizeMemberForStorage),
         rolePermissions: state.rolePermissions,
         memberFilters: state.memberFilters,
-        currentUserId: state.currentUserId
+        currentUserId: state.currentUserId,
+        trendingReport: state.trendingReport
       })
     );
   } catch (error) {
@@ -808,6 +822,10 @@ function restorePersistedState() {
 
   if (persisted.currentUserId) {
     state.currentUserId = persisted.currentUserId;
+  }
+
+  if (persisted.trendingReport && typeof persisted.trendingReport === "object") {
+    state.trendingReport = persisted.trendingReport;
   }
 
   if (state.candidates.some((candidate) => candidate.id === persisted.selectedCandidateId)) {
@@ -1646,6 +1664,10 @@ function setView(view) {
   }
   syncActiveViewState();
   render();
+
+  if (view === "trending" && !state.trendingReport && !state.trendingLoading) {
+    fetchTrendingPeople();
+  }
 }
 
 function getFilteredCandidates() {
@@ -1696,6 +1718,7 @@ function render() {
   renderPool();
   renderRegister();
   renderAiSearch();
+  renderTrendingPeople();
   renderDetail();
   renderAudit();
   renderMembers();
@@ -2433,6 +2456,170 @@ function buildAiQueryFromUploadedFile(text, fileName) {
     "",
     normalized
   ].join("\n");
+}
+
+function formatShortYear(value) {
+  const text = String(value || "").trim();
+  const year = text.match(/\d{4}/)?.[0] || text.match(/\d{2}/)?.[0] || "";
+
+  if (!year) {
+    return "";
+  }
+
+  return `'${year.slice(-2)}`;
+}
+
+function formatTrendingEducation(item) {
+  const degree = { "박사": "박", "석사": "석", "학사": "학", "박": "박", "석": "석", "학": "학" }[item.degree] || item.degree || "";
+  const year = formatShortYear(item.year || item.end || item.graduationYear);
+  const parts = [
+    degree ? `${degree})` : "",
+    item.school,
+    item.major,
+    year ? `(${year})` : ""
+  ].filter(Boolean);
+
+  return parts.join(" ");
+}
+
+function formatTrendingCareer(item) {
+  const country = item.country ? `${item.country})` : "";
+  const periodStart = formatShortYear(item.start || item.startYear);
+  const periodEnd = item.end === "현재" || item.endYear === "현재"
+    ? "현재"
+    : formatShortYear(item.end || item.endYear);
+  const period = periodStart || periodEnd ? `(${periodStart || ""}~${periodEnd || ""})` : "";
+
+  return [
+    country,
+    item.company,
+    item.rank,
+    item.title || item.position,
+    period
+  ].filter(Boolean).join(" ");
+}
+
+function renderDashList(items) {
+  const list = (items || []).filter(Boolean).slice(0, 3);
+
+  if (!list.length) {
+    return `<span class="muted-text">정보 없음</span>`;
+  }
+
+  return `<ul class="dash-list">${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderNewsLinks(reason) {
+  const links = (reason.links || []).filter((link) => link.url).slice(0, 3);
+
+  if (!links.length) {
+    return "";
+  }
+
+  return `
+    <div class="news-link-row">
+      ${links.map((link) => `
+        <a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
+          ${escapeHtml(link.source || "기사")} ${link.title ? `· ${escapeHtml(link.title)}` : ""}
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function trendingPersonCard(person) {
+  const education = (person.education || []).map(formatTrendingEducation).filter(Boolean);
+  const career = (person.career || []).map(formatTrendingCareer).filter(Boolean);
+  const achievements = Array.isArray(person.achievements) ? person.achievements : [];
+  const reasons = Array.isArray(person.selectionReasons) ? person.selectionReasons : [];
+  const alreadyRegistered = state.candidates.some((candidate) =>
+    candidate.name === person.name &&
+    (!person.currentOrg || candidate.company === person.currentOrg)
+  );
+
+  return `
+    <article class="trending-card">
+      <div class="trending-rank">${person.rank || ""}</div>
+      <div class="trending-profile">
+        <div class="trending-card-header">
+          <div>
+            <h4>${escapeHtml(person.name || "-")}</h4>
+            <p>${escapeHtml([person.birthYear ? `${person.birthYear}년생` : "", person.currentOrg, person.currentTitle].filter(Boolean).join(" · "))}</p>
+          </div>
+          <div class="trending-actions">
+            ${person.linkedinUrl ? `<a class="soft-button compact-button" href="${escapeHtml(person.linkedinUrl)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}
+            <button class="primary-button compact-button" type="button" data-register-trending-person="${escapeHtml(person.id || person.name)}" ${alreadyRegistered ? "disabled" : ""}>
+              ${alreadyRegistered ? "등록됨" : "Pool 등록"}
+            </button>
+          </div>
+        </div>
+
+        <div class="trending-profile-grid">
+          <section>
+            <strong>학력</strong>
+            ${education.length ? `<div class="plain-line-list">${education.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
+          </section>
+          <section>
+            <strong>경력</strong>
+            ${career.length ? `<div class="plain-line-list">${career.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : `<span class="muted-text">정보 없음</span>`}
+          </section>
+          <section>
+            <strong>핵심 성과/실적</strong>
+            ${renderDashList(achievements)}
+          </section>
+          <section>
+            <strong>Top5 선정 사유</strong>
+            ${reasons.length ? reasons.slice(0, 3).map((reason) => `
+              <div class="reason-block">
+                <p>- ${escapeHtml(reason.text || reason)}</p>
+                ${typeof reason === "object" ? renderNewsLinks(reason) : ""}
+              </div>
+            `).join("") : `<span class="muted-text">선정 사유 없음</span>`}
+          </section>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderTrendingPeople() {
+  const container = $("#trending-content");
+
+  if (!container) {
+    return;
+  }
+
+  const report = state.trendingReport;
+  const people = report?.people || [];
+  const body = state.trendingLoading
+    ? `<div class="empty-state">전일 한국 뉴스에서 DX 분야 화제 인물을 분석하는 중입니다.</div>`
+    : state.trendingError
+      ? `<div class="empty-state">${escapeHtml(state.trendingError)}</div>`
+      : people.length
+        ? people.map(trendingPersonCard).join("")
+        : `<div class="empty-state">아직 생성된 화제 인물 리포트가 없습니다. 새로고침을 눌러 전일 기사 기준 리포트를 생성해주세요.</div>`;
+
+  container.innerHTML = `
+    <div class="trending-toolbar">
+      <div>
+        <strong>${report?.targetDate ? `${escapeHtml(report.targetDate)} 00:00~24:00 기사 기준` : "전일 00:00~24:00 기사 기준"}</strong>
+        <span>한국 뉴스 · AI, 로보틱스, 모바일, TV, 생활가전 중심 · DS/반도체 제외 · 최근 1개월 중복 제외</span>
+        ${report?.generatedAt ? `<span>생성 시각 ${escapeHtml(report.generatedAt)}</span>` : ""}
+      </div>
+      <div class="trending-toolbar-actions">
+        <button class="ghost-button" type="button" data-refresh-trending="cache" ${state.trendingLoading ? "disabled" : ""}>리포트 불러오기</button>
+        <button class="primary-button" type="button" data-refresh-trending="force" ${state.trendingLoading ? "disabled" : ""}>새로 생성</button>
+      </div>
+    </div>
+    <div class="trending-scope">
+      <span class="status-chip chip-blue">검색 범위: Google News 한국판 RSS, 한국 언론 기사 중심</span>
+      <span class="status-chip chip-amber">추천 실행: 매일 06:00 KST Vercel Cron</span>
+      <span class="status-chip chip-green">Pool 등록 가능</span>
+    </div>
+    <div class="trending-list">
+      ${body}
+    </div>
+  `;
 }
 
 function searchResultCard(candidate) {
@@ -4503,6 +4690,142 @@ async function parseResumeIntoRegisterForm(file) {
   }
 }
 
+async function fetchTrendingPeople(options = {}) {
+  state.trendingLoading = true;
+  state.trendingError = "";
+  renderTrendingPeople();
+
+  try {
+    const query = options.force ? "?force=1" : "";
+    const response = await fetch(`/api/trending-people${query}`);
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending people API failed: ${response.status}`);
+    }
+
+    state.trendingReport = payload.report;
+    state.trendingLoading = false;
+    state.trendingError = "";
+    persistState();
+    renderTrendingPeople();
+    showToast("오늘의 화제 인물 리포트를 불러왔습니다.");
+  } catch (error) {
+    console.warn("Trending people report failed.", error);
+    state.trendingLoading = false;
+    state.trendingError = "화제 인물 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+    renderTrendingPeople();
+  }
+}
+
+function normalizeTrendingDegree(value) {
+  return { 박: "박사", 석: "석사", 학: "학사", 박사: "박사", 석사: "석사", 학사: "학사" }[value] || "";
+}
+
+function trendingEducationToCandidateEducation(item) {
+  const year = String(item.year || item.graduationYear || "").match(/\d{4}/)?.[0] || "";
+
+  return {
+    degree: normalizeTrendingDegree(item.degree),
+    school: item.school || "",
+    major: item.major || "",
+    start: "",
+    end: year
+  };
+}
+
+function trendingCareerToCandidateCareer(item) {
+  return {
+    country: item.country || "",
+    company: item.company || "",
+    rank: item.rank || "",
+    position: item.title || item.position || "",
+    start: item.start || item.startYear || "",
+    end: item.end || item.endYear || "",
+    achievements: ""
+  };
+}
+
+function findTrendingPerson(identifier) {
+  const people = state.trendingReport?.people || [];
+  return people.find((person) => String(person.id || person.name) === String(identifier));
+}
+
+function registerTrendingPerson(identifier) {
+  const person = findTrendingPerson(identifier);
+
+  if (!person) {
+    showToast("등록할 화제 인물 정보를 찾지 못했습니다.");
+    return;
+  }
+
+  const duplicate = state.candidates.find((candidate) =>
+    candidate.name === person.name &&
+    (!person.currentOrg || candidate.company === person.currentOrg)
+  );
+
+  if (duplicate) {
+    state.selectedCandidateId = duplicate.id;
+    setView("detail");
+    showToast("이미 등록된 인재 프로필을 열었습니다.");
+    return;
+  }
+
+  const today = getTodayDate();
+  const achievements = Array.isArray(person.achievements) ? person.achievements.filter(Boolean) : [];
+  const reasons = Array.isArray(person.selectionReasons)
+    ? person.selectionReasons.map((reason) => typeof reason === "string" ? reason : reason.text).filter(Boolean)
+    : [];
+  const candidate = normalizeCandidate({
+    id: createId("cand"),
+    name: person.name,
+    initials: `${String(person.name || "").slice(0, 1)}${String(person.name || "").slice(-1)}`,
+    role: person.currentTitle || "오늘의 화제 인물",
+    company: person.currentOrg || "소속 확인 필요",
+    years: 0,
+    jobFamily: "DX News Radar",
+    organization: "DX",
+    status: "interested",
+    owner: getCurrentActorName(),
+    createdAt: today,
+    updatedAt: today,
+    lastContactedAt: "",
+    location: "",
+    source: `오늘의 화제 인물 ${state.trendingReport?.targetDate || today}`,
+    dataQuality: 82,
+    parsingConfidence: 82,
+    avatarColor: "#4e5968",
+    birthYear: person.birthYear || "",
+    linkedinUrl: person.linkedinUrl || "",
+    referenceUrl: (person.selectionReasons || [])
+      .flatMap((reason) => reason.links || [])
+      .find((link) => link.url)?.url || "",
+    skills: [...new Set([...(person.topics || []), "DX", "뉴스 화제 인물"].filter(Boolean))],
+    tags: ["오늘의 화제 인물", "뉴스 기반 소싱", "검수 필요"],
+    summary: [...achievements, ...reasons].slice(0, 4).join("\n"),
+    evidence: reasons.slice(0, 4),
+    education: (person.education || []).map(trendingEducationToCandidateEducation).filter(hasAnyRecordValue),
+    career: (person.career || []).map(trendingCareerToCandidateCareer).filter(hasAnyRecordValue),
+    applications: [],
+    timeline: [
+      {
+        type: "등록",
+        text: "오늘의 화제 인물 메뉴에서 인재 Pool로 등록",
+        actor: getCurrentActorName(),
+        date: today
+      }
+    ]
+  });
+
+  state.candidates.unshift(candidate);
+  state.selectedCandidateId = candidate.id;
+  addAuditLog("화제 인물 Pool 등록", candidate.name, "뉴스 기반 후보자 등록");
+  persistState();
+  render();
+  showToast(`${candidate.name} 인물을 인재 Pool에 등록했습니다.`);
+  setView("detail");
+}
+
 async function registerCandidate(eventOrForm) {
   eventOrForm?.preventDefault?.();
   const formElement = eventOrForm?.target?.matches?.("#register-form")
@@ -5015,6 +5338,18 @@ function bindEvents() {
         console.warn(error);
         showToast("비밀번호 초기화 중 오류가 발생했습니다.");
       });
+      return;
+    }
+
+    const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
+    if (refreshTrendingButton) {
+      fetchTrendingPeople({ force: refreshTrendingButton.dataset.refreshTrending === "force" });
+      return;
+    }
+
+    const registerTrendingButton = event.target.closest("[data-register-trending-person]");
+    if (registerTrendingButton) {
+      registerTrendingPerson(registerTrendingButton.dataset.registerTrendingPerson);
       return;
     }
 

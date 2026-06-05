@@ -29,6 +29,12 @@
       ]
     }
   ],
+  "crons": [
+    {
+      "path": "/api/trending-people",
+      "schedule": "0 21 * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/api/parse-resume",
@@ -37,6 +43,10 @@
     {
       "src": "/api/search-candidates",
       "dest": "/api/search-candidates.js"
+    },
+    {
+      "src": "/api/trending-people",
+      "dest": "/api/trending-people.js"
     },
     {
       "handle": "filesystem"

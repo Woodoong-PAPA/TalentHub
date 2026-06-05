@@ -58,16 +58,31 @@ create index if not exists app_members_status_idx on public.app_members (status)
 
 create table if not exists public.app_role_permissions (
   role text not null check (role in ('associate', 'regular', 'operator', 'admin')),
-  view text not null check (view in ('dashboard', 'pool', 'register', 'ai-search', 'audit', 'members')),
+  view text not null check (view in ('dashboard', 'pool', 'register', 'ai-search', 'trending', 'audit', 'members')),
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   primary key (role, view)
 );
 
+create table if not exists public.trending_people_reports (
+  report_date date primary key,
+  target_date date not null,
+  generated_at timestamptz not null default now(),
+  topics text[] not null default '{}'::text[],
+  excluded_names text[] not null default '{}'::text[],
+  articles jsonb not null default '[]'::jsonb,
+  people jsonb not null default '[]'::jsonb,
+  payload jsonb not null default '{}'::jsonb
+);
+
+create index if not exists trending_people_generated_at_idx on public.trending_people_reports (generated_at desc);
+create index if not exists trending_people_people_gin_idx on public.trending_people_reports using gin (people);
+
 alter table public.candidates enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.app_members enable row level security;
 alter table public.app_role_permissions enable row level security;
+alter table public.trending_people_reports enable row level security;
 
 drop policy if exists "demo candidates read" on public.candidates;
 drop policy if exists "demo candidates write" on public.candidates;
@@ -77,6 +92,8 @@ drop policy if exists "demo app members read" on public.app_members;
 drop policy if exists "demo app members write" on public.app_members;
 drop policy if exists "demo role permissions read" on public.app_role_permissions;
 drop policy if exists "demo role permissions write" on public.app_role_permissions;
+drop policy if exists "demo trending people read" on public.trending_people_reports;
+drop policy if exists "demo trending people write" on public.trending_people_reports;
 
 create policy "demo candidates read"
 on public.candidates
@@ -130,24 +147,41 @@ to anon, authenticated
 using (true)
 with check (true);
 
+create policy "demo trending people read"
+on public.trending_people_reports
+for select
+to anon, authenticated
+using (true);
+
+create policy "demo trending people write"
+on public.trending_people_reports
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
 insert into public.app_role_permissions (role, view, enabled)
 values
   ('associate', 'dashboard', true),
   ('associate', 'pool', true),
   ('associate', 'ai-search', true),
+  ('associate', 'trending', true),
   ('regular', 'dashboard', true),
   ('regular', 'pool', true),
   ('regular', 'register', true),
   ('regular', 'ai-search', true),
+  ('regular', 'trending', true),
   ('operator', 'dashboard', true),
   ('operator', 'pool', true),
   ('operator', 'register', true),
   ('operator', 'ai-search', true),
+  ('operator', 'trending', true),
   ('operator', 'audit', true),
   ('admin', 'dashboard', true),
   ('admin', 'pool', true),
   ('admin', 'register', true),
   ('admin', 'ai-search', true),
+  ('admin', 'trending', true),
   ('admin', 'audit', true),
   ('admin', 'members', true)
 on conflict (role, view) do update set

@@ -40,6 +40,10 @@
             <span class="nav-icon">A</span>
             <span>AI 검색</span>
           </button>
+          <button class="nav-item" type="button" data-view="trending">
+            <span class="nav-icon">T</span>
+            <span>오늘의 화제 인물</span>
+          </button>
           <button class="nav-item" type="button" data-view="audit">
             <span class="nav-icon">L</span>
             <span>감사 로그</span>
@@ -117,6 +121,17 @@
               <span class="status-chip chip-green">민감 속성 제외</span>
             </div>
             <div id="ai-search-content"></div>
+          </section>
+
+          <section id="trending-view" class="view" aria-labelledby="trending-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Daily News Radar</p>
+                <h3 id="trending-title">오늘의 화제 인물</h3>
+              </div>
+              <span class="status-chip chip-blue">매일 06:00 KST</span>
+            </div>
+            <div id="trending-content"></div>
           </section>
 
           <section id="detail-view" class="view" aria-labelledby="detail-title">

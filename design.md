@@ -223,6 +223,7 @@ Layout:
 - Candidate pool rows use larger square face thumbnails. Under the candidate name, show birth year and age instead of company name.
 - Authentication appears before the operations shell. Approved members only can enter the app, and visible navigation is filtered by member role.
 - Member management is an administrator-only operations page with approval queue, member status controls, role changes, password reset, and role-based menu permission matrix.
+- Today's trending people is a daily news-radar view. It shows Top 5 people mentioned in Korean news from the previous day, scoped to DX domains such as AI, robotics, mobile, TV, and home appliances while excluding DS/semiconductor topics.
 
 Rules:
 
@@ -263,6 +264,8 @@ Do:
 - AI search can also accept a job description file upload and use the extracted text as the search condition.
 - Login, signup approval, and role-based menu access should use the same compact operations styling as the rest of the app.
 - Keep member approval and permission changes visible in audit logs.
+- Trending people cards should show profile facts, education, career, concise achievements, concise selection reasons, and source article links in a report-like format.
+- Trending people can be converted directly into candidate profiles in the talent pool.
 - Use parsing review and audit states visibly where operationally useful, but keep quality score and parsing confidence out of candidate detail.
 - Keep tables compact but readable.
 
@@ -338,7 +341,28 @@ Production hardening note:
 
 ---
 
-## 11. Resume Parsing Architecture
+## 11. Daily Trending People
+
+The 오늘의 화제 인물 feature supports daily sourcing from Korean news:
+
+- Vercel Cron calls `/api/trending-people` every day at `21:00 UTC`, which is `06:00 KST`.
+- The API analyzes the previous KST calendar day, `00:00~24:00`.
+- News search scope is Google News Korea RSS with Korean/KR parameters.
+- Topic scope is Samsung DX-related domains: AI, robotics, mobile, TV, and home appliances.
+- DS/semiconductor terms such as 반도체, 메모리, HBM, 파운드리, 웨이퍼, 낸드, D램 are excluded.
+- Supabase table `trending_people_reports` stores generated reports and article/source payloads.
+- Previous 30 days of stored profiles are used as the duplicate exclusion memory.
+- Cards include source news links in the Top 5 selection reason section.
+- A selected person can be converted to an 인재 Pool candidate with source, evidence, career, education, and tags prefilled for recruiter review.
+
+Production hardening note:
+
+- Current implementation uses Google News RSS snippets plus OpenAI structured extraction.
+- For production-grade accuracy, connect a licensed Korean news provider, full-text crawler, entity resolution, and fact-checking/profile enrichment pipeline.
+
+---
+
+## 12. Resume Parsing Architecture
 
 Resume upload must not decode binary documents as plain text. PDF, DOCX, HWP, and HWPX files have document-specific internal structures, so the system should extract text through a format-aware pipeline before mapping values into the talent registration form.
 

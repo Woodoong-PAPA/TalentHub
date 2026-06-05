@@ -12,6 +12,7 @@ The current app is a frontend-first prototype. Candidate, audit, member, and rol
 - Candidate pool list with search and filters.
 - Candidate registration form with resume upload simulation.
 - AI search simulation with recommendation evidence.
+- Today's trending people view for previous-day Korean DX news, Top 5 people, source article links, and direct talent-pool registration.
 - Candidate detail profile reachable from candidate pool rows and AI search results.
 - Candidate profile includes overview, resume, education, career, activity, applications, and compliance.
 - Candidate detail profiles are editable, and education/career records can contain multiple entries.
@@ -70,6 +71,8 @@ Then verify in the browser:
 - AI search renders results and detail navigation works.
 - Candidate registration creates a new profile.
 - Face profile photo upload preview appears in the registration form.
+- Today's trending people menu loads a report from `/api/trending-people`.
+- Trending people cards show source news links and can register a selected person into the talent pool.
 - Login blocks unauthenticated access.
 - Default admin login works with `admin@samsung.com` / `Admin1234!`.
 - Signup creates an approval-pending member that cannot log in until approved.
@@ -119,6 +122,13 @@ Member objects in `talent-pool.js` should include:
 - Access control: `role`, `status`
 - Organization: `department`, `position`, `phone`
 - Approval history: `requestedAt`, `approvedAt`, `approvedBy`, `lastLoginAt`, `note`
+
+Trending people reports should include:
+
+- `reportDate`, `targetDate`, `generatedAt`, `searchScope`, `topics`
+- `excludedNames` for recent 30-day duplicate suppression
+- `articles[]` with title, source, published date, URL, snippet, and topic
+- `people[]` with name, birth year, current org/title, education, career, achievements, selection reasons, LinkedIn URL, and topics
 
 When adding new sample candidates, include education and career data so the detail profile stays complete.
 
