@@ -1896,8 +1896,6 @@ function applyAccessControls() {
     const view = element.dataset.view;
     element.hidden = !canAccessView(view);
   });
-
-  $(".global-search")?.classList.toggle("is-hidden", !canAccessView("pool"));
 }
 
 function ensureActiveViewAllowed() {
@@ -1915,7 +1913,11 @@ function syncActiveViewState() {
     button.classList.toggle("is-active", button.dataset.view === state.view || (state.view === "detail" && button.dataset.view === "pool"));
   });
 
-  $("#page-title").textContent = viewTitles[state.view] || "Talent Pool";
+  const pageTitle = $("#page-title");
+
+  if (pageTitle) {
+    pageTitle.textContent = viewTitles[state.view] || "Talent Pool";
+  }
 }
 
 function trendingReportNeedsRefresh(report) {
@@ -6679,20 +6681,6 @@ function bindEvents() {
 
     if (["member-query", "member-role-filter", "member-status-filter"].includes(event.target.id)) {
       updateMemberFilters();
-    }
-
-    if (event.target.id === "global-search") {
-      state.poolFilters.query = event.target.value;
-      persistState();
-      if (state.view !== "pool") {
-        setView("pool");
-      } else {
-        const poolQuery = $("#pool-query");
-        if (poolQuery) {
-          poolQuery.value = state.poolFilters.query;
-        }
-        renderPoolTable();
-      }
     }
 
     if (event.target.id === "candidate-birth-year") {

@@ -202,7 +202,6 @@ body.is-authenticated .app-shell {
 }
 
 .brand-block h1,
-.topbar h2,
 .section-heading h3 {
   margin: 0;
   line-height: 1.2;
@@ -254,8 +253,13 @@ body.is-authenticated .app-shell {
   color: #ffffff;
 }
 
-.sidebar-panel {
+.sidebar-footer {
   margin-top: auto;
+  display: grid;
+  gap: 12px;
+}
+
+.sidebar-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 14px;
@@ -278,44 +282,17 @@ body.is-authenticated .app-shell {
   min-width: 0;
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  min-height: 76px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  border-bottom: 1px solid var(--line);
-  padding: 14px 28px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(12px);
-}
-
-.topbar h2 {
-  font-size: 24px;
-  font-weight: 700;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .user-menu {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 8px;
-  border-left: 1px solid var(--line);
-  margin-left: 4px;
-  padding-left: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
 }
 
 .user-summary {
   display: grid;
-  min-width: 92px;
   gap: 1px;
   line-height: 1.25;
 }
@@ -331,7 +308,10 @@ body.is-authenticated .app-shell {
   font-size: 12px;
 }
 
-.global-search input,
+.user-menu .ghost-button {
+  width: 100%;
+}
+
 .control-input,
 .control-select,
 .control-textarea {
@@ -345,11 +325,6 @@ body.is-authenticated .app-shell {
   outline: none;
 }
 
-.global-search input {
-  width: min(32vw, 360px);
-}
-
-.global-search input:focus,
 .control-input:focus,
 .control-select:focus,
 .control-textarea:focus {
@@ -2397,16 +2372,10 @@ tr:last-child td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .sidebar-panel {
+  .sidebar-footer {
     margin-top: 0;
   }
 
-  .topbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .topbar-actions,
   .filter-strip {
     display: grid;
     grid-template-columns: 1fr;
@@ -2414,16 +2383,7 @@ tr:last-child td {
   }
 
   .user-menu {
-    justify-content: space-between;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    margin-left: 0;
-    padding-top: 10px;
-    padding-left: 0;
-  }
-
-  .global-search input {
-    width: 100%;
+    grid-template-columns: 1fr;
   }
 
   .main-content {
