@@ -4,7 +4,7 @@
 
 This project is a static MVP prototype for a Samsung recruiter talent pool management system. The product helps recruiters manage candidate pools, register candidates, parse resumes, run AI-based candidate search, view detailed candidate profiles, track candidate history, inspect audit/compliance status, and operate member access control.
 
-The current app is a frontend-first prototype. Candidate and member operations run in `talent-pool.js`; candidate/audit data can sync to Supabase when runtime config is enabled, while member access control is still stored in browser storage for the MVP.
+The current app is a frontend-first prototype. Candidate, audit, member, and role-permission operations run in `talent-pool.js` and can sync to Supabase when runtime config is enabled.
 
 ## Current Product Scope
 
@@ -115,7 +115,7 @@ Candidate objects in `talent-pool.js` should include:
 
 Member objects in `talent-pool.js` should include:
 
-- Identity and login: `id`, `name`, `email`, `password`
+- Identity and login: `id`, `name`, `email`, `passwordHash`
 - Access control: `role`, `status`
 - Organization: `department`, `position`, `phone`
 - Approval history: `requestedAt`, `approvedAt`, `approvedBy`, `lastLoginAt`, `note`

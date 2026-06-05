@@ -52,12 +52,15 @@ const DEFAULT_ROLE_PERMISSIONS = {
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
+const TEMP_PASSWORD = "Temp1234!";
+
 const DEFAULT_MEMBERS = [
   {
     id: "member-admin",
     name: "시스템 관리자",
     email: "admin@samsung.com",
-    password: "Admin1234!",
+    password: "",
+    passwordHash: "5842a8aa177243bfa34305cfaceb69a124ad6ccee62ebd4bd149be39871eb160",
     role: "admin",
     status: "active",
     department: "People Team",
@@ -579,6 +582,7 @@ function normalizeMember(member) {
     name: String(member.name || "").trim(),
     email: String(member.email || "").trim().toLowerCase(),
     password: String(member.password || ""),
+    passwordHash: String(member.passwordHash || member.password_hash || member.profile?.passwordHash || ""),
     role,
     status,
     department: String(member.department || "").trim(),
@@ -590,6 +594,47 @@ function normalizeMember(member) {
     lastLoginAt: member.lastLoginAt || "",
     note: String(member.note || "").trim()
   };
+}
+
+function sanitizeMemberForStorage(member) {
+  const normalized = normalizeMember(member);
+  const { password, ...safeMember } = normalized;
+  return safeMember;
+}
+
+function publicMemberProfile(member) {
+  const safeMember = sanitizeMemberForStorage(member);
+  const { passwordHash, ...profile } = safeMember;
+  return profile;
+}
+
+function toHex(buffer) {
+  return [...new Uint8Array(buffer)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function hashPassword(email, password) {
+  if (!window.crypto?.subtle) {
+    throw new Error("Password hashing is not available in this browser.");
+  }
+
+  const input = new TextEncoder().encode(`${String(email || "").trim().toLowerCase()}:${password}`);
+  return toHex(await window.crypto.subtle.digest("SHA-256", input));
+}
+
+async function ensureMemberPasswordHashes() {
+  let changed = false;
+
+  for (const member of state.members) {
+    if (!member.passwordHash && member.password) {
+      member.passwordHash = await hashPassword(member.email, member.password);
+      member.password = "";
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function normalizeRolePermissions(permissions = {}) {
@@ -715,7 +760,7 @@ function persistState(options = {}) {
         auditLogs: state.auditLogs,
         selectedCandidateId: state.selectedCandidateId,
         poolFilters: state.poolFilters,
-        members: state.members,
+        members: state.members.map(sanitizeMemberForStorage),
         rolePermissions: state.rolePermissions,
         memberFilters: state.memberFilters,
         currentUserId: state.currentUserId
@@ -834,6 +879,105 @@ function auditLogToSupabaseRow(log) {
   };
 }
 
+function toSupabaseTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = String(value).includes("T") ? String(value) : String(value).replace(" ", "T");
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+}
+
+function memberToSupabaseRow(member) {
+  const normalized = normalizeMember(member);
+
+  return {
+    id: normalized.id,
+    email: normalized.email,
+    name: normalized.name,
+    role: normalized.role,
+    status: normalized.status,
+    department: normalized.department || null,
+    position: normalized.position || null,
+    phone: normalized.phone || null,
+    password_hash: normalized.passwordHash || null,
+    requested_at: toSupabaseTimestamp(normalized.requestedAt) || new Date().toISOString(),
+    approved_at: toSupabaseTimestamp(normalized.approvedAt),
+    approved_by: normalized.approvedBy || null,
+    last_login_at: toSupabaseTimestamp(normalized.lastLoginAt),
+    note: normalized.note || null,
+    profile: publicMemberProfile(normalized)
+  };
+}
+
+function memberFromSupabaseRow(row) {
+  return normalizeMember({
+    ...(row.profile || {}),
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    status: row.status,
+    department: row.department,
+    position: row.position,
+    phone: row.phone,
+    passwordHash: row.password_hash,
+    requestedAt: row.profile?.requestedAt || row.requested_at || "",
+    approvedAt: row.profile?.approvedAt || row.approved_at || "",
+    approvedBy: row.approved_by || row.profile?.approvedBy || "",
+    lastLoginAt: row.profile?.lastLoginAt || row.last_login_at || "",
+    note: row.note || row.profile?.note || ""
+  });
+}
+
+function mergeMembers(localMembers, remoteMembers) {
+  const membersByEmail = new Map();
+
+  remoteMembers.forEach((member) => {
+    if (member.email) {
+      membersByEmail.set(member.email, normalizeMember(member));
+    }
+  });
+
+  localMembers.forEach((member) => {
+    const normalized = normalizeMember(member);
+
+    if (normalized.email && !membersByEmail.has(normalized.email)) {
+      membersByEmail.set(normalized.email, normalized);
+    }
+  });
+
+  return [...membersByEmail.values()].sort((a, b) =>
+    MEMBER_STATUS_ORDER.indexOf(a.status) - MEMBER_STATUS_ORDER.indexOf(b.status) ||
+    dateSortValue(b.requestedAt) - dateSortValue(a.requestedAt) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+function rolePermissionToSupabaseRows() {
+  return MEMBER_ROLE_ORDER.flatMap((role) =>
+    MENU_CONFIG.map((menu) => ({
+      role,
+      view: menu.view,
+      enabled: getAllowedViewsForRole(role).includes(menu.view),
+      updated_at: new Date().toISOString()
+    }))
+  );
+}
+
+function rolePermissionsFromSupabaseRows(rows) {
+  const permissions = Object.fromEntries(MEMBER_ROLE_ORDER.map((role) => [role, []]));
+
+  rows.forEach((row) => {
+    if (row.enabled && permissions[row.role]) {
+      permissions[row.role].push(row.view);
+    }
+  });
+
+  return normalizeRolePermissions(permissions);
+}
+
 let remoteSyncTimer = null;
 let remoteSyncInFlight = false;
 
@@ -858,8 +1002,11 @@ async function syncStateToSupabase() {
 
   try {
     ensureAuditLogIds();
+    await ensureMemberPasswordHashes();
     const candidateRows = state.candidates.map(candidateToSupabaseRow);
     const auditRows = state.auditLogs.map(auditLogToSupabaseRow);
+    const memberRows = state.members.map(memberToSupabaseRow);
+    const permissionRows = rolePermissionToSupabaseRows();
 
     if (candidateRows.length) {
       await supabaseRequest("candidates?on_conflict=id", {
@@ -874,6 +1021,22 @@ async function syncStateToSupabase() {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify(auditRows)
+      });
+    }
+
+    if (memberRows.length) {
+      await supabaseRequest("app_members?on_conflict=id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(memberRows)
+      });
+    }
+
+    if (permissionRows.length) {
+      await supabaseRequest("app_role_permissions?on_conflict=role,view", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(permissionRows)
       });
     }
 
@@ -893,9 +1056,11 @@ async function loadStateFromSupabase() {
 
   try {
     state.remoteSyncStatus = "Supabase 불러오는 중";
-    const [candidateRows, auditRows] = await Promise.all([
+    const [candidateRows, auditRows, memberRows, permissionRows] = await Promise.all([
       supabaseRequest("candidates?select=profile&order=updated_at.desc"),
-      supabaseRequest("audit_logs?select=payload&order=created_at.desc&limit=200")
+      supabaseRequest("audit_logs?select=payload&order=created_at.desc&limit=200"),
+      supabaseRequest("app_members?select=*&order=requested_at.desc"),
+      supabaseRequest("app_role_permissions?select=*")
     ]);
 
     if (Array.isArray(candidateRows) && candidateRows.length) {
@@ -908,6 +1073,18 @@ async function loadStateFromSupabase() {
       ensureAuditLogIds();
     }
 
+    if (Array.isArray(memberRows) && memberRows.length) {
+      state.members = mergeMembers(
+        state.members,
+        memberRows.map(memberFromSupabaseRow).filter((member) => member.email)
+      );
+    }
+
+    if (Array.isArray(permissionRows) && permissionRows.length) {
+      state.rolePermissions = rolePermissionsFromSupabaseRows(permissionRows);
+    }
+
+    ensureMemberDefaults();
     state.remoteSyncStatus = "Supabase 연결됨";
     persistState({ skipRemoteSync: true });
     render();
@@ -4565,13 +4742,27 @@ function setAuthMessage(message) {
   render();
 }
 
-function handleLoginSubmit(form) {
+async function verifyMemberPassword(member, password) {
+  if (member.passwordHash) {
+    return member.passwordHash === await hashPassword(member.email, password);
+  }
+
+  if (member.password && member.password === password) {
+    member.passwordHash = await hashPassword(member.email, password);
+    member.password = "";
+    return true;
+  }
+
+  return false;
+}
+
+async function handleLoginSubmit(form) {
   const formData = new FormData(form);
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
   const member = state.members.find((item) => item.email === email);
 
-  if (!member || member.password !== password) {
+  if (!member || !await verifyMemberPassword(member, password)) {
     setAuthMessage("이메일 또는 비밀번호가 일치하지 않습니다.");
     return;
   }
@@ -4591,7 +4782,7 @@ function handleLoginSubmit(form) {
   showToast(`${member.name}님, 로그인되었습니다.`);
 }
 
-function handleSignupSubmit(form) {
+async function handleSignupSubmit(form) {
   const formData = new FormData(form);
   const name = String(formData.get("name") || "").trim();
   const email = String(formData.get("email") || "").trim().toLowerCase();
@@ -4623,7 +4814,8 @@ function handleSignupSubmit(form) {
     id: createId("member"),
     name,
     email,
-    password,
+    password: "",
+    passwordHash: await hashPassword(email, password),
     role: requestedRole === "admin" ? "associate" : requestedRole,
     status: "pending",
     department: formData.get("department"),
@@ -4725,18 +4917,19 @@ function activateMember(memberId) {
   showToast(`${member.name} 회원을 재활성화했습니다.`);
 }
 
-function resetMemberPassword(memberId) {
+async function resetMemberPassword(memberId) {
   const member = findMember(memberId);
 
   if (!member || !isAdmin()) {
     return;
   }
 
-  member.password = "Temp1234!";
+  member.password = "";
+  member.passwordHash = await hashPassword(member.email, TEMP_PASSWORD);
   addAuditLog("회원 비밀번호 초기화", member.name, "임시 비밀번호 발급");
   persistState();
   renderMembers();
-  showToast(`${member.name} 회원의 임시 비밀번호는 Temp1234! 입니다.`);
+  showToast(`${member.name} 회원의 임시 비밀번호는 ${TEMP_PASSWORD} 입니다.`);
 }
 
 function updateMemberRole(memberId, role) {
@@ -4818,7 +5011,10 @@ function bindEvents() {
 
     const resetMemberPasswordButton = event.target.closest("[data-reset-member-password]");
     if (resetMemberPasswordButton) {
-      resetMemberPassword(resetMemberPasswordButton.dataset.resetMemberPassword);
+      resetMemberPassword(resetMemberPasswordButton.dataset.resetMemberPassword).catch((error) => {
+        console.warn(error);
+        showToast("비밀번호 초기화 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -4950,13 +5146,19 @@ function bindEvents() {
   document.addEventListener("submit", (event) => {
     if (event.target.matches("#login-form")) {
       event.preventDefault();
-      handleLoginSubmit(event.target);
+      handleLoginSubmit(event.target).catch((error) => {
+        console.warn(error);
+        setAuthMessage("로그인 처리 중 오류가 발생했습니다.");
+      });
       return;
     }
 
     if (event.target.matches("#signup-form")) {
       event.preventDefault();
-      handleSignupSubmit(event.target);
+      handleSignupSubmit(event.target).catch((error) => {
+        console.warn(error);
+        setAuthMessage("가입 신청 처리 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -5092,8 +5294,21 @@ function bindEvents() {
   });
 }
 
-restorePersistedState();
-ensureMemberDefaults();
-bindEvents();
-render();
-loadStateFromSupabase();
+async function initializeApp() {
+  restorePersistedState();
+  ensureMemberDefaults();
+  bindEvents();
+
+  try {
+    if (await ensureMemberPasswordHashes()) {
+      persistState({ skipRemoteSync: true });
+    }
+  } catch (error) {
+    console.warn("Member password hashes could not be migrated.", error);
+  }
+
+  render();
+  loadStateFromSupabase();
+}
+
+initializeApp();

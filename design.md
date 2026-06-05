@@ -328,11 +328,13 @@ The MVP includes a front-end approval workflow for controlled access:
 - 정회원 defaults to dashboard, pool, registration, and AI search.
 - 운영진 defaults to dashboard, pool, registration, AI search, and audit log.
 - Authentication actions, approval decisions, role changes, and permission changes are written to the audit log.
+- Member records and role-permission rows sync to Supabase when remote data source is enabled.
+- Passwords are compared using browser-side SHA-256 hashes and only `password_hash` is stored remotely in the MVP.
 
 Production hardening note:
 
-- The current MVP keeps member data in browser storage to match the static prototype architecture.
-- A production HR system should migrate login, password storage, approval state, and role-based access control to Supabase Auth or a dedicated backend with server-side authorization.
+- The current MVP performs password hashing and authorization in the browser to match the static prototype architecture.
+- A production HR system should migrate login verification, password storage, approval state, and role-based access control to Supabase Auth or a dedicated backend with server-side authorization and RLS policies.
 
 ---
 
