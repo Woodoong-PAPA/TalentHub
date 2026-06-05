@@ -581,7 +581,7 @@ table {
 }
 
 .candidate-table {
-  min-width: 1180px;
+  min-width: 1260px;
   table-layout: fixed;
 }
 
@@ -616,6 +616,10 @@ table {
 .col-status,
 .col-owner {
   width: 104px;
+}
+
+.col-actions {
+  width: 92px;
 }
 
 th,

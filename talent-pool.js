@@ -439,6 +439,7 @@ const state = {
   selectedCandidateId: "cand-001",
   isEditingCandidate: false,
   editSnapshot: null,
+  poolReturnScrollY: 0,
   poolFilters: {
     query: "",
     status: "all",
@@ -914,6 +915,10 @@ function canAccessView(view, member = getCurrentMember()) {
   return getAllowedViewsForRole(member.role).includes(view);
 }
 
+function canManageCandidates(member = getCurrentMember()) {
+  return Boolean(member && member.status === "active" && (isAdmin(member) || getAllowedViewsForRole(member.role).includes("register")));
+}
+
 function getDefaultView(member = getCurrentMember()) {
   return getAllowedViewsForRole(member?.role)
     .find((view) => MENU_CONFIG.some((item) => item.view === view)) || "dashboard";
@@ -921,6 +926,48 @@ function getDefaultView(member = getCurrentMember()) {
 
 function getCurrentActorName() {
   return getCurrentMember()?.name || "시스템";
+}
+
+function getAssignableMembers() {
+  return state.members
+    .filter((member) => member.status === "active")
+    .sort((a, b) => {
+      if (a.id === state.currentUserId) {
+        return -1;
+      }
+
+      if (b.id === state.currentUserId) {
+        return 1;
+      }
+
+      return a.name.localeCompare(b.name);
+    });
+}
+
+function getDefaultOwnerName() {
+  return getCurrentMember()?.name || getAssignableMembers()[0]?.name || "";
+}
+
+function isAssignableOwner(ownerName) {
+  return getAssignableMembers().some((member) => member.name === ownerName);
+}
+
+function normalizeOwnerSelection(ownerName) {
+  const owner = String(ownerName || "").trim();
+  return isAssignableOwner(owner) ? owner : getDefaultOwnerName();
+}
+
+function renderOwnerOptions(selectedOwner = "", options = {}) {
+  const members = getAssignableMembers();
+  const selected = normalizeOwnerSelection(selectedOwner);
+  const placeholder = options.includePlaceholder
+    ? `<option value="" ${selected ? "" : "selected"}>담당자 선택</option>`
+    : "";
+
+  return `${placeholder}${members.map((member) => {
+    const label = `${member.name} · ${getRoleLabel(member.role)}`;
+    return `<option value="${escapeHtml(member.name)}" ${member.name === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("")}`;
 }
 
 function getTimestampText() {
@@ -1078,6 +1125,17 @@ async function supabaseRequest(path, options = {}) {
 
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+async function deleteSupabaseRecord(tableName, id) {
+  if (!REMOTE_SYNC_ENABLED || !id) {
+    return;
+  }
+
+  await supabaseRequest(`${tableName}?id=eq.${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" }
+  });
 }
 
 function candidateToSupabaseRow(candidate) {
@@ -1552,7 +1610,11 @@ function escapeHtml(value) {
 }
 
 function getCandidate(id = state.selectedCandidateId) {
-  return state.candidates.find((candidate) => candidate.id === id) || state.candidates[0];
+  return findCandidate(id) || state.candidates[0];
+}
+
+function findCandidate(id) {
+  return state.candidates.find((candidate) => candidate.id === id) || null;
 }
 
 function replaceCandidate(candidate) {
@@ -1988,6 +2050,59 @@ function setView(view) {
   }
 }
 
+function getCurrentScrollY() {
+  return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+}
+
+function savePoolReturnPosition() {
+  if (state.view === "pool") {
+    state.poolReturnScrollY = getCurrentScrollY();
+  }
+}
+
+function restorePoolReturnPosition() {
+  const scrollY = Number(state.poolReturnScrollY || 0);
+  window.setTimeout(() => {
+    window.scrollTo({ top: scrollY, left: 0, behavior: "auto" });
+  }, 0);
+}
+
+function openCandidateDetail(candidateId) {
+  const candidate = findCandidate(candidateId);
+
+  if (!candidate) {
+    showToast("후보자 정보를 찾지 못했습니다.");
+    return;
+  }
+
+  if (state.isEditingCandidate) {
+    discardCandidateEditDraft();
+  }
+
+  savePoolReturnPosition();
+  state.selectedCandidateId = candidate.id;
+  state.isEditingCandidate = false;
+  state.auditLogs.unshift({
+    actor: candidate.owner,
+    action: "후보자 상세 조회",
+    resource: candidate.name,
+    purpose: "프로필 검토",
+    time: getTimestampText()
+  });
+  persistState();
+  setView("detail");
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}
+
+function backToPoolList() {
+  if (state.isEditingCandidate) {
+    discardCandidateEditDraft();
+  }
+
+  setView("pool");
+  restorePoolReturnPosition();
+}
+
 function getFilteredCandidates() {
   const query = state.poolFilters.query.trim().toLowerCase();
 
@@ -2176,6 +2291,7 @@ function candidateTable(candidates) {
           <col class="col-role" />
           <col class="col-status" />
           <col class="col-owner" />
+          <col class="col-actions" />
         </colgroup>
         <thead>
           <tr>
@@ -2186,6 +2302,7 @@ function candidateTable(candidates) {
             <th>직무</th>
             <th>상태</th>
             <th>담당자</th>
+            <th>관리</th>
           </tr>
         </thead>
         <tbody>
@@ -2215,6 +2332,9 @@ function candidateTable(candidates) {
               <td class="role-cell">${escapeHtml(candidate.role)}</td>
               <td>${getStatusChip(candidate.status)}</td>
               <td>${escapeHtml(candidate.owner)}</td>
+              <td>
+                ${canManageCandidates() ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-candidate="${candidate.id}">삭제</button>` : `<span class="muted-text">-</span>`}
+              </td>
             </tr>
           `;
           }).join("")}
@@ -2291,11 +2411,7 @@ function renderRegister() {
           <div class="field">
             <label for="candidate-owner">담당자</label>
             <select class="control-select" id="candidate-owner" name="owner">
-              <option value="">담당자 선택</option>
-              <option>이지원</option>
-              <option>박민수</option>
-              <option>최유진</option>
-              <option>한소라</option>
+              ${renderOwnerOptions(getDefaultOwnerName(), { includePlaceholder: !getAssignableMembers().length })}
             </select>
           </div>
           <div class="field">
@@ -3391,12 +3507,21 @@ function searchResultCard(candidate) {
 
 function renderDetail() {
   const candidate = getCandidate();
+
+  if (!candidate) {
+    $("#detail-actions").innerHTML = `<button class="ghost-button" type="button" data-back-to-pool>목록으로</button>`;
+    $("#detail-content").innerHTML = `<div class="empty-state">조회할 후보자 프로필이 없습니다.</div>`;
+    return;
+  }
+
   $("#detail-actions").innerHTML = state.isEditingCandidate
     ? `<button class="ghost-button" type="button" data-cancel-edit>수정 취소</button>`
     : `
+      <button class="ghost-button" type="button" data-back-to-pool>목록으로</button>
       <button class="ghost-button" type="button" data-start-edit>정보 수정</button>
       <button class="ghost-button" type="button" data-change-status="contacted">접촉 완료</button>
       <button class="primary-button" type="button" data-change-status="screening">전형 진행</button>
+      ${canManageCandidates() ? `<button class="ghost-button danger-button" type="button" data-delete-candidate="${candidate.id}">프로필 삭제</button>` : ""}
     `;
 
   if (state.isEditingCandidate) {
@@ -3797,7 +3922,9 @@ function renderCandidateEditForm(candidate) {
           </div>
           <div class="field">
             <label for="edit-owner">담당자</label>
-            <input class="control-input" id="edit-owner" name="editOwner" value="${inputValue(candidate.owner)}" />
+            <select class="control-select" id="edit-owner" name="editOwner">
+              ${renderOwnerOptions(candidate.owner, { includePlaceholder: true })}
+            </select>
           </div>
           <div class="field">
             <label for="edit-status">상태</label>
@@ -4090,7 +4217,7 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.company = company;
   candidate.role = getFormText(form, "editRole") || candidate.role;
   candidate.organization = normalizeBusinessUnit(getFormText(form, "editOrganization")) || candidate.organization;
-  candidate.owner = getFormText(form, "editOwner") || candidate.owner;
+  candidate.owner = normalizeOwnerSelection(getFormText(form, "editOwner")) || candidate.owner;
   candidate.status = getFormText(form, "editStatus") || candidate.status;
   candidate.birthYear = getFormText(form, "editBirthYear");
   candidate.age = calculateAge(candidate.birthYear);
@@ -4296,6 +4423,7 @@ function renderMemberActionButtons(member) {
   }
 
   actions.push(`<button class="ghost-button compact-button" type="button" data-reset-member-password="${member.id}">비밀번호 초기화</button>`);
+  actions.push(`<button class="ghost-button danger-button compact-button" type="button" data-delete-member="${member.id}">계정 삭제</button>`);
 
   return `<div class="member-actions">${actions.join("")}</div>`;
 }
@@ -5859,6 +5987,7 @@ async function registerCandidate(eventOrForm) {
   const role = form.get("role").toString().trim();
   const organization = normalizeBusinessUnit(form.get("organization"));
   const birthYear = form.get("birthYear").toString().trim();
+  const owner = normalizeOwnerSelection(form.get("owner"));
   const today = getTodayDate();
   const candidateName = name || "이름 미입력";
   const candidateCompany = company || "미입력";
@@ -5913,7 +6042,7 @@ async function registerCandidate(eventOrForm) {
     jobFamily: "Equipment Software",
     organization,
     status: "interested",
-    owner: form.get("owner").toString(),
+    owner,
     createdAt: today,
     updatedAt: today,
     lastContactedAt: "-",
@@ -5942,7 +6071,7 @@ async function registerCandidate(eventOrForm) {
     ],
     applications: [],
     timeline: [
-      { type: "등록", text: "후보자 신규 등록", actor: form.get("owner").toString(), date: today },
+      { type: "등록", text: "후보자 신규 등록", actor: owner, date: today },
       { type: "AI 요약", text: "이력서 파싱 결과 생성", actor: "AI Worker", date: today }
     ]
   };
@@ -5969,6 +6098,45 @@ function updatePoolFilters() {
   state.poolFilters.owner = $("#pool-owner")?.value || "all";
   persistState();
   renderPoolTable();
+}
+
+async function deleteCandidateProfile(candidateId) {
+  const candidate = findCandidate(candidateId);
+
+  if (!candidate || !canManageCandidates()) {
+    return;
+  }
+
+  if (!window.confirm(`${candidate.name} 후보자 프로필을 삭제할까요? 삭제 후에는 목록에서 제거됩니다.`)) {
+    return;
+  }
+
+  state.candidates = state.candidates.filter((item) => item.id !== candidate.id);
+
+  if (state.selectedCandidateId === candidate.id) {
+    state.selectedCandidateId = state.candidates[0]?.id || "";
+  }
+
+  state.aiResults = state.aiResults.filter((item) => item.id !== candidate.id);
+  state.isEditingCandidate = false;
+  state.editSnapshot = null;
+  addAuditLog("후보자 프로필 삭제", candidate.name, "인재 Pool 프로필 제거");
+  persistState();
+
+  if (state.view === "detail") {
+    setView("pool");
+    restorePoolReturnPosition();
+  } else {
+    render();
+  }
+
+  try {
+    await deleteSupabaseRecord("candidates", candidate.id);
+    showToast(`${candidate.name} 후보자 프로필을 삭제했습니다.`);
+  } catch (error) {
+    console.warn("Candidate remote delete failed.", error);
+    showToast("프로필은 화면에서 삭제됐지만 원격 DB 삭제 확인에 실패했습니다.");
+  }
 }
 
 function changeCandidateStatus(status) {
@@ -6362,6 +6530,43 @@ async function resetMemberPassword(memberId) {
   showToast(`${member.name} 회원의 임시 비밀번호는 ${TEMP_PASSWORD} 입니다.`);
 }
 
+async function deleteMemberAccount(memberId) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin() || member.id === state.currentUserId) {
+    return;
+  }
+
+  const activeAdmins = state.members.filter((item) => item.role === "admin" && item.status === "active");
+
+  if (member.role === "admin" && member.status === "active" && activeAdmins.length <= 1) {
+    showToast("마지막 활성 관리자 계정은 삭제할 수 없습니다.");
+    return;
+  }
+
+  if (!window.confirm(`${member.name} 회원 계정을 삭제할까요? 삭제 후 해당 계정은 로그인할 수 없습니다.`)) {
+    return;
+  }
+
+  state.members = state.members.filter((item) => item.id !== member.id);
+
+  if (state.memberFilters.role !== "all" && !state.members.some((item) => item.role === state.memberFilters.role)) {
+    state.memberFilters.role = "all";
+  }
+
+  addAuditLog("회원 계정 삭제", member.name, `${member.email} 계정 제거`);
+  persistState();
+  render();
+
+  try {
+    await deleteSupabaseRecord("app_members", member.id);
+    showToast(`${member.name} 회원 계정을 삭제했습니다.`);
+  } catch (error) {
+    console.warn("Member remote delete failed.", error);
+    showToast("회원은 화면에서 삭제됐지만 원격 DB 삭제 확인에 실패했습니다.");
+  }
+}
+
 function updateMemberRole(memberId, role) {
   const member = findMember(memberId);
 
@@ -6458,6 +6663,15 @@ function bindEvents() {
       return;
     }
 
+    const deleteMemberButton = event.target.closest("[data-delete-member]");
+    if (deleteMemberButton) {
+      deleteMemberAccount(deleteMemberButton.dataset.deleteMember).catch((error) => {
+        console.warn(error);
+        showToast("회원 계정 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
     const openTrendingModalButton = event.target.closest("[data-open-trending-modal]");
     if (openTrendingModalButton) {
       openTrendingModal(openTrendingModalButton.dataset.openTrendingModal);
@@ -6514,24 +6728,23 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-back-to-pool]")) {
+      backToPoolList();
+      return;
+    }
+
+    const deleteCandidateButton = event.target.closest("[data-delete-candidate]");
+    if (deleteCandidateButton) {
+      deleteCandidateProfile(deleteCandidateButton.dataset.deleteCandidate).catch((error) => {
+        console.warn(error);
+        showToast("후보자 프로필 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
     const selectButton = event.target.closest("[data-select-candidate]");
     if (selectButton) {
-      if (state.isEditingCandidate) {
-        discardCandidateEditDraft();
-      }
-
-      state.selectedCandidateId = selectButton.dataset.selectCandidate;
-      state.isEditingCandidate = false;
-      const candidate = getCandidate();
-      state.auditLogs.unshift({
-        actor: candidate.owner,
-        action: "후보자 상세 조회",
-        resource: candidate.name,
-        purpose: "프로필 검토",
-        time: "2026-06-04 09:33"
-      });
-      persistState();
-      setView("detail");
+      openCandidateDetail(selectButton.dataset.selectCandidate);
       return;
     }
 
@@ -6689,6 +6902,7 @@ function bindEvents() {
         state.registerExtractedPhotoUrl = "";
         const status = $("#resume-parse-status");
         const preview = $("#photo-preview");
+        const owner = $("#candidate-owner");
 
         if (status) {
           status.textContent = "이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.";
@@ -6696,6 +6910,10 @@ function bindEvents() {
 
         if (preview) {
           preview.textContent = "사진 미리보기";
+        }
+
+        if (owner) {
+          owner.value = getDefaultOwnerName();
         }
       });
     }
