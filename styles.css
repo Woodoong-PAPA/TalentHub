@@ -1115,7 +1115,7 @@ tr:last-child td {
 }
 
 .screening-list-page .screening-folder-list {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .screening-folder-card {
@@ -1128,6 +1128,12 @@ tr:last-child td {
   color: var(--text);
   background: var(--surface);
   text-align: left;
+}
+
+.screening-list-page .screening-folder-card {
+  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr) minmax(180px, 0.8fr) minmax(140px, 0.6fr);
+  align-items: center;
+  column-gap: 16px;
 }
 
 .screening-folder-card:hover,
@@ -1205,33 +1211,72 @@ tr:last-child td {
   white-space: pre-line;
 }
 
-.screening-access-grid {
+.screening-access-picker {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.screening-access-selected,
+.screening-access-results {
+  display: grid;
   gap: 8px;
 }
 
-.screening-access-item {
-  justify-content: flex-start;
-  min-height: 56px;
+.screening-access-chip,
+.screening-access-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
 }
 
-.screening-access-item span {
+.screening-access-chip {
+  background: var(--surface-soft);
+}
+
+.screening-access-result {
+  width: 100%;
+  color: var(--text);
+  text-align: left;
+}
+
+.screening-access-result:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.screening-access-chip span,
+.screening-access-result span {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.screening-access-item strong,
-.screening-access-item small {
+.screening-access-chip strong,
+.screening-access-chip small,
+.screening-access-result strong,
+.screening-access-result small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.screening-access-item small {
+.screening-access-chip small,
+.screening-access-result small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.screening-access-chip em,
+.screening-access-result em {
+  color: var(--blue-700);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .screening-table {
@@ -2795,6 +2840,13 @@ tr:last-child td {
 
   .screening-folder-hero {
     flex-direction: column;
+  }
+
+  .screening-list-page .screening-folder-card,
+  .screening-access-chip,
+  .screening-access-result {
+    grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .screening-folder-side {

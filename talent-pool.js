@@ -2861,21 +2861,65 @@ function activeSearchFirmOptions(selectedId = "") {
   `;
 }
 
-function renderScreeningAccessOptions(folder = null) {
-  const selectedIds = new Set(folder?.accessMemberIds || [getCurrentMember()?.id].filter(Boolean));
-  const members = state.members.filter((member) => member.status === "active");
+function getActiveScreeningAccessMembers() {
+  return state.members
+    .filter((member) => member.status === "active")
+    .sort((a, b) => {
+      const roleOrder = MEMBER_ROLE_ORDER.indexOf(a.role) - MEMBER_ROLE_ORDER.indexOf(b.role);
+      return roleOrder || a.name.localeCompare(b.name, "ko");
+    });
+}
+
+function screeningAccessMemberSearchText(member) {
+  return [
+    member.name,
+    member.email,
+    getRoleLabel(member.role),
+    member.department,
+    member.position
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function renderScreeningAccessMemberChip(member, locked = false) {
+  if (!member) {
+    return "";
+  }
 
   return `
-    <div class="screening-access-grid">
-      ${members.map((member) => `
-        <label class="permission-toggle screening-access-item">
-          <input type="checkbox" name="accessMemberIds" value="${escapeHtml(member.id)}" ${selectedIds.has(member.id) ? "checked" : ""} ${member.id === folder?.createdById ? "disabled checked" : ""} />
-          <span>
-            <strong>${escapeHtml(member.name)}</strong>
-            <small>${escapeHtml(getRoleLabel(member.role))} · ${escapeHtml(member.email || "-")}</small>
-          </span>
-        </label>
-      `).join("")}
+    <div class="screening-access-chip" data-screening-access-member="${escapeHtml(member.id)}">
+      <input type="hidden" name="accessMemberIds" value="${escapeHtml(member.id)}" />
+      <span>
+        <strong>${escapeHtml(member.name)}</strong>
+        <small>${escapeHtml(getRoleLabel(member.role))} · ${escapeHtml(member.email || "-")}</small>
+      </span>
+      ${locked
+        ? `<em>생성자</em>`
+        : `<button class="ghost-button compact-button" type="button" data-remove-screening-access-member="${escapeHtml(member.id)}">삭제</button>`}
+    </div>
+  `;
+}
+
+function renderScreeningAccessPicker(folder = null) {
+  const creatorId = folder?.createdById || getCurrentMember()?.id || "";
+  const selectedIds = [...new Set([creatorId, ...(folder?.accessMemberIds || [])].filter(Boolean))];
+  const selectedMembers = selectedIds
+    .map((id) => state.members.find((member) => member.id === id))
+    .filter(Boolean);
+
+  return `
+    <div class="screening-access-picker" data-screening-access-picker>
+      <div class="screening-access-selected" data-screening-access-selected>
+        ${selectedMembers.map((member) => renderScreeningAccessMemberChip(member, member.id === creatorId)).join("")}
+      </div>
+      <div class="screening-access-search">
+        <input class="control-input" type="search" data-screening-access-search placeholder="회원 이름, 이메일, 권한으로 검색" autocomplete="off" />
+      </div>
+      <div class="screening-access-results" data-screening-access-results>
+        <span class="form-help">검색어를 입력하면 추가 가능한 회원이 표시됩니다.</span>
+      </div>
     </div>
   `;
 }
@@ -2926,7 +2970,7 @@ function renderPositionCreateModal() {
               </div>
               <div class="field full">
                 <label>접근 가능 회원</label>
-                ${renderScreeningAccessOptions()}
+                ${renderScreeningAccessPicker()}
               </div>
             </div>
             <div class="form-actions">
@@ -2980,7 +3024,7 @@ function renderFolderAccessEditor(folder) {
         <h4>포지션 접근 회원</h4>
         <button class="soft-button compact-button" type="submit">접근 권한 저장</button>
       </div>
-      ${renderScreeningAccessOptions(folder)}
+      ${renderScreeningAccessPicker(folder)}
     </form>
   `;
 }
@@ -7043,10 +7087,86 @@ function updateDashboardFilters() {
   renderDashboard();
 }
 
-function getCheckedValues(form, name) {
-  return [...form.querySelectorAll(`input[name="${name}"]:checked`)]
-    .map((input) => input.value)
+function getFormValues(form, name) {
+  return [...new FormData(form).getAll(name)]
+    .map((value) => value.toString().trim())
     .filter(Boolean);
+}
+
+function getSelectedScreeningAccessIds(picker) {
+  return new Set(
+    [...picker.querySelectorAll('input[name="accessMemberIds"]')]
+      .map((input) => input.value)
+      .filter(Boolean)
+  );
+}
+
+function updateScreeningAccessResults(searchInput) {
+  const picker = searchInput.closest("[data-screening-access-picker]");
+  const results = picker?.querySelector("[data-screening-access-results]");
+
+  if (!picker || !results) {
+    return;
+  }
+
+  const query = searchInput.value.trim().toLowerCase();
+
+  if (!query) {
+    results.innerHTML = `<span class="form-help">검색어를 입력하면 추가 가능한 회원이 표시됩니다.</span>`;
+    return;
+  }
+
+  const selectedIds = getSelectedScreeningAccessIds(picker);
+  const members = getActiveScreeningAccessMembers()
+    .filter((member) => !selectedIds.has(member.id))
+    .filter((member) => screeningAccessMemberSearchText(member).includes(query))
+    .slice(0, 8);
+
+  if (!members.length) {
+    results.innerHTML = `<span class="form-help">추가 가능한 회원이 없습니다.</span>`;
+    return;
+  }
+
+  results.innerHTML = members.map((member) => `
+    <button class="screening-access-result" type="button" data-add-screening-access-member="${escapeHtml(member.id)}">
+      <span>
+        <strong>${escapeHtml(member.name)}</strong>
+        <small>${escapeHtml(getRoleLabel(member.role))} · ${escapeHtml(member.email || "-")}</small>
+      </span>
+      <em>추가</em>
+    </button>
+  `).join("");
+}
+
+function addScreeningAccessMember(button) {
+  const member = state.members.find((item) => item.id === button.dataset.addScreeningAccessMember && item.status === "active");
+  const picker = button.closest("[data-screening-access-picker]");
+  const selected = picker?.querySelector("[data-screening-access-selected]");
+  const searchInput = picker?.querySelector("[data-screening-access-search]");
+
+  if (!member || !picker || !selected || getSelectedScreeningAccessIds(picker).has(member.id)) {
+    return;
+  }
+
+  selected.insertAdjacentHTML("beforeend", renderScreeningAccessMemberChip(member));
+
+  if (searchInput) {
+    searchInput.value = "";
+    updateScreeningAccessResults(searchInput);
+    searchInput.focus();
+  }
+}
+
+function removeScreeningAccessMember(button) {
+  const picker = button.closest("[data-screening-access-picker]");
+  const chip = button.closest("[data-screening-access-member]");
+  const searchInput = picker?.querySelector("[data-screening-access-search]");
+
+  chip?.remove();
+
+  if (searchInput) {
+    updateScreeningAccessResults(searchInput);
+  }
 }
 
 async function attachmentFromFile(file) {
@@ -7070,7 +7190,7 @@ async function createScreeningFolder(form) {
 
   const currentMember = getCurrentMember();
   const jdFile = form.elements.jdFile?.files?.[0];
-  const accessMemberIds = [...new Set([currentMember.id, ...getCheckedValues(form, "accessMemberIds")])];
+  const accessMemberIds = [...new Set([currentMember.id, ...getFormValues(form, "accessMemberIds")])];
   const title = getFormText(form, "title") || getFormText(form, "positionName") || "신규 포지션";
   const folder = normalizeScreeningFolder({
     id: createId("screening-folder"),
@@ -7201,7 +7321,7 @@ function saveScreeningAccess(form) {
     return;
   }
 
-  folder.accessMemberIds = [...new Set([folder.createdById, ...getCheckedValues(form, "accessMemberIds")].filter(Boolean))];
+  folder.accessMemberIds = [...new Set([folder.createdById, ...getFormValues(form, "accessMemberIds")].filter(Boolean))];
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
   addAuditLog("Screening 접근 권한 수정", folder.title, "포지션 접근 회원 변경");
@@ -7971,6 +8091,18 @@ function bindEvents() {
       return;
     }
 
+    const addAccessMemberButton = event.target.closest("[data-add-screening-access-member]");
+    if (addAccessMemberButton) {
+      addScreeningAccessMember(addAccessMemberButton);
+      return;
+    }
+
+    const removeAccessMemberButton = event.target.closest("[data-remove-screening-access-member]");
+    if (removeAccessMemberButton) {
+      removeScreeningAccessMember(removeAccessMemberButton);
+      return;
+    }
+
     const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
     if (refreshTrendingButton) {
       const mode = refreshTrendingButton.dataset.refreshTrending;
@@ -8340,6 +8472,10 @@ function bindEvents() {
 
     if (event.target.id === "edit-birth-year") {
       updateAgeOutput("#edit-birth-year", "#edit-age");
+    }
+
+    if (event.target.matches("[data-screening-access-search]")) {
+      updateScreeningAccessResults(event.target);
     }
   });
 
