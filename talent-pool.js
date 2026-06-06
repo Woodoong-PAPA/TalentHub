@@ -69,7 +69,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
 const TEMP_PASSWORD = "Temp1234!";
 const DEFAULT_TRENDING_MAIL_SETTINGS = {
   enabled: false,
-  sendTime: "07:30",
+  sendTime: "07:00",
   timezone: "Asia/Seoul",
   recipients: [],
   subjectPrefix: "[TalentHub] Today's Talent",

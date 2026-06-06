@@ -1,6 +1,6 @@
 const DEFAULT_SETTINGS = {
   enabled: false,
-  sendTime: "07:30",
+  sendTime: "07:00",
   timezone: "Asia/Seoul",
   recipients: [],
   subjectPrefix: "[TalentHub] Today's Talent",

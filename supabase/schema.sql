@@ -109,7 +109,7 @@ create index if not exists trending_people_people_gin_idx on public.trending_peo
 create table if not exists public.trending_mail_settings (
   id text primary key default 'default' check (id = 'default'),
   enabled boolean not null default false,
-  send_time text not null default '07:30'
+  send_time text not null default '07:00'
     check (send_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
   timezone text not null default 'Asia/Seoul',
   recipients jsonb not null default '[]'::jsonb,
@@ -324,13 +324,13 @@ insert into public.trending_mail_settings (
 values (
   'default',
   false,
-  '07:30',
+  '07:00',
   'Asia/Seoul',
   '[]'::jsonb,
   '[TalentHub] Today''s Talent',
   jsonb_build_object(
     'enabled', false,
-    'sendTime', '07:30',
+    'sendTime', '07:00',
     'timezone', 'Asia/Seoul',
     'recipients', jsonb_build_array(),
     'subjectPrefix', '[TalentHub] Today''s Talent'

@@ -1,0 +1,48 @@
+name: Today's Talent Daily Jobs
+
+on:
+  schedule:
+    # 06:00 KST. Generate the previous day's Today's Talent report.
+    - cron: "0 21 * * *"
+    # 07:00 KST. Send the generated report according to saved mail settings.
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Job to run"
+        required: true
+        default: "both"
+        type: choice
+        options:
+          - both
+          - generate
+          - mail
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    env:
+      PRIMARY_APP_ORIGIN: https://talentpool-dx.com
+      FALLBACK_APP_ORIGIN: https://samsung-talent-pool-console.vercel.app
+    steps:
+      - name: Generate Today's Talent report
+        if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'both' || github.event.inputs.action == 'generate')) || github.event.schedule == '0 21 * * *' }}
+        run: |
+          for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
+            if curl --fail --silent --show-error --retry 2 --retry-delay 20 \
+              "$origin/api/trending-people-cron"; then
+              exit 0
+            fi
+          done
+          exit 1
+
+      - name: Send Today's Talent mail
+        if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'both' || github.event.inputs.action == 'mail')) || github.event.schedule == '0 22 * * *' }}
+        run: |
+          for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
+            if curl --fail --silent --show-error --retry 2 --retry-delay 20 \
+              "$origin/api/trending-mail-cron"; then
+              exit 0
+            fi
+          done
+          exit 1

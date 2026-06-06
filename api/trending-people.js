@@ -1702,14 +1702,15 @@ module.exports = async function trendingPeople(request, response) {
     const targetDate = getTargetDate(request.url);
     const shouldForce = forceRefresh(request.url);
     const cached = shouldForce ? null : await loadCachedReport(targetDate);
-    const sourceReport = cached || await generateReport(targetDate);
+    const usedCached = Boolean(cached && Array.isArray(cached.people) && cached.people.length);
+    const sourceReport = usedCached ? cached : await generateReport(targetDate);
     let report = await resolveReportNewsLinks(sourceReport);
 
-    if (cached && reportNeedsProfileRepair(report)) {
+    if (usedCached && reportNeedsProfileRepair(report)) {
       report = await repairReportProfiles(report);
     }
 
-    if (cached && report !== sourceReport) {
+    if (usedCached && report !== sourceReport) {
       await saveReport(report).catch((saveError) => {
         console.warn("Trending people report migration save failed.", saveError.message);
       });
@@ -1717,7 +1718,7 @@ module.exports = async function trendingPeople(request, response) {
 
     sendJson(response, 200, {
       ok: true,
-      cached: Boolean(cached),
+      cached: usedCached,
       report
     });
   } catch (error) {

@@ -31,12 +31,12 @@
   ],
   "crons": [
     {
-      "path": "/api/trending-people",
+      "path": "/api/trending-people-cron",
       "schedule": "0 21 * * *"
     },
     {
       "path": "/api/trending-mail-cron",
-      "schedule": "30 22 * * *"
+      "schedule": "0 22 * * *"
     }
   ],
   "routes": [
@@ -51,6 +51,10 @@
     {
       "src": "/api/policy-chat",
       "dest": "/api/policy-chat.js"
+    },
+    {
+      "src": "/api/trending-people-cron",
+      "dest": "/api/trending-people.js"
     },
     {
       "src": "/api/trending-people",
