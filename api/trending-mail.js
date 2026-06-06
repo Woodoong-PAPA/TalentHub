@@ -455,6 +455,95 @@ function formatNewsLinkLabel(link) {
   return `[${source}] ${title}`;
 }
 
+function cleanArticleSummary(value, source = "") {
+  return cleanNewsTitle(value, source)
+    .replace(/^근거\s*기사\s*핵심\s*[:：]?\s*/i, "")
+    .replace(/^\[[^\]]+\]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function fallbackReasonFromLink(link) {
+  if (!link) {
+    return "";
+  }
+
+  const snippet = cleanArticleSummary(link.snippet || link.description || "", link.source);
+
+  if (snippet) {
+    return snippet.length > 120 ? `${snippet.slice(0, 117).trim()}...` : snippet;
+  }
+
+  return cleanArticleSummary(link.title || "", link.source);
+}
+
+function splitReasonSentences(value) {
+  const text = normalizeReasonText(value);
+
+  if (!text) {
+    return [];
+  }
+
+  const parts = text
+    .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
+    .map(normalizeReasonText)
+    .filter(Boolean);
+
+  return parts.length ? parts : [text];
+}
+
+function asDisplaySentence(value) {
+  return normalizeReasonText(value);
+}
+
+function collectReasonLinks(reasons) {
+  return (reasons || [])
+    .filter((reason) => typeof reason === "object")
+    .flatMap((reason) => reason.links || [])
+    .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
+    .slice(0, 1);
+}
+
+function trendingReasonLines(reasons) {
+  const lines = [];
+  const links = collectReasonLinks(reasons);
+
+  (reasons || []).forEach((reason) => {
+    const rawText = typeof reason === "object" ? reason.text : reason;
+    const link = typeof reason === "object" ? (reason.links || []).find((item) => item.url) : null;
+    const cleanedRaw = normalizeReasonText(rawText);
+    const cleanedTitle = normalizeReasonText(cleanNewsTitle(link?.title || "", link?.source || ""));
+    const displayText = (
+      /^근거\s*기사\s*핵심\s*[:：]?/i.test(String(rawText || "")) ||
+      (cleanedTitle && cleanedRaw === cleanedTitle && (link?.snippet || link?.description))
+    )
+      ? fallbackReasonFromLink(link) || rawText
+      : rawText;
+
+    splitReasonSentences(displayText).forEach((line) => {
+      if (line && !lines.includes(line)) {
+        lines.push(asDisplaySentence(line));
+      }
+    });
+  });
+
+  const link = links[0];
+
+  if (!lines.length && link?.title) {
+    lines.push(asDisplaySentence(fallbackReasonFromLink(link)));
+  }
+
+  if (lines.length === 1) {
+    const fallback = fallbackReasonFromLink(link);
+
+    if (fallback && fallback !== lines[0]) {
+      lines.push(asDisplaySentence(fallback));
+    }
+  }
+
+  return lines.slice(0, 2);
+}
+
 function buildReportText(report) {
   return [
     `Today's Talent 리포트 (${report.targetDate || report.reportDate})`,
@@ -468,13 +557,13 @@ function buildReportText(report) {
       "핵심 성과/실적",
       listItems(person.achievements || []),
       "Top5 선정 사유",
-      listItems((person.selectionReasons || []).map((reason) => normalizeReasonText(typeof reason === "string" ? reason : reason.text)).filter(Boolean))
+      listItems(trendingReasonLines(person.selectionReasons || []))
     ].join("\n")).join("\n\n")
   ].join("\n");
 }
 
 function renderSourceLinks(reason) {
-  const links = (reason.links || []).filter((link) => link.url).slice(0, 1);
+  const links = (reason?.links || []).filter((link) => link.url).slice(0, 1);
 
   if (!links.length) {
     return "";
@@ -489,6 +578,10 @@ function renderSourceLinks(reason) {
       `).join("")}
     </div>
   `;
+}
+
+function renderReasonSourceLinks(reasons) {
+  return renderSourceLinks({ links: collectReasonLinks(reasons) });
 }
 
 function renderMailLineList(items) {
@@ -528,26 +621,20 @@ function renderMailDashList(items) {
 }
 
 function renderMailReasons(reasons) {
-  const blocks = (reasons || [])
-    .map((reason) => ({
-      reason,
-      text: normalizeReasonText(typeof reason === "string" ? reason : reason.text)
-    }))
-    .filter((item) => item.text)
-    .slice(0, 2);
+  const lines = trendingReasonLines(reasons);
 
-  if (!blocks.length) {
+  if (!lines.length) {
     return `<p style="margin:0;color:#8b95a1;font-size:13px">정보 없음</p>`;
   }
 
   return `
     <div>
-      ${blocks.map(({ reason, text }) => `
+      ${lines.map((text) => `
         <div style="border-left:3px solid #3182f6;margin:0 0 12px;padding-left:10px">
           <p style="margin:0;color:#191f28;font-size:14px;line-height:1.65;word-break:break-word">${escapeHtml(text)}</p>
-          ${typeof reason === "object" ? renderSourceLinks(reason) : ""}
         </div>
       `).join("")}
+      ${renderReasonSourceLinks(reasons)}
     </div>
   `;
 }
