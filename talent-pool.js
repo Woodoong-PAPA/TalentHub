@@ -951,10 +951,36 @@ function normalizeScreeningApplicant(applicant = {}) {
   };
 }
 
-function normalizeScreeningFolder(folder = {}) {
-  const accessMemberIds = Array.isArray(folder.accessMemberIds)
-    ? folder.accessMemberIds.map((id) => String(id || "").trim()).filter(Boolean)
+function normalizeIdList(value) {
+  return Array.isArray(value)
+    ? value.map((id) => String(id || "").trim()).filter(Boolean)
     : [];
+}
+
+function inferMemberIdsByRole(ids, roles) {
+  try {
+    return ids.filter((id) => roles.includes(state.members.find((member) => member.id === id)?.role));
+  } catch (error) {
+    return [];
+  }
+}
+
+function normalizeScreeningFolder(folder = {}) {
+  const accessMemberIds = normalizeIdList(folder.accessMemberIds);
+  const hasReceptionMemberIds = Object.prototype.hasOwnProperty.call(folder, "receptionMemberIds") ||
+    Object.prototype.hasOwnProperty.call(folder.stageAccess || {}, "receptionMemberIds") ||
+    Object.prototype.hasOwnProperty.call(folder.stageAccess || {}, "reception");
+  const hasSecondScreeningMemberIds = Object.prototype.hasOwnProperty.call(folder, "secondScreeningMemberIds") ||
+    Object.prototype.hasOwnProperty.call(folder.stageAccess || {}, "secondScreeningMemberIds") ||
+    Object.prototype.hasOwnProperty.call(folder.stageAccess || {}, "second");
+  const rawReceptionMemberIds = normalizeIdList(folder.receptionMemberIds || folder.stageAccess?.receptionMemberIds || folder.stageAccess?.reception);
+  const rawSecondScreeningMemberIds = normalizeIdList(folder.secondScreeningMemberIds || folder.stageAccess?.secondScreeningMemberIds || folder.stageAccess?.second);
+  const receptionMemberIds = hasReceptionMemberIds
+    ? rawReceptionMemberIds
+    : inferMemberIdsByRole(accessMemberIds, ["search_firm"]);
+  const secondScreeningMemberIds = hasSecondScreeningMemberIds
+    ? rawSecondScreeningMemberIds
+    : inferMemberIdsByRole(accessMemberIds, ["hiring_manager"]);
   const createdById = String(folder.createdById || "").trim();
 
   if (createdById && !accessMemberIds.includes(createdById)) {
@@ -974,6 +1000,8 @@ function normalizeScreeningFolder(folder = {}) {
     createdAt: folder.createdAt || getTodayDate(),
     updatedAt: folder.updatedAt || folder.createdAt || getTodayDate(),
     accessMemberIds,
+    receptionMemberIds,
+    secondScreeningMemberIds,
     interviewPanel: {
       names: String(folder.interviewPanel?.names || "").trim(),
       emails: String(folder.interviewPanel?.emails || "").trim(),
@@ -1313,15 +1341,39 @@ function canAccessScreeningFolder(folder, member = getCurrentMember()) {
     return normalizeBusinessUnit(folder.businessUnit) === getMemberBusinessUnit(member);
   }
 
+  if (member.role === "search_firm") {
+    return (folder.receptionMemberIds || []).includes(member.id);
+  }
+
+  if (member.role === "hiring_manager") {
+    return (folder.secondScreeningMemberIds || []).includes(member.id);
+  }
+
   return folder.createdById === member.id || (folder.accessMemberIds || []).includes(member.id);
 }
 
+function canAccessScreeningStep(folder, step, member = getCurrentMember()) {
+  if (!canAccessScreeningFolder(folder, member)) {
+    return false;
+  }
+
+  if (member?.role === "search_firm") {
+    return step === "reception" && (folder.receptionMemberIds || []).includes(member.id);
+  }
+
+  if (member?.role === "hiring_manager") {
+    return step === "second" && (folder.secondScreeningMemberIds || []).includes(member.id);
+  }
+
+  return true;
+}
+
 function canRunFirstScreening(folder, member = getCurrentMember()) {
-  return canAccessScreeningFolder(folder, member) && isRecruitingRole(member);
+  return canAccessScreeningStep(folder, "first", member) && isRecruitingRole(member);
 }
 
 function canRunSecondScreening(folder, member = getCurrentMember()) {
-  return canAccessScreeningFolder(folder, member) && isHiringManagerRole(member);
+  return canAccessScreeningStep(folder, "second", member) && isHiringManagerRole(member);
 }
 
 function canManageScreeningContact(folder, applicant, member = getCurrentMember()) {
@@ -1343,6 +1395,10 @@ function canViewScreeningApplicant(applicant, member = getCurrentMember()) {
       (applicant.searchFirmMemberId === member.id || applicant.registeredById === member.id);
   }
 
+  if (member.role === "hiring_manager") {
+    return ["first_pass", "second_draft", "second_reject"].includes(applicant.stage);
+  }
+
   return true;
 }
 
@@ -1357,6 +1413,13 @@ function canSubmitScreeningApplicant(folder, applicant, member = getCurrentMembe
   }
 
   return isRecruitingRole(member);
+}
+
+function canRegisterScreeningApplicant(folder, member = getCurrentMember()) {
+  return Boolean(
+    canAccessScreeningStep(folder, "reception", member) &&
+    (isSearchFirmRole(member) || isRecruitingRole(member) || canManageScreeningFolder(folder, member))
+  );
 }
 
 function getDefaultView(member = getCurrentMember()) {
@@ -3321,9 +3384,15 @@ function activeSearchFirmOptions(selectedId = "") {
   `;
 }
 
-function getActiveScreeningAccessMembers() {
+function getActiveScreeningAccessMembers(roleFilter = "") {
+  const roles = String(roleFilter || "")
+    .split(",")
+    .map((role) => role.trim())
+    .filter(Boolean);
+
   return state.members
     .filter((member) => member.status === "active")
+    .filter((member) => !roles.length || roles.includes(member.role))
     .sort((a, b) => {
       const roleOrder = MEMBER_ROLE_ORDER.indexOf(a.role) - MEMBER_ROLE_ORDER.indexOf(b.role);
       return roleOrder || a.name.localeCompare(b.name, "ko");
@@ -3343,14 +3412,14 @@ function screeningAccessMemberSearchText(member) {
     .toLowerCase();
 }
 
-function renderScreeningAccessMemberChip(member, locked = false) {
+function renderScreeningAccessMemberChip(member, locked = false, fieldName = "accessMemberIds") {
   if (!member) {
     return "";
   }
 
   return `
     <div class="screening-access-chip" data-screening-access-member="${escapeHtml(member.id)}">
-      <input type="hidden" name="accessMemberIds" value="${escapeHtml(member.id)}" />
+      <input type="hidden" name="${escapeHtml(fieldName)}" value="${escapeHtml(member.id)}" />
       <span>
         <strong>${escapeHtml(member.name)}</strong>
         <small>${escapeHtml(getRoleLabel(member.role))} · ${escapeHtml(member.email || "-")}</small>
@@ -3362,23 +3431,30 @@ function renderScreeningAccessMemberChip(member, locked = false) {
   `;
 }
 
-function renderScreeningAccessPicker(folder = null) {
+function renderScreeningAccessPicker(folder = null, options = {}) {
+  const fieldName = options.fieldName || "accessMemberIds";
+  const roleFilter = options.roleFilter || "";
   const creatorId = folder?.createdById || getCurrentMember()?.id || "";
-  const selectedIds = [...new Set([creatorId, ...(folder?.accessMemberIds || [])].filter(Boolean))];
+  const baseSelectedIds = fieldName === "accessMemberIds"
+    ? [creatorId, ...(folder?.accessMemberIds || [])]
+    : folder?.[fieldName] || [];
+  const selectedIds = [...new Set(baseSelectedIds.filter(Boolean))];
   const selectedMembers = selectedIds
     .map((id) => state.members.find((member) => member.id === id))
     .filter(Boolean);
+  const placeholder = options.placeholder || "회원 이름, 이메일, 권한으로 검색";
+  const helpText = options.helpText || "검색어를 입력하면 추가 가능한 회원이 표시됩니다.";
 
   return `
-    <div class="screening-access-picker" data-screening-access-picker>
+    <div class="screening-access-picker" data-screening-access-picker data-screening-access-field-name="${escapeHtml(fieldName)}" data-screening-access-role-filter="${escapeHtml(roleFilter)}">
       <div class="screening-access-selected" data-screening-access-selected>
-        ${selectedMembers.map((member) => renderScreeningAccessMemberChip(member, member.id === creatorId)).join("")}
+        ${selectedMembers.map((member) => renderScreeningAccessMemberChip(member, fieldName === "accessMemberIds" && member.id === creatorId, fieldName)).join("")}
       </div>
       <div class="screening-access-search">
-        <input class="control-input" type="search" data-screening-access-search placeholder="회원 이름, 이메일, 권한으로 검색" autocomplete="off" />
+        <input class="control-input" type="search" data-screening-access-search placeholder="${escapeHtml(placeholder)}" autocomplete="off" />
       </div>
       <div class="screening-access-results" data-screening-access-results>
-        <span class="form-help">검색어를 입력하면 추가 가능한 회원이 표시됩니다.</span>
+        <span class="form-help">${escapeHtml(helpText)}</span>
       </div>
     </div>
   `;
@@ -3429,8 +3505,28 @@ function renderPositionCreateModal() {
                 <input class="control-input" id="screening-folder-jd-file" name="jdFile" type="file" />
               </div>
               <div class="field full">
-                <label>접근 가능 회원</label>
-                ${renderScreeningAccessPicker()}
+                <label>기본 접근 회원</label>
+                ${renderScreeningAccessPicker(null, {
+                  helpText: "채용 담당자, 운영진 등 포지션 전반을 함께 볼 회원을 추가합니다."
+                })}
+              </div>
+              <div class="field full">
+                <label>지원자 접수 권한</label>
+                ${renderScreeningAccessPicker(null, {
+                  fieldName: "receptionMemberIds",
+                  roleFilter: "search_firm",
+                  placeholder: "서치펌 담당자 이름, 이메일 검색",
+                  helpText: "서치펌 담당자만 추가할 수 있으며, 이 회원은 지원자 접수 단계만 조회합니다."
+                })}
+              </div>
+              <div class="field full">
+                <label>2차 스크리닝 권한</label>
+                ${renderScreeningAccessPicker(null, {
+                  fieldName: "secondScreeningMemberIds",
+                  roleFilter: "hiring_manager",
+                  placeholder: "현업 담당자 이름, 이메일 검색",
+                  helpText: "현업 담당자만 추가할 수 있으며, 이 회원은 2차 스크리닝 단계만 조회합니다."
+                })}
               </div>
             </div>
             <div class="form-actions">
@@ -3600,17 +3696,43 @@ function renderScreeningAccessModal(folder) {
       <section class="trending-modal screening-access-modal" role="dialog" aria-modal="true" aria-labelledby="screening-access-modal-title">
         <div class="trending-modal-header">
           <div>
-            <strong id="screening-access-modal-title">포지션 접근 회원</strong>
-            <span>검색으로 회원을 추가하고, 선택된 회원만 이 포지션에 접근하도록 저장합니다.</span>
+            <strong id="screening-access-modal-title">권한 관리</strong>
+            <span>포지션 기본 접근 권한과 단계별 조회 권한을 분리해 관리합니다.</span>
           </div>
           <button class="ghost-button compact-button" type="button" data-close-screening-access-modal>닫기</button>
         </div>
         <div class="trending-modal-body">
           <form class="screening-access-panel" data-screening-access-form="${escapeHtml(folder.id)}">
-            ${renderScreeningAccessPicker(folder)}
+            <section class="screening-access-section">
+              <strong>기본 접근 회원</strong>
+              <span>채용 담당자, 운영진 등 포지션 전반을 함께 볼 회원입니다.</span>
+              ${renderScreeningAccessPicker(folder, {
+                helpText: "회원 이름, 이메일, 권한으로 검색해 기본 접근 회원을 추가합니다."
+              })}
+            </section>
+            <section class="screening-access-section">
+              <strong>지원자 접수 권한</strong>
+              <span>서치펌 담당자만 지정합니다. 지정된 회원은 지원자 접수 단계만 조회할 수 있습니다.</span>
+              ${renderScreeningAccessPicker(folder, {
+                fieldName: "receptionMemberIds",
+                roleFilter: "search_firm",
+                placeholder: "서치펌 담당자 이름, 이메일 검색",
+                helpText: "서치펌 담당자만 검색 결과에 표시됩니다."
+              })}
+            </section>
+            <section class="screening-access-section">
+              <strong>2차 스크리닝 권한</strong>
+              <span>현업 담당자만 지정합니다. 지정된 회원은 2차 스크리닝 단계만 조회할 수 있습니다.</span>
+              ${renderScreeningAccessPicker(folder, {
+                fieldName: "secondScreeningMemberIds",
+                roleFilter: "hiring_manager",
+                placeholder: "현업 담당자 이름, 이메일 검색",
+                helpText: "현업 담당자만 검색 결과에 표시됩니다."
+              })}
+            </section>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-access-modal>취소</button>
-              <button class="primary-button" type="submit">접근 권한 저장</button>
+              <button class="primary-button" type="submit">권한 저장</button>
             </div>
           </form>
         </div>
@@ -4081,14 +4203,27 @@ function screeningStepCount(folder, step) {
   return getScreeningStepApplicants(folder, step).length;
 }
 
-function renderScreeningStepNav(folder) {
-  const currentStep = SCREENING_DETAIL_STEPS.some((step) => step.id === state.screeningDetailStep)
+function getVisibleScreeningDetailSteps(folder, member = getCurrentMember()) {
+  return SCREENING_DETAIL_STEPS.filter((step) => canAccessScreeningStep(folder, step.id, member));
+}
+
+function getCurrentScreeningDetailStep(folder) {
+  const visibleSteps = getVisibleScreeningDetailSteps(folder);
+  const currentStep = visibleSteps.some((step) => step.id === state.screeningDetailStep)
     ? state.screeningDetailStep
-    : "reception";
+    : visibleSteps[0]?.id || "reception";
+
+  state.screeningDetailStep = currentStep;
+  return currentStep;
+}
+
+function renderScreeningStepNav(folder) {
+  const visibleSteps = getVisibleScreeningDetailSteps(folder);
+  const currentStep = getCurrentScreeningDetailStep(folder);
 
   return `
     <nav class="screening-step-nav" aria-label="스크리닝 단계">
-      ${SCREENING_DETAIL_STEPS.map((step) => `
+      ${visibleSteps.map((step) => `
         <button class="${step.id === currentStep ? "is-active" : ""}" type="button" data-screening-detail-step="${step.id}">
           <span>${escapeHtml(step.label)}</span>
           <strong>${screeningStepCount(folder, step.id)}명</strong>
@@ -4164,6 +4299,7 @@ function renderApplicantList(folder, applicants, emptyText) {
 
 function renderSecondScreeningPanel(folder) {
   const draftApplicants = folder.applicants.filter((applicant) => applicant.stage === "second_draft");
+  const canFinalize = canRunSecondScreening(folder);
 
   return `
     <form class="profile-panel" id="screening-final-pass-form">
@@ -4190,7 +4326,7 @@ function renderSecondScreeningPanel(folder) {
         ${draftApplicants.length ? draftApplicants.map((applicant) => `<span class="status-chip chip-amber">${escapeHtml(applicant.name)}</span>`).join("") : `<span class="muted-text">통과 예정으로 저장된 지원자가 없습니다.</span>`}
       </div>
       <div class="form-actions">
-        <button class="primary-button" type="submit" ${draftApplicants.length ? "" : "disabled"}>최종 통과</button>
+        <button class="primary-button" type="submit" ${draftApplicants.length && canFinalize ? "" : "disabled"}>최종 통과</button>
       </div>
     </form>
   `;
@@ -4215,9 +4351,7 @@ function renderScreeningMailQueue(folder) {
 }
 
 function renderScreeningStepContent(folder) {
-  const step = SCREENING_DETAIL_STEPS.some((item) => item.id === state.screeningDetailStep)
-    ? state.screeningDetailStep
-    : "reception";
+  const step = getCurrentScreeningDetailStep(folder);
 
   if (step === "reception") {
     const applicants = getScreeningStepApplicants(folder, "reception");
@@ -4303,8 +4437,8 @@ function renderScreeningFolderDetail(folder) {
           <div class="panel-actions">
             <button class="ghost-button compact-button" type="button" data-back-screening-list>포지션 리스트</button>
             <button class="ghost-button compact-button" type="button" data-open-screening-jd-modal>JD 보기</button>
-            ${canManageScreeningFolder(folder) ? `<button class="ghost-button compact-button" type="button" data-open-screening-access-modal>접근 회원</button>` : ""}
-            <button class="primary-button compact-button" type="button" data-open-screening-applicant-modal>지원자 등록</button>
+            ${canManageScreeningFolder(folder) ? `<button class="ghost-button compact-button" type="button" data-open-screening-access-modal>권한 관리</button>` : ""}
+            ${canRegisterScreeningApplicant(folder) ? `<button class="primary-button compact-button" type="button" data-open-screening-applicant-modal>지원자 등록</button>` : ""}
           </div>
         </div>
       </section>
@@ -4335,8 +4469,8 @@ function renderScreening() {
     state.screeningPage = "list";
   }
 
-  if (!SCREENING_DETAIL_STEPS.some((step) => step.id === state.screeningDetailStep)) {
-    state.screeningDetailStep = "reception";
+  if (selectedFolder && !canAccessScreeningStep(selectedFolder, state.screeningDetailStep)) {
+    getCurrentScreeningDetailStep(selectedFolder);
   }
 
   if (state.screeningPage === "detail") {
@@ -9114,8 +9248,10 @@ function getFormValues(form, name) {
 }
 
 function getSelectedScreeningAccessIds(picker) {
+  const fieldName = picker?.dataset.screeningAccessFieldName || "accessMemberIds";
+
   return new Set(
-    [...picker.querySelectorAll('input[name="accessMemberIds"]')]
+    [...picker.querySelectorAll(`input[name="${fieldName}"]`)]
       .map((input) => input.value)
       .filter(Boolean)
   );
@@ -9130,6 +9266,7 @@ function updateScreeningAccessResults(searchInput) {
   }
 
   const query = searchInput.value.trim().toLowerCase();
+  const roleFilter = picker.dataset.screeningAccessRoleFilter || "";
 
   if (!query) {
     results.innerHTML = `<span class="form-help">검색어를 입력하면 추가 가능한 회원이 표시됩니다.</span>`;
@@ -9137,7 +9274,7 @@ function updateScreeningAccessResults(searchInput) {
   }
 
   const selectedIds = getSelectedScreeningAccessIds(picker);
-  const members = getActiveScreeningAccessMembers()
+  const members = getActiveScreeningAccessMembers(roleFilter)
     .filter((member) => !selectedIds.has(member.id))
     .filter((member) => screeningAccessMemberSearchText(member).includes(query))
     .slice(0, 8);
@@ -9168,7 +9305,7 @@ function addScreeningAccessMember(button) {
     return;
   }
 
-  selected.insertAdjacentHTML("beforeend", renderScreeningAccessMemberChip(member));
+  selected.insertAdjacentHTML("beforeend", renderScreeningAccessMemberChip(member, false, picker.dataset.screeningAccessFieldName || "accessMemberIds"));
 
   if (searchInput) {
     searchInput.value = "";
@@ -9231,6 +9368,8 @@ async function createScreeningFolder(form) {
   const currentMember = getCurrentMember();
   const jdFile = form.elements.jdFile?.files?.[0];
   const accessMemberIds = [...new Set([currentMember.id, ...getFormValues(form, "accessMemberIds")])];
+  const receptionMemberIds = getFormValues(form, "receptionMemberIds");
+  const secondScreeningMemberIds = getFormValues(form, "secondScreeningMemberIds");
   const title = getFormText(form, "title") || getFormText(form, "positionName") || "신규 포지션";
   const folder = normalizeScreeningFolder({
     id: createId("screening-folder"),
@@ -9245,6 +9384,8 @@ async function createScreeningFolder(form) {
     createdAt: getTodayDate(),
     updatedAt: getTodayDate(),
     accessMemberIds,
+    receptionMemberIds,
+    secondScreeningMemberIds,
     interviewPanel: { names: "", emails: "", availability: "" },
     applicants: []
   });
@@ -9261,7 +9402,7 @@ async function createScreeningFolder(form) {
 async function registerScreeningApplicant(form) {
   const folder = getScreeningFolder(getFormText(form, "folderId"));
 
-  if (!folder || !canAccessScreeningFolder(folder)) {
+  if (!folder || !canRegisterScreeningApplicant(folder)) {
     showToast("지원자를 등록할 수 없는 포지션입니다.");
     return;
   }
@@ -9296,7 +9437,7 @@ async function registerScreeningApplicant(form) {
     phone: getFormText(form, "phone"),
     summary: getFormText(form, "summary"),
     resumeAttachment: await attachmentFromFile(resumeFile),
-    stage: isSearchFirmRole(currentMember) ? "reception" : "registered",
+    stage: "reception",
     createdAt: getTodayDate(),
     updatedAt: getTodayDate()
   });
@@ -9308,14 +9449,12 @@ async function registerScreeningApplicant(form) {
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
   state.screeningApplicantModalOpen = false;
-  if (isSearchFirmRole(currentMember)) {
-    state.screeningDetailStep = "reception";
-  }
+  state.screeningDetailStep = "reception";
   addAuditLog("Screening 지원자 등록", applicant.name, folder.title);
   persistState();
   showToast(isSearchFirmRole(currentMember)
     ? `${applicant.name} 지원자를 접수 저장했습니다. 최종 제출하면 1차 스크리닝으로 이동합니다.`
-    : `${applicant.name} 지원자를 등록했습니다.`);
+    : `${applicant.name} 지원자를 접수 단계에 등록했습니다.`);
   renderScreening();
 }
 
@@ -9513,12 +9652,16 @@ function saveScreeningAccess(form) {
   }
 
   folder.accessMemberIds = [...new Set([folder.createdById, ...getFormValues(form, "accessMemberIds")].filter(Boolean))];
+  folder.receptionMemberIds = getFormValues(form, "receptionMemberIds")
+    .filter((id) => state.members.find((member) => member.id === id)?.role === "search_firm");
+  folder.secondScreeningMemberIds = getFormValues(form, "secondScreeningMemberIds")
+    .filter((id) => state.members.find((member) => member.id === id)?.role === "hiring_manager");
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
   state.screeningAccessModalOpen = false;
-  addAuditLog("Screening 접근 권한 수정", folder.title, "포지션 접근 회원 변경");
+  addAuditLog("Screening 권한 관리", folder.title, "포지션 및 단계별 조회 권한 변경");
   persistState();
-  showToast("포지션 접근 회원을 저장했습니다.");
+  showToast("포지션 권한을 저장했습니다.");
   renderScreening();
 }
 
@@ -10455,7 +10598,15 @@ function bindEvents() {
 
     const screeningStepButton = event.target.closest("[data-screening-detail-step]");
     if (screeningStepButton) {
-      state.screeningDetailStep = screeningStepButton.dataset.screeningDetailStep;
+      const folder = getSelectedScreeningFolder();
+      const requestedStep = screeningStepButton.dataset.screeningDetailStep;
+
+      if (!canAccessScreeningStep(folder, requestedStep)) {
+        showToast("해당 스크리닝 단계 조회 권한이 없습니다.");
+        return;
+      }
+
+      state.screeningDetailStep = requestedStep;
       renderScreening();
       return;
     }

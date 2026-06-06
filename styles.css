@@ -1549,7 +1549,7 @@ tr:last-child td {
 
 .screening-step-nav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
 }
 
@@ -1858,6 +1858,31 @@ tr:last-child td {
 .screening-access-picker {
   display: grid;
   gap: 10px;
+}
+
+.screening-access-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.screening-access-section {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.screening-access-section > strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.screening-access-section > span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .screening-access-selected,
