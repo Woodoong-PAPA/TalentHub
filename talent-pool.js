@@ -528,6 +528,8 @@ const state = {
   selectedCandidateId: "cand-001",
   isEditingCandidate: false,
   editSnapshot: null,
+  detailTab: "profile",
+  editingInterviewId: "",
   screeningFolders: structuredClone(DEFAULT_SCREENING_FOLDERS),
   selectedScreeningFolderId: "screening-folder-001",
   screeningPage: "list",
@@ -868,6 +870,7 @@ function normalizeCandidate(candidate) {
     evidence: [],
     applications: [],
     timeline: [],
+    interviews: [],
     visibility: "all",
     ...candidate
   });
@@ -877,8 +880,29 @@ function normalizeCandidate(candidate) {
   normalized.createdAt = inferCreatedAt(normalized);
   normalized.updatedAt = normalized.updatedAt || normalized.createdAt;
   normalized.age = calculateAge(normalized.birthYear);
+  normalized.interviews = Array.isArray(normalized.interviews)
+    ? normalized.interviews.map(normalizeInterviewRecord).filter(Boolean)
+    : [];
 
   return normalized;
+}
+
+function normalizeInterviewRecord(record = {}) {
+  const content = String(record.content || record.text || "").trim();
+
+  if (!content && !record.date && !record.interviewer && !record.nextAction) {
+    return null;
+  }
+
+  return {
+    id: record.id || createId("interview"),
+    date: String(record.date || getTodayDate()).trim(),
+    interviewer: String(record.interviewer || record.actor || "").trim(),
+    method: String(record.method || "").trim(),
+    content,
+    nextAction: String(record.nextAction || "").trim(),
+    updatedAt: record.updatedAt || getTodayDate()
+  };
 }
 
 function normalizeAuditLog(log) {
@@ -2738,6 +2762,9 @@ function setView(view) {
   if (view !== "detail" && state.isEditingCandidate) {
     discardCandidateEditDraft();
   }
+  if (view !== "detail") {
+    state.editingInterviewId = "";
+  }
   syncActiveViewState();
   render();
 
@@ -2786,6 +2813,8 @@ function openCandidateDetail(candidateId) {
   savePoolReturnPosition();
   state.selectedCandidateId = candidate.id;
   state.isEditingCandidate = false;
+  state.detailTab = "profile";
+  state.editingInterviewId = "";
   state.auditLogs.unshift({
     actor: candidate.owner,
     action: "후보자 상세 조회",
@@ -6682,8 +6711,6 @@ function renderDetail() {
       <button class="ghost-button" type="button" data-back-to-pool>목록으로</button>
       ${canManageProfile ? `
         <button class="ghost-button" type="button" data-start-edit>정보 수정</button>
-        <button class="ghost-button" type="button" data-change-status="contacted">접촉 완료</button>
-        <button class="primary-button" type="button" data-change-status="screening">전형 진행</button>
         <button class="ghost-button danger-button" type="button" data-delete-candidate="${candidate.id}">프로필 삭제</button>
       ` : ""}
     `;
@@ -6709,16 +6736,8 @@ function renderDetail() {
 }
 
 function renderDetailHero(candidate) {
-  const primaryEducation = getPrimaryEducation(candidate);
-  const primaryCareer = getPrimaryCareer(candidate);
   const titleLines = [
-    [candidate.company, candidate.role].filter(Boolean).join(", "),
-    primaryCareer
-      ? [primaryCareer.company, primaryCareer.position || primaryCareer.rank, formatPeriod(primaryCareer.start, primaryCareer.end)].filter(Boolean).join(" · ")
-      : "",
-    primaryEducation
-      ? [primaryEducation.school, primaryEducation.major, primaryEducation.degree].filter(Boolean).join(", ")
-      : ""
+    [candidate.company, candidate.role].filter(Boolean).join(", ")
   ].filter(Boolean);
   const linkedin = normalizeExternalUrl(candidate.linkedinUrl);
   const attachment = candidate.resumeAttachment?.dataUrl;
@@ -6731,12 +6750,11 @@ function renderDetailHero(candidate) {
       <div class="detail-hero-body">
         <div class="detail-hero-topline">
           <div>
-            <h3>${escapeHtml(candidate.name)}</h3>
-            <div class="detail-hero-badges">
-              ${getStatusChip(candidate.status)}
-              ${candidate.organization ? `<span class="status-chip chip-violet">${escapeHtml(candidate.organization)}</span>` : ""}
-              <span class="status-chip chip-blue">${escapeHtml(getCandidateVisibilityLabel(candidate.visibility))}</span>
+            <div class="detail-name-row">
+              <h3>${escapeHtml(candidate.name)}</h3>
+              ${candidate.organization ? `<span class="detail-business-unit-chip">${escapeHtml(candidate.organization)}</span>` : ""}
             </div>
+            ${renderDetailStatusControl(candidate)}
           </div>
           <div class="detail-hero-actions">
             ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
@@ -6757,18 +6775,31 @@ function renderDetailHero(candidate) {
   `;
 }
 
+function renderDetailStatusControl(candidate) {
+  if (!canManageCandidateProfile(candidate)) {
+    return `<div class="detail-status-readonly"><span>관리 상태</span><strong>${escapeHtml(STATUS_LABELS[candidate.status] || "-")}</strong></div>`;
+  }
+
+  return `
+    <label class="detail-status-control">
+      <span>관리 상태</span>
+      <select class="control-select compact-select" data-detail-status-select>
+        ${STATUS_ORDER.map((status) => `<option value="${status}" ${candidate.status === status ? "selected" : ""}>${escapeHtml(STATUS_LABELS[status])}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
 function renderDetailTabStrip() {
   const tabs = [
-    ["#detail-profile-section", "주요 프로필"],
-    ["#detail-competency-section", "전문역량"],
-    ["#detail-plan-section", "활용계획"],
-    ["#detail-activity-section", "면담 기록"],
-    ["#detail-application-section", "채용진행"]
+    ["profile", "주요 프로필"],
+    ["interviews", "면담 기록"],
+    ["applications", "채용진행"]
   ];
 
   return `
     <nav class="detail-tab-strip" aria-label="상세 프로필 섹션">
-      ${tabs.map(([href, label], index) => `<a class="${index === 0 ? "is-active" : ""}" href="${href}">${escapeHtml(label)}</a>`).join("")}
+      ${tabs.map(([tab, label]) => `<button class="${state.detailTab === tab ? "is-active" : ""}" type="button" data-detail-tab="${tab}">${escapeHtml(label)}</button>`).join("")}
     </nav>
   `;
 }
@@ -6910,37 +6941,8 @@ function renderOverviewSection(candidate) {
     { label: "이메일 주소", value: candidate.email },
     { label: "휴대폰 번호", value: candidate.phone },
     { label: "링크드인 주소", html: detailLink(candidate.linkedinUrl) },
-    { label: "기타 참고 URL", html: detailLink(candidate.referenceUrl) },
-    {
-      label: "최종 학력",
-      value: getPrimaryEducation(candidate)
-        ? `${getPrimaryEducation(candidate).degree} · ${getPrimaryEducation(candidate).school} · ${getPrimaryEducation(candidate).major}`
-        : "-"
-    },
-    {
-      label: "최근 경력",
-      value: getPrimaryCareer(candidate)
-        ? `${getPrimaryCareer(candidate).company} · ${getPrimaryCareer(candidate).position}`
-        : "-"
-    }
+    { label: "기타 참고 URL", html: detailLink(candidate.referenceUrl) }
   ]);
-}
-
-function renderActivitySection(candidate) {
-  if (!candidate.timeline?.length) {
-    return `<div class="empty-state">등록된 이력이 없습니다.</div>`;
-  }
-
-  return `
-    <div class="timeline">
-      ${candidate.timeline.map((item) => `
-        <article class="activity-item">
-          <strong>${escapeHtml(item.type)} · ${escapeHtml(item.text)}</strong>
-          <span class="activity-meta">${escapeHtml(item.actor)} · ${escapeHtml(item.date)}</span>
-        </article>
-      `).join("")}
-    </div>
-  `;
 }
 
 function renderApplicationsSection(candidate) {
@@ -6962,34 +6964,119 @@ function renderApplicationsSection(candidate) {
   `;
 }
 
-function renderUtilizationPlanSection(candidate) {
-  const applications = candidate.applications || [];
-  const latestApplication = applications[0];
-  const focusText = candidate.skills?.length
-    ? `${candidate.skills.slice(0, 4).join(", ")} 역량 기반 포지션 검토`
-    : "후보자 역량 확인 후 적합 포지션 매칭";
+function renderInterviewSection(candidate) {
+  const interviews = [...(candidate.interviews || [])].sort((a, b) =>
+    dateSortValue(b.date) - dateSortValue(a.date) ||
+    String(b.id).localeCompare(String(a.id))
+  );
+  const canManage = canManageCandidateProfile(candidate);
+  const editingRecord = interviews.find((record) => record.id === state.editingInterviewId) || null;
+  const showForm = canManage && (state.editingInterviewId === "new" || editingRecord);
 
   return `
-    <div class="detail-plan-grid">
-      ${statBox("활용 방향", focusText)}
-      ${statBox("추천 액션", candidate.status === "contacted" ? "후속 면담 및 포지션 제안" : "담당자 검토 후 접촉")}
-      ${statBox("최근 지원", latestApplication ? `${latestApplication.title} · ${latestApplication.stage}` : "등록된 지원 이력 없음")}
-      ${statBox("관리 상태", STATUS_LABELS[candidate.status] || "-")}
+    <div class="interview-section">
+      <div class="interview-toolbar">
+        <div>
+          <strong>면담 내용</strong>
+          <span>${interviews.length}건 등록</span>
+        </div>
+        ${canManage ? `<button class="soft-button" type="button" data-new-interview>면담 내용 신규등록</button>` : ""}
+      </div>
+      ${showForm ? renderInterviewForm(editingRecord) : ""}
+      ${interviews.length ? `
+        <div class="interview-list">
+          ${interviews.map((record) => renderInterviewRecordCard(record, canManage)).join("")}
+        </div>
+      ` : `<div class="empty-state">등록된 면담 기록이 없습니다.</div>`}
     </div>
   `;
 }
 
+function renderInterviewForm(record = null) {
+  const isEdit = Boolean(record?.id);
+
+  return `
+    <form class="interview-form" id="interview-form">
+      <input type="hidden" name="interviewId" value="${inputValue(record?.id || "")}" />
+      <div class="field-grid">
+        <div class="field">
+          <label for="interview-date">면담일</label>
+          <input class="control-input" id="interview-date" name="interviewDate" type="date" value="${inputValue(record?.date || getTodayDate())}" />
+        </div>
+        <div class="field">
+          <label for="interview-interviewer">면담자</label>
+          <input class="control-input" id="interview-interviewer" name="interviewInterviewer" value="${inputValue(record?.interviewer || getCurrentActorName())}" />
+        </div>
+        <div class="field full">
+          <label for="interview-method">면담 방식/주제</label>
+          <input class="control-input" id="interview-method" name="interviewMethod" value="${inputValue(record?.method || "")}" placeholder="예: 전화 면담, 커피챗, 포지션 소개" />
+        </div>
+        <div class="field full">
+          <label for="interview-content">면담 내용</label>
+          <textarea class="control-textarea" id="interview-content" name="interviewContent" placeholder="면담 주요 내용, 후보자 관심사, 검토 포인트 등을 입력">${inputValue(record?.content || "")}</textarea>
+        </div>
+        <div class="field full">
+          <label for="interview-next-action">후속 조치</label>
+          <textarea class="control-textarea compact-textarea" id="interview-next-action" name="interviewNextAction" placeholder="예: JD 공유, 현업 리뷰 요청, 재접촉 예정">${inputValue(record?.nextAction || "")}</textarea>
+        </div>
+      </div>
+      <div class="interview-form-actions">
+        <button class="ghost-button" type="button" data-cancel-interview-edit>취소</button>
+        <button class="primary-button" type="submit">${isEdit ? "수정 저장" : "신규 등록"}</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderInterviewRecordCard(record, canManage) {
+  return `
+    <article class="interview-card">
+      <div class="interview-card-header">
+        <div>
+          <strong>${escapeHtml(record.method || "면담 기록")}</strong>
+          <span>${escapeHtml([record.date, record.interviewer].filter(Boolean).join(" · "))}</span>
+        </div>
+        ${canManage ? `
+          <div class="interview-card-actions">
+            <button class="ghost-button compact-button" type="button" data-edit-interview="${escapeHtml(record.id)}">수정</button>
+            <button class="ghost-button danger-button compact-button" type="button" data-delete-interview="${escapeHtml(record.id)}">삭제</button>
+          </div>
+        ` : ""}
+      </div>
+      <p>${escapeHtml(record.content)}</p>
+      ${record.nextAction ? `<div class="interview-next-action"><span>후속 조치</span><p>${escapeHtml(record.nextAction)}</p></div>` : ""}
+    </article>
+  `;
+}
+
 function renderFullDetailContent(candidate) {
+  if (!["profile", "interviews", "applications"].includes(state.detailTab)) {
+    state.detailTab = "profile";
+  }
+
+  if (state.detailTab === "interviews") {
+    return `
+      <div class="detail-section-stack">
+        ${detailSection("면담 기록", renderInterviewSection(candidate), "", "detail-interview-section")}
+      </div>
+    `;
+  }
+
+  if (state.detailTab === "applications") {
+    return `
+      <div class="detail-section-stack">
+        ${detailSection("채용진행", renderApplicationsSection(candidate), "", "detail-application-section")}
+      </div>
+    `;
+  }
+
   return `
     <div class="detail-section-stack">
       ${detailSection("경력사항", renderCareerTab(candidate), "", "detail-profile-section")}
       ${detailSection("학력사항", renderEducationTab(candidate))}
       ${detailSection("인적사항", renderOverviewSection(candidate))}
       ${detailSection("주요 역량/성과", renderCompetencySection(candidate), "is-primary", "detail-competency-section")}
-      ${detailSection("활용계획", renderUtilizationPlanSection(candidate), "", "detail-plan-section")}
       ${detailSection("첨부파일", renderResumeAttachmentSection(candidate))}
-      ${detailSection("면담 기록", renderActivitySection(candidate), "", "detail-activity-section")}
-      ${detailSection("채용진행", renderApplicationsSection(candidate), "", "detail-application-section")}
     </div>
   `;
 }
@@ -10016,8 +10103,19 @@ function changeCandidateStatus(status) {
     return;
   }
 
+  if (!STATUS_ORDER.includes(status)) {
+    showToast("변경할 수 없는 관리 상태입니다.");
+    renderDetail();
+    return;
+  }
+
   const previous = candidate.status;
   const today = getTodayDate();
+
+  if (previous === status) {
+    return;
+  }
+
   candidate.status = status;
   candidate.updatedAt = today;
   candidate.timeline.unshift({
@@ -10036,6 +10134,116 @@ function changeCandidateStatus(status) {
   persistState();
   showToast(`${candidate.name} 상태가 변경되었습니다.`);
   render();
+}
+
+function setDetailTab(tab) {
+  if (!["profile", "interviews", "applications"].includes(tab)) {
+    return;
+  }
+
+  state.detailTab = tab;
+  state.editingInterviewId = "";
+  renderDetail();
+}
+
+function startNewInterviewRecord() {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 면담 기록을 등록할 수 없습니다.");
+    return;
+  }
+
+  state.detailTab = "interviews";
+  state.editingInterviewId = "new";
+  renderDetail();
+}
+
+function editInterviewRecord(interviewId) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate) || !candidate.interviews?.some((record) => record.id === interviewId)) {
+    showToast("수정할 면담 기록을 찾지 못했습니다.");
+    return;
+  }
+
+  state.detailTab = "interviews";
+  state.editingInterviewId = interviewId;
+  renderDetail();
+}
+
+function cancelInterviewEdit() {
+  state.editingInterviewId = "";
+  renderDetail();
+}
+
+function saveInterviewRecord(form) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 면담 기록을 저장할 수 없습니다.");
+    return;
+  }
+
+  const interviewId = getFormText(form, "interviewId");
+  const record = normalizeInterviewRecord({
+    id: interviewId || createId("interview"),
+    date: getFormText(form, "interviewDate") || getTodayDate(),
+    interviewer: getFormText(form, "interviewInterviewer") || getCurrentActorName(),
+    method: getFormText(form, "interviewMethod"),
+    content: getFormText(form, "interviewContent"),
+    nextAction: getFormText(form, "interviewNextAction"),
+    updatedAt: getTodayDate()
+  });
+
+  if (!record?.content) {
+    showToast("면담 내용을 입력해주세요.");
+    return;
+  }
+
+  const existingIndex = (candidate.interviews || []).findIndex((item) => item.id === interviewId);
+
+  if (existingIndex >= 0) {
+    candidate.interviews[existingIndex] = record;
+  } else {
+    candidate.interviews = candidate.interviews || [];
+    candidate.interviews.unshift(record);
+  }
+
+  candidate.updatedAt = getTodayDate();
+  state.editingInterviewId = "";
+  addAuditLog(interviewId ? "면담 기록 수정" : "면담 기록 등록", candidate.name, record.method || record.date);
+  persistState();
+  showToast("면담 기록이 저장되었습니다.");
+  renderDetail();
+}
+
+function deleteInterviewRecord(interviewId) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 면담 기록을 삭제할 수 없습니다.");
+    return;
+  }
+
+  const record = (candidate.interviews || []).find((item) => item.id === interviewId);
+
+  if (!record) {
+    showToast("삭제할 면담 기록을 찾지 못했습니다.");
+    return;
+  }
+
+  if (!window.confirm("선택한 면담 기록을 삭제할까요?")) {
+    return;
+  }
+
+  candidate.interviews = candidate.interviews.filter((item) => item.id !== interviewId);
+  candidate.updatedAt = getTodayDate();
+  state.editingInterviewId = "";
+  addAuditLog("면담 기록 삭제", candidate.name, record.method || record.date);
+  persistState();
+  showToast("면담 기록을 삭제했습니다.");
+  renderDetail();
 }
 
 async function executeAiSearchWithQuery(query, options = {}) {
@@ -10970,6 +11178,34 @@ function bindEvents() {
       return;
     }
 
+    const detailTabButton = event.target.closest("[data-detail-tab]");
+    if (detailTabButton) {
+      setDetailTab(detailTabButton.dataset.detailTab);
+      return;
+    }
+
+    if (event.target.closest("[data-new-interview]")) {
+      startNewInterviewRecord();
+      return;
+    }
+
+    const editInterviewButton = event.target.closest("[data-edit-interview]");
+    if (editInterviewButton) {
+      editInterviewRecord(editInterviewButton.dataset.editInterview);
+      return;
+    }
+
+    const deleteInterviewButton = event.target.closest("[data-delete-interview]");
+    if (deleteInterviewButton) {
+      deleteInterviewRecord(deleteInterviewButton.dataset.deleteInterview);
+      return;
+    }
+
+    if (event.target.closest("[data-cancel-interview-edit]")) {
+      cancelInterviewEdit();
+      return;
+    }
+
     const addEducationButton = event.target.closest("[data-add-education]");
     if (addEducationButton) {
       addEducationRecord();
@@ -11200,6 +11436,11 @@ function bindEvents() {
       event.preventDefault();
       saveCandidateEdits(event.target);
     }
+
+    if (event.target.matches("#interview-form")) {
+      event.preventDefault();
+      saveInterviewRecord(event.target);
+    }
   });
 
   document.addEventListener("reset", (event) => {
@@ -11279,6 +11520,11 @@ function bindEvents() {
 
     if (["member-role-filter", "member-status-filter"].includes(event.target.id)) {
       updateMemberFilters();
+    }
+
+    if (event.target.matches("[data-detail-status-select]")) {
+      changeCandidateStatus(event.target.value);
+      return;
     }
 
     const memberRoleSelect = event.target.closest("[data-member-role]");
