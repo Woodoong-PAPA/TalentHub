@@ -1102,6 +1102,8 @@ tr:last-child td {
 
 .screening-list-page,
 .screening-detail-page {
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   display: grid;
   gap: 16px;
@@ -1288,11 +1290,18 @@ tr:last-child td {
 .screening-applicant-list {
   display: grid;
   gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .screening-applicant-card {
   display: grid;
   gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 14px;
@@ -1301,7 +1310,7 @@ tr:last-child td {
 
 .screening-applicant-name-button {
   display: block;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
   border: 0;
@@ -1311,8 +1320,8 @@ tr:last-child td {
   font-size: 15px;
   font-weight: 800;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .screening-applicant-name-button:hover {
@@ -1324,6 +1333,8 @@ tr:last-child td {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
+  width: 100%;
+  min-width: 0;
 }
 
 .screening-card-tags {
@@ -1337,12 +1348,39 @@ tr:last-child td {
   display: grid;
   grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1.4fr) minmax(180px, 1fr) minmax(160px, 0.8fr);
   gap: 12px;
+  width: 100%;
+  min-width: 0;
 }
 
 .screening-card-field {
   display: grid;
   gap: 6px;
   min-width: 0;
+  max-width: 100%;
+}
+
+.screening-applicant-card .summary-cell,
+.screening-applicant-card .summary-cell strong,
+.screening-applicant-card .summary-cell span,
+.screening-applicant-card .summary-cell small,
+.screening-card-field,
+.screening-card-field span,
+.screening-card-field strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.screening-card-field .member-actions {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.screening-card-field .member-actions .compact-button {
+  min-width: 0;
+  white-space: normal;
 }
 
 .screening-card-field > span {
