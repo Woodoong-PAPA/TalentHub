@@ -815,6 +815,24 @@ tr:last-child td {
   margin: 0 auto;
 }
 
+.candidate-photo-button {
+  display: inline-grid;
+  width: 60px;
+  height: 60px;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.candidate-photo-button:hover,
+.candidate-photo-button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
 .avatar.pool {
   width: 60px;
   height: 60px;

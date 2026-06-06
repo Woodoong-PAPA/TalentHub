@@ -2331,6 +2331,14 @@ function candidateVisual(candidate, size = "") {
   return `<span class="${className}" style="background:${candidate.avatarColor}">${candidate.initials}</span>`;
 }
 
+function candidatePhotoButton(candidate, size = "pool") {
+  return `
+    <button class="candidate-photo-button" type="button" data-select-candidate="${escapeHtml(candidate.id)}" aria-label="${escapeHtml(candidate.name)} 상세 프로필 보기">
+      ${candidateVisual(candidate, size)}
+    </button>
+  `;
+}
+
 function formatBirthAge(candidate) {
   const birthYear = String(candidate.birthYear || "").trim();
   const age = calculateAge(birthYear) || candidate.age;
@@ -3169,7 +3177,7 @@ function candidateTable(candidates) {
 
             return `
             <tr>
-              <td class="photo-cell">${candidateVisual(candidate, "pool")}</td>
+              <td class="photo-cell">${candidatePhotoButton(candidate)}</td>
               <td class="candidate-cell">
                 <div class="candidate-name candidate-name-compact">
                   <span>
