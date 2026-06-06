@@ -1526,9 +1526,30 @@ tr:last-child td {
   color: var(--muted);
 }
 
+.screening-filter-strip {
+  align-items: end;
+  grid-template-columns: minmax(220px, 280px) auto minmax(180px, 1fr);
+}
+
+.compact-field {
+  gap: 5px;
+}
+
+.compact-field label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.screening-my-list-button.is-active {
+  border-color: var(--blue);
+  color: var(--blue-700);
+  background: var(--blue-soft);
+}
+
 .screening-step-nav {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1578,6 +1599,17 @@ tr:last-child td {
   border-radius: var(--radius);
   padding: 14px;
   background: var(--surface);
+}
+
+.screening-applicant-card.is-locked {
+  border-style: dashed;
+  background: var(--surface-soft);
+}
+
+.screening-lock-note {
+  color: var(--blue-700);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .screening-applicant-name-button {
