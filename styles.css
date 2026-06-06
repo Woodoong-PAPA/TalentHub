@@ -2843,7 +2843,7 @@ tr:last-child td {
 .detail-hero-body {
   display: grid;
   align-content: start;
-  gap: 13px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2882,8 +2882,8 @@ tr:last-child td {
 .detail-status-control,
 .detail-status-readonly {
   display: inline-grid;
-  gap: 5px;
-  margin-top: 9px;
+  gap: 0;
+  margin-top: 0;
 }
 
 .detail-status-control span,
@@ -2966,7 +2966,8 @@ tr:last-child td {
 
 .detail-hero-lines {
   display: grid;
-  gap: 5px;
+  gap: 3px;
+  margin-top: 6px;
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
@@ -2977,11 +2978,13 @@ tr:last-child td {
 }
 
 .detail-hero-footer {
+  justify-content: flex-end;
   border-top: 1px solid var(--line);
   margin-top: 4px;
   padding-top: 11px;
   color: var(--muted);
   font-size: 12px;
+  text-align: right;
 }
 
 .detail-tab-strip {

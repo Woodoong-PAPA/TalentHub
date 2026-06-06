@@ -6810,6 +6810,9 @@ function renderDetailHero(candidate) {
               <h3>${escapeHtml(candidate.name)}</h3>
               ${candidate.organization ? `<span class="detail-business-unit-chip">${escapeHtml(candidate.organization)}</span>` : ""}
             </div>
+            <div class="detail-hero-lines">
+              ${titleLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+            </div>
           </div>
           <div class="detail-hero-side">
             <div class="detail-hero-actions">
@@ -6819,9 +6822,6 @@ function renderDetailHero(candidate) {
             </div>
             ${renderDetailStatusControl(candidate)}
           </div>
-        </div>
-        <div class="detail-hero-lines">
-          ${titleLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
         </div>
         <div class="detail-hero-footer">
           <span>Pool 등록자 : ${escapeHtml(candidate.owner || "-")}</span>
@@ -6840,7 +6840,10 @@ function formatDetailCareerLine(candidate) {
     return "";
   }
 
-  return `경력: ${[career.company, career.rank || career.position, career.position && career.rank ? career.position : "", formatPeriod(career.start, career.end)].filter(Boolean).join(" · ")}`;
+  const careerTitle = uniqueTextParts([career.company, career.rank, career.position]).join(", ");
+  const period = formatHeaderPeriod(career.start, career.end);
+
+  return [careerTitle, period].filter(Boolean).join(" ");
 }
 
 function formatDetailEducationLine(candidate) {
@@ -6850,17 +6853,73 @@ function formatDetailEducationLine(candidate) {
     return "";
   }
 
-  return `학력: ${[`${education.degree ? `${education.degree}) ` : ""}${[education.school, education.major].filter(Boolean).join(", ")}`.trim(), education.affiliation].filter(Boolean).join(" · ")}`;
+  const educationTitle = [
+    `${education.degree ? `${education.degree}) ` : ""}${education.school || ""}`.trim(),
+    education.major
+  ].filter(Boolean).join(", ");
+  const period = formatHeaderPeriod(education.start, education.end);
+
+  return [educationTitle, period].filter(Boolean).join(" ");
+}
+
+function uniqueTextParts(parts) {
+  const seen = new Set();
+
+  return parts
+    .map((part) => String(part || "").trim())
+    .filter((part) => {
+      if (!part || seen.has(part)) {
+        return false;
+      }
+
+      seen.add(part);
+      return true;
+    });
+}
+
+function formatHeaderPeriod(start, end) {
+  const startText = formatHeaderPeriodPart(start);
+  const endText = String(end || "").trim() === "현재" ? "현재" : formatHeaderPeriodPart(end);
+
+  if (!startText && !endText) {
+    return "";
+  }
+
+  return `('${startText || ""}~${endText || ""})`;
+}
+
+function formatHeaderPeriodPart(value) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized || normalized === "0" || normalized === "00" || normalized === "0000-00") {
+    return "";
+  }
+
+  if (normalized === "현재") {
+    return "현재";
+  }
+
+  const match = normalized.match(/^(\d{2,4})(?:[-./](\d{1,2}))?/);
+
+  if (!match) {
+    return normalized;
+  }
+
+  const year = match[1].slice(-2);
+  const month = match[2] && match[2] !== "0" && match[2] !== "00"
+    ? match[2].padStart(2, "0")
+    : "";
+
+  return month ? `${year}.${month}` : year;
 }
 
 function renderDetailStatusControl(candidate) {
   if (!canManageCandidateProfile(candidate)) {
-    return `<div class="detail-status-readonly"><span>관리 상태</span><strong>${escapeHtml(STATUS_LABELS[candidate.status] || "-")}</strong></div>`;
+    return `<div class="detail-status-readonly"><strong>${escapeHtml(STATUS_LABELS[candidate.status] || "-")}</strong></div>`;
   }
 
   return `
     <label class="detail-status-control">
-      <span>관리 상태</span>
       <select class="control-select compact-select" data-detail-status-select>
         ${STATUS_ORDER.map((status) => `<option value="${status}" ${candidate.status === status ? "selected" : ""}>${escapeHtml(STATUS_LABELS[status])}</option>`).join("")}
       </select>
