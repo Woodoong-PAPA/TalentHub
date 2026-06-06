@@ -7,6 +7,9 @@ create table if not exists public.candidates (
   role text,
   owner text,
   status text,
+  business_unit text,
+  profile_visibility text not null default 'all'
+    check (profile_visibility in ('all', 'business_unit')),
   updated_at timestamptz not null default now(),
   profile jsonb not null default '{}'::jsonb
 );
@@ -14,6 +17,8 @@ create table if not exists public.candidates (
 create index if not exists candidates_owner_idx on public.candidates (owner);
 create index if not exists candidates_status_idx on public.candidates (status);
 create index if not exists candidates_name_idx on public.candidates (name);
+create index if not exists candidates_business_unit_idx on public.candidates (business_unit);
+create index if not exists candidates_profile_visibility_idx on public.candidates (profile_visibility);
 create index if not exists candidates_profile_gin_idx on public.candidates using gin (profile);
 
 create table if not exists public.audit_logs (
@@ -41,6 +46,7 @@ create table if not exists public.app_members (
     check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
   status text not null default 'pending'
     check (status in ('pending', 'active', 'suspended', 'rejected')),
+  business_unit text,
   department text,
   position text,
   phone text,
@@ -55,6 +61,7 @@ create table if not exists public.app_members (
 create index if not exists app_members_email_idx on public.app_members (email);
 create index if not exists app_members_role_idx on public.app_members (role);
 create index if not exists app_members_status_idx on public.app_members (status);
+create index if not exists app_members_business_unit_idx on public.app_members (business_unit);
 
 create table if not exists public.app_role_permissions (
   role text not null check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),

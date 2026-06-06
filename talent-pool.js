@@ -80,6 +80,11 @@ const DEFAULT_TRENDING_MAIL_SETTINGS = {
 const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const TRENDING_PROFILE_COMPLETENESS_VERSION = 5;
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
+const CANDIDATE_VISIBILITY_LABELS = {
+  all: "전체 공개",
+  business_unit: "사업부 공개"
+};
+const CANDIDATE_VISIBILITY_ORDER = ["all", "business_unit"];
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
 const VISIT_SESSION_KEY = "samsung-talent-pool-visit-counted";
 const SCREENING_STAGE_LABELS = {
@@ -120,6 +125,7 @@ const DEFAULT_MEMBERS = [
     passwordHash: "5842a8aa177243bfa34305cfaceb69a124ad6ccee62ebd4bd149be39871eb160",
     role: "admin",
     status: "active",
+    businessUnit: "전사직속",
     department: "People Team",
     position: "Talent Pool Owner",
     phone: "",
@@ -187,7 +193,7 @@ const SAMPLE_CANDIDATES = [
     company: "SK hynix",
     years: 6,
     jobFamily: "Semiconductor AI",
-    organization: "DS",
+    organization: "SR",
     status: "contact_planned",
     owner: "이지원",
     createdAt: "2026-06-01",
@@ -224,7 +230,7 @@ const SAMPLE_CANDIDATES = [
     company: "Samsung Research",
     years: 8,
     jobFamily: "AI Research",
-    organization: "DX",
+    organization: "SR",
     status: "screening",
     owner: "최유진",
     createdAt: "2026-05-30",
@@ -261,7 +267,7 @@ const SAMPLE_CANDIDATES = [
     company: "Naver Cloud",
     years: 11,
     jobFamily: "Cloud Security",
-    organization: "DX",
+    organization: "CDO",
     status: "nurture",
     owner: "이지원",
     createdAt: "2026-05-12",
@@ -294,7 +300,7 @@ const SAMPLE_CANDIDATES = [
     company: "LG Energy Solution",
     years: 5,
     jobFamily: "Quality Engineering",
-    organization: "DS",
+    organization: "G.CS",
     status: "contacted",
     owner: "박민수",
     createdAt: "2026-05-20",
@@ -328,7 +334,7 @@ const SAMPLE_CANDIDATES = [
     company: "Hyundai Mobis",
     years: 4,
     jobFamily: "Embedded Software",
-    organization: "DX",
+    organization: "MX",
     status: "hold",
     owner: "한소라",
     createdAt: "2026-04-21",
@@ -644,6 +650,39 @@ function normalizeBusinessUnit(value) {
   return aliasMap.get(compact) || "";
 }
 
+function normalizeCandidateVisibility(value) {
+  const rawValue = String(value || "").trim();
+  const aliasMap = new Map([
+    ["public", "all"],
+    ["global", "all"],
+    ["company", "all"],
+    ["all", "all"],
+    ["전체", "all"],
+    ["전체 공개", "all"],
+    ["business", "business_unit"],
+    ["business_unit", "business_unit"],
+    ["division", "business_unit"],
+    ["organization", "business_unit"],
+    ["org", "business_unit"],
+    ["사업부", "business_unit"],
+    ["사업부 공개", "business_unit"]
+  ]);
+
+  return aliasMap.get(rawValue.toLowerCase()) || "all";
+}
+
+function getCandidateVisibilityLabel(value) {
+  return CANDIDATE_VISIBILITY_LABELS[normalizeCandidateVisibility(value)] || CANDIDATE_VISIBILITY_LABELS.all;
+}
+
+function renderCandidateVisibilityOptions(selectedValue = "all") {
+  const selected = normalizeCandidateVisibility(selectedValue);
+
+  return CANDIDATE_VISIBILITY_ORDER.map((visibility) => `
+    <option value="${escapeHtml(visibility)}" ${visibility === selected ? "selected" : ""}>${escapeHtml(CANDIDATE_VISIBILITY_LABELS[visibility])}</option>
+  `).join("");
+}
+
 function loadVisitStats() {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(VISIT_STATS_KEY) || "{}");
@@ -789,9 +828,12 @@ function normalizeCandidate(candidate) {
     evidence: [],
     applications: [],
     timeline: [],
+    visibility: "all",
     ...candidate
   });
 
+  normalized.organization = normalizeBusinessUnit(normalized.organization);
+  normalized.visibility = normalizeCandidateVisibility(normalized.visibility || normalized.profileVisibility);
   normalized.createdAt = inferCreatedAt(normalized);
   normalized.updatedAt = normalized.updatedAt || normalized.createdAt;
   normalized.age = calculateAge(normalized.birthYear);
@@ -824,6 +866,7 @@ function normalizeMember(member) {
     passwordHash: String(member.passwordHash || member.password_hash || member.profile?.passwordHash || ""),
     role,
     status,
+    businessUnit: normalizeBusinessUnit(member.businessUnit || member.business_unit || member.profile?.businessUnit),
     department: String(member.department || "").trim(),
     position: String(member.position || "").trim(),
     phone: String(member.phone || "").trim(),
@@ -1098,6 +1141,41 @@ function isSearchFirmRole(member = getCurrentMember()) {
   return member?.role === "search_firm";
 }
 
+function canViewAllCandidates(member = getCurrentMember()) {
+  return Boolean(member && member.status === "active" && (isAdmin(member) || member.role === "division_recruiter"));
+}
+
+function getMemberBusinessUnit(member = getCurrentMember()) {
+  return normalizeBusinessUnit(member?.businessUnit);
+}
+
+function canViewCandidate(candidate, member = getCurrentMember()) {
+  if (!candidate || !member || member.status !== "active") {
+    return false;
+  }
+
+  if (canViewAllCandidates(member)) {
+    return true;
+  }
+
+  if (normalizeCandidateVisibility(candidate.visibility) === "all") {
+    return true;
+  }
+
+  const memberBusinessUnit = getMemberBusinessUnit(member);
+  const candidateBusinessUnit = getCandidateBusinessUnit(candidate);
+
+  return Boolean(memberBusinessUnit && candidateBusinessUnit === memberBusinessUnit);
+}
+
+function getVisibleCandidates(member = getCurrentMember()) {
+  return state.candidates.filter((candidate) => canViewCandidate(candidate, member));
+}
+
+function canManageCandidateProfile(candidate, member = getCurrentMember()) {
+  return canManageCandidates(member) && canViewCandidate(candidate, member);
+}
+
 function canCreateScreeningFolder(member = getCurrentMember()) {
   return Boolean(member && member.status === "active" && (isAdmin(member) || ["business_recruiter", "division_recruiter"].includes(member.role)));
 }
@@ -1173,7 +1251,7 @@ function renderOwnerOptions(selectedOwner = "", options = {}) {
     : "";
 
   return `${placeholder}${members.map((member) => {
-    const label = `${member.name} · ${getRoleLabel(member.role)}`;
+    const label = `${member.name} · ${getRoleLabel(member.role)}${member.businessUnit ? ` · ${member.businessUnit}` : ""}`;
     return `<option value="${escapeHtml(member.name)}" ${member.name === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
   }).join("")}`;
 }
@@ -1435,6 +1513,7 @@ function memberFromSupabaseRow(row) {
     name: row.name,
     role: row.role,
     status: row.status,
+    businessUnit: row.business_unit || row.profile?.businessUnit,
     department: row.department,
     position: row.position,
     phone: row.phone,
@@ -1882,10 +1961,15 @@ function escapeHtml(value) {
 }
 
 function getCandidate(id = state.selectedCandidateId) {
-  return findCandidate(id) || state.candidates[0];
+  return findCandidate(id) || getVisibleCandidates()[0] || null;
 }
 
 function findCandidate(id) {
+  const candidate = findAnyCandidate(id);
+  return canViewCandidate(candidate) ? candidate : null;
+}
+
+function findAnyCandidate(id) {
   return state.candidates.find((candidate) => candidate.id === id) || null;
 }
 
@@ -1898,8 +1982,15 @@ function replaceCandidate(candidate) {
 }
 
 function startCandidateEdit() {
+  const candidate = getCandidate();
+
+  if (!canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 수정할 수 없는 프로필입니다.");
+    return;
+  }
+
   if (!state.isEditingCandidate) {
-    state.editSnapshot = structuredClone(getCandidate());
+    state.editSnapshot = structuredClone(candidate);
   }
 
   state.isEditingCandidate = true;
@@ -2085,19 +2176,27 @@ function renderAuth() {
           </div>
           <div class="field-grid">
             <div class="field">
-              <label for="signup-department">부서</label>
-              <input class="control-input" id="signup-department" name="department" autocomplete="organization" />
+              <label for="signup-business-unit">소속 사업부</label>
+              <select class="control-select" id="signup-business-unit" name="businessUnit">
+                ${renderBusinessUnitOptions()}
+              </select>
             </div>
             <div class="field">
-              <label for="signup-position">직책</label>
-              <input class="control-input" id="signup-position" name="position" autocomplete="organization-title" />
+              <label for="signup-department">부서</label>
+              <input class="control-input" id="signup-department" name="department" autocomplete="organization" />
             </div>
           </div>
           <div class="field-grid">
             <div class="field">
+              <label for="signup-position">직책</label>
+              <input class="control-input" id="signup-position" name="position" autocomplete="organization-title" />
+            </div>
+            <div class="field">
               <label for="signup-phone">연락처</label>
               <input class="control-input" id="signup-phone" name="phone" type="tel" autocomplete="tel" />
             </div>
+          </div>
+          <div class="field-grid">
             <div class="field">
               <label for="signup-role">신청 등급</label>
               <select class="control-select" id="signup-role" name="role">
@@ -2156,7 +2255,7 @@ function renderUserMenu() {
   userMenu.innerHTML = `
     <div class="user-summary">
       <span>${escapeHtml(member.name)}</span>
-      <strong>${escapeHtml(getRoleLabel(member.role))}</strong>
+      <strong>${escapeHtml([getRoleLabel(member.role), member.businessUnit].filter(Boolean).join(" · "))}</strong>
     </div>
     <button class="ghost-button compact-button" type="button" data-open-member-profile>내 정보 수정</button>
     <button class="ghost-button compact-button" type="button" id="logout-button">로그아웃</button>
@@ -2191,6 +2290,13 @@ function renderMemberProfileModal(member) {
                 <label for="member-profile-email">이메일</label>
                 <input class="control-input" id="member-profile-email" name="email" value="${inputValue(member.email)}" readonly />
                 <span class="field-caption">이메일은 로그인 ID로 사용되어 관리자에게 변경을 요청해주세요.</span>
+              </div>
+              <div class="field">
+                <label for="member-profile-business-unit">소속 사업부</label>
+                <select class="control-select" id="member-profile-business-unit" name="businessUnit">
+                  ${renderBusinessUnitOptions(member.businessUnit)}
+                </select>
+                <span class="field-caption">사업부 공개 프로필 조회 범위에 사용됩니다.</span>
               </div>
               <div class="field">
                 <label for="member-profile-department">부서</label>
@@ -2396,7 +2502,7 @@ function backToPoolList() {
 function getFilteredCandidates() {
   const query = state.poolFilters.query.trim().toLowerCase();
 
-  return state.candidates.filter((candidate) => {
+  return getVisibleCandidates().filter((candidate) => {
     const text = [
       candidate.name,
       candidate.role,
@@ -2426,6 +2532,18 @@ function getFilteredCandidates() {
   });
 }
 
+function ensureCandidateDefaults() {
+  state.candidates = state.candidates.map(normalizeCandidate);
+
+  if (state.selectedCandidateId && !findCandidate(state.selectedCandidateId)) {
+    state.selectedCandidateId = getVisibleCandidates()[0]?.id || "";
+    state.isEditingCandidate = false;
+    state.editSnapshot = null;
+  }
+
+  state.aiResults = state.aiResults.filter((candidate) => canViewCandidate(candidate));
+}
+
 function render() {
   ensureMemberDefaults();
   renderAuth();
@@ -2434,6 +2552,7 @@ function render() {
     return;
   }
 
+  ensureCandidateDefaults();
   ensureScreeningDefaults();
   ensureActiveViewAllowed();
   syncActiveViewState();
@@ -2561,16 +2680,18 @@ function getCandidateBusinessUnit(candidate) {
 
 function getDashboardFilteredCandidates() {
   const organization = getDashboardOrganizationFilter();
+  const candidates = getVisibleCandidates();
+
   return organization === "all"
-    ? state.candidates
-    : state.candidates.filter((candidate) => getCandidateBusinessUnit(candidate) === organization);
+    ? candidates
+    : candidates.filter((candidate) => getCandidateBusinessUnit(candidate) === organization);
 }
 
 function getBusinessUnitRegistrationCounts() {
   const counts = new Map(BUSINESS_UNITS.map((unit) => [unit, 0]));
   let unassignedCount = 0;
 
-  state.candidates.forEach((candidate) => {
+  getVisibleCandidates().forEach((candidate) => {
     const unit = getCandidateBusinessUnit(candidate);
 
     if (counts.has(unit)) {
@@ -2658,6 +2779,7 @@ function renderMonthlyRegistrationChart(series) {
 function getTopViewedProfiles(days = 90, limit = 5) {
   const since = dateDaysAgo(days);
   const counts = new Map();
+  const visibleByName = new Map(getVisibleCandidates().map((candidate) => [candidate.name, candidate]));
 
   state.auditLogs.forEach((log) => {
     const action = String(log.action || "");
@@ -2673,7 +2795,7 @@ function getTopViewedProfiles(days = 90, limit = 5) {
 
   return [...counts.entries()]
     .map(([name, views]) => ({
-      candidate: state.candidates.find((candidate) => candidate.name === name),
+      candidate: visibleByName.get(name),
       views
     }))
     .filter((item) => item.candidate)
@@ -2751,6 +2873,7 @@ function candidateTable(candidates) {
                   <span>
                     <button class="candidate-name-button" type="button" data-select-candidate="${candidate.id}">${escapeHtml(candidate.name)}</button>
                     <span>${escapeHtml(formatBirthAge(candidate))}</span>
+                    <span>${escapeHtml(getCandidateVisibilityLabel(candidate.visibility))}</span>
                   </span>
                 </div>
               </td>
@@ -2766,7 +2889,7 @@ function candidateTable(candidates) {
               <td>${getStatusChip(candidate.status)}</td>
               <td>${escapeHtml(candidate.owner)}</td>
               <td>
-                ${canManageCandidates() ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-candidate="${candidate.id}">삭제</button>` : `<span class="muted-text">-</span>`}
+                ${canManageCandidateProfile(candidate) ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-candidate="${candidate.id}">삭제</button>` : `<span class="muted-text">-</span>`}
               </td>
             </tr>
           `;
@@ -2778,7 +2901,7 @@ function candidateTable(candidates) {
 }
 
 function renderPool() {
-  const owners = [...new Set(state.candidates.map((candidate) => candidate.owner))];
+  const owners = [...new Set(getVisibleCandidates().map((candidate) => candidate.owner))];
   const candidates = sortCandidatesByCreatedAt(getFilteredCandidates());
 
   $("#pool-content").innerHTML = `
@@ -3896,6 +4019,13 @@ function renderRegister() {
             </select>
           </div>
           <div class="field">
+            <label for="candidate-visibility">공개 범위</label>
+            <select class="control-select" id="candidate-visibility" name="visibility">
+              ${renderCandidateVisibilityOptions("all")}
+            </select>
+            <span class="field-caption">사업부 공개는 해당 사업부 회원과 관리자/부문 담당자만 조회할 수 있습니다.</span>
+          </div>
+          <div class="field">
             <label for="candidate-owner">담당자</label>
             <select class="control-select" id="candidate-owner" name="owner">
               ${renderOwnerOptions(getDefaultOwnerName(), { includePlaceholder: !getAssignableMembers().length })}
@@ -4059,7 +4189,7 @@ function renderAiSearch() {
       ? state.aiResults.length
         ? state.aiResults.map((result) => searchResultCard(result)).join("")
         : `<div class="empty-state">검색 조건에 맞는 후보자를 찾지 못했습니다. 조건을 조금 넓혀 다시 검색해주세요.</div>`
-      : `<div class="empty-state">찾고 싶은 인재 조건을 자연어로 입력하면 Pool 전체에서 적합도 높은 후보자를 찾아드립니다.</div>`;
+      : `<div class="empty-state">찾고 싶은 인재 조건을 자연어로 입력하면 조회 가능한 Pool에서 적합도 높은 후보자를 찾아드립니다.</div>`;
 
   $("#ai-search-content").innerHTML = `
     <div class="ai-layout">
@@ -4221,7 +4351,7 @@ function runLocalAiSearch(query) {
   const yearCondition = parseYearCondition(cleanQuery);
   const degreeCondition = parseDegreeCondition(cleanQuery);
 
-  return state.candidates
+  return getVisibleCandidates()
     .map((candidate) => {
       const profileText = candidateSearchText(candidate);
       const tokenHits = queryTokens.filter((token) => profileText.includes(token));
@@ -4284,7 +4414,7 @@ async function searchCandidatesWithServer(query) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       query,
-      candidates: state.candidates.map((candidate) => ({
+      candidates: getVisibleCandidates().map((candidate) => ({
         id: candidate.id,
         name: candidate.name,
         company: candidate.company,
@@ -4316,7 +4446,7 @@ function mergeServerSearchResults(localResults, serverResults) {
   const localById = new Map(localResults.map((candidate) => [candidate.id, candidate]));
   const merged = serverResults
     .map((result) => {
-      const candidate = state.candidates.find((item) => item.id === result.id);
+      const candidate = findCandidate(result.id);
 
       if (!candidate) {
         return null;
@@ -4864,7 +4994,7 @@ function trendingPersonCard(person) {
   const photo = person.profileImageUrl
     ? `<img class="trending-photo" src="${escapeHtml(person.profileImageUrl)}" alt="${escapeHtml(person.name || "화제 인물")} 프로필 사진" loading="lazy" referrerpolicy="no-referrer" />`
     : `<div class="trending-photo-placeholder" aria-hidden="true">${escapeHtml(String(person.name || "?").slice(0, 1))}</div>`;
-  const alreadyRegistered = state.candidates.some((candidate) =>
+  const alreadyRegistered = getVisibleCandidates().some((candidate) =>
     candidate.name === person.name &&
     (!person.currentOrg || candidate.company === person.currentOrg)
   );
@@ -5001,14 +5131,18 @@ function renderDetail() {
     return;
   }
 
+  const canManageProfile = canManageCandidateProfile(candidate);
+
   $("#detail-actions").innerHTML = state.isEditingCandidate
     ? `<button class="ghost-button" type="button" data-cancel-edit>수정 취소</button>`
     : `
       <button class="ghost-button" type="button" data-back-to-pool>목록으로</button>
-      <button class="ghost-button" type="button" data-start-edit>정보 수정</button>
-      <button class="ghost-button" type="button" data-change-status="contacted">접촉 완료</button>
-      <button class="primary-button" type="button" data-change-status="screening">전형 진행</button>
-      ${canManageCandidates() ? `<button class="ghost-button danger-button" type="button" data-delete-candidate="${candidate.id}">프로필 삭제</button>` : ""}
+      ${canManageProfile ? `
+        <button class="ghost-button" type="button" data-start-edit>정보 수정</button>
+        <button class="ghost-button" type="button" data-change-status="contacted">접촉 완료</button>
+        <button class="primary-button" type="button" data-change-status="screening">전형 진행</button>
+        <button class="ghost-button danger-button" type="button" data-delete-candidate="${candidate.id}">프로필 삭제</button>
+      ` : ""}
     `;
 
   if (state.isEditingCandidate) {
@@ -5058,12 +5192,13 @@ function renderDetailHero(candidate) {
             <div class="detail-hero-badges">
               ${getStatusChip(candidate.status)}
               ${candidate.organization ? `<span class="status-chip chip-violet">${escapeHtml(candidate.organization)}</span>` : ""}
+              <span class="status-chip chip-blue">${escapeHtml(getCandidateVisibilityLabel(candidate.visibility))}</span>
             </div>
           </div>
           <div class="detail-hero-actions">
             ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
             ${attachment ? `<a class="icon-link-button" href="${escapeHtml(attachment)}" download="${escapeHtml(candidate.resumeAttachment.name || `${candidate.name}_resume`)}" title="첨부 파일 다운로드">⇩</a>` : ""}
-            <button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>
+            ${canManageCandidateProfile(candidate) ? `<button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>` : ""}
           </div>
         </div>
         <div class="detail-hero-lines">
@@ -5128,7 +5263,7 @@ function renderDetailMemoPanel(candidate) {
     <section class="detail-side-card">
       <div class="detail-side-card-header">
         <strong>메모</strong>
-        <button class="icon-mini-button" type="button" data-start-edit title="메모 수정">＋</button>
+        ${canManageCandidateProfile(candidate) ? `<button class="icon-mini-button" type="button" data-start-edit title="메모 수정">＋</button>` : ""}
       </div>
       <p class="side-note">${candidate.summary ? escapeHtml(candidate.summary) : "등록된 메모가 없습니다."}</p>
     </section>
@@ -5225,6 +5360,8 @@ function renderOverviewSection(candidate) {
     { label: "이름", value: candidate.name },
     { label: "현재/최근 회사", value: candidate.company },
     { label: "현재/최근 직무", value: candidate.role },
+    { label: "사업부", value: candidate.organization },
+    { label: "공개 범위", value: getCandidateVisibilityLabel(candidate.visibility) },
     { label: "출생년도", value: candidate.birthYear },
     { label: "나이", value: candidate.age ? `${candidate.age}세` : "" },
     { label: "이메일 주소", value: candidate.email },
@@ -5406,6 +5543,13 @@ function renderCandidateEditForm(candidate) {
             <select class="control-select" id="edit-organization" name="editOrganization">
               ${renderBusinessUnitOptions(candidate.organization)}
             </select>
+          </div>
+          <div class="field">
+            <label for="edit-visibility">공개 범위</label>
+            <select class="control-select" id="edit-visibility" name="editVisibility">
+              ${renderCandidateVisibilityOptions(candidate.visibility)}
+            </select>
+            <span class="field-caption">사업부 공개는 해당 사업부 회원과 관리자/부문 담당자만 조회할 수 있습니다.</span>
           </div>
           <div class="field">
             <label for="edit-owner">담당자</label>
@@ -5690,6 +5834,15 @@ function validateCandidateEditForm(form) {
 async function saveCandidateEdits(form, options = {}) {
   showEditError([]);
   const candidate = getCandidate();
+
+  if (!canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 수정할 수 없는 프로필입니다.");
+    state.isEditingCandidate = false;
+    state.editSnapshot = null;
+    renderDetail();
+    return false;
+  }
+
   const formData = new FormData(form);
   const photoFile = formData.get("editPhoto");
   const skills = getFormText(form, "editSkills")
@@ -5704,6 +5857,7 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.company = company;
   candidate.role = getFormText(form, "editRole") || candidate.role;
   candidate.organization = normalizeBusinessUnit(getFormText(form, "editOrganization")) || candidate.organization;
+  candidate.visibility = normalizeCandidateVisibility(getFormText(form, "editVisibility"));
   candidate.owner = normalizeOwnerSelection(getFormText(form, "editOwner")) || candidate.owner;
   candidate.status = getFormText(form, "editStatus") || candidate.status;
   candidate.birthYear = getFormText(form, "editBirthYear");
@@ -5865,6 +6019,7 @@ function getFilteredMembers() {
       const text = [
         member.name,
         member.email,
+        member.businessUnit,
         member.department,
         member.position,
         member.phone,
@@ -5951,9 +6106,11 @@ function memberTable(members) {
               </td>
               <td>${getMemberStatusChip(member.status)}</td>
               <td>
-                <div class="summary-cell">
-                  <strong>${escapeHtml(member.department || "-")}</strong>
-                  <span>${escapeHtml(member.position || "직책 미입력")}</span>
+                <div class="member-role-cell">
+                  <select class="control-select compact-select" data-member-business-unit="${member.id}">
+                    ${renderBusinessUnitOptions(member.businessUnit)}
+                  </select>
+                  <span>${escapeHtml([member.department || "부서 미입력", member.position || "직책 미입력"].join(" · "))}</span>
                 </div>
               </td>
               <td>${escapeHtml(member.requestedAt || "-")}</td>
@@ -7386,7 +7543,7 @@ function registerTrendingPerson(identifier) {
     return;
   }
 
-  const duplicate = state.candidates.find((candidate) =>
+  const duplicate = getVisibleCandidates().find((candidate) =>
     candidate.name === person.name &&
     (!person.currentOrg || candidate.company === person.currentOrg)
   );
@@ -7412,6 +7569,7 @@ function registerTrendingPerson(identifier) {
     years: 0,
     jobFamily: "DX News Radar",
     organization: "",
+    visibility: "all",
     status: "interested",
     owner: getCurrentActorName(),
     createdAt: today,
@@ -7472,7 +7630,11 @@ async function registerCandidate(eventOrForm) {
   const name = form.get("name").toString().trim();
   const company = form.get("company").toString().trim();
   const role = form.get("role").toString().trim();
-  const organization = normalizeBusinessUnit(form.get("organization"));
+  const visibility = normalizeCandidateVisibility(form.get("visibility"));
+  let organization = normalizeBusinessUnit(form.get("organization"));
+  if (visibility === "business_unit" && !organization) {
+    organization = getMemberBusinessUnit();
+  }
   const birthYear = form.get("birthYear").toString().trim();
   const owner = normalizeOwnerSelection(form.get("owner"));
   const today = getTodayDate();
@@ -7528,6 +7690,7 @@ async function registerCandidate(eventOrForm) {
     years: estimateCareerYears(career),
     jobFamily: "Equipment Software",
     organization,
+    visibility,
     status: "interested",
     owner,
     createdAt: today,
@@ -8128,7 +8291,7 @@ async function sendPhoneInterviewMail(applicantId) {
 async function deleteCandidateProfile(candidateId) {
   const candidate = findCandidate(candidateId);
 
-  if (!candidate || !canManageCandidates()) {
+  if (!candidate || !canManageCandidateProfile(candidate)) {
     return;
   }
 
@@ -8139,7 +8302,7 @@ async function deleteCandidateProfile(candidateId) {
   state.candidates = state.candidates.filter((item) => item.id !== candidate.id);
 
   if (state.selectedCandidateId === candidate.id) {
-    state.selectedCandidateId = state.candidates[0]?.id || "";
+    state.selectedCandidateId = getVisibleCandidates()[0]?.id || "";
   }
 
   state.aiResults = state.aiResults.filter((item) => item.id !== candidate.id);
@@ -8166,6 +8329,12 @@ async function deleteCandidateProfile(candidateId) {
 
 function changeCandidateStatus(status) {
   const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 상태를 변경할 수 없는 프로필입니다.");
+    return;
+  }
+
   const previous = candidate.status;
   const today = getTodayDate();
   candidate.status = status;
@@ -8321,6 +8490,7 @@ async function saveCurrentMemberProfile(form) {
 
   const formData = new FormData(form);
   const name = String(formData.get("name") || "").trim();
+  const businessUnit = normalizeBusinessUnit(formData.get("businessUnit"));
   const department = String(formData.get("department") || "").trim();
   const position = String(formData.get("position") || "").trim();
   const phone = String(formData.get("phone") || "").trim();
@@ -8359,6 +8529,7 @@ async function saveCurrentMemberProfile(form) {
 
   const beforeName = member.name;
   member.name = name || member.name;
+  member.businessUnit = businessUnit;
   member.department = department;
   member.position = position;
   member.phone = phone;
@@ -8440,6 +8611,7 @@ async function handleSignupSubmit(form) {
     passwordHash: await hashPassword(email, password),
     role: requestedRole === "admin" || !MEMBER_ROLES[requestedRole] ? "general" : requestedRole,
     status: "pending",
+    businessUnit: formData.get("businessUnit"),
     department: formData.get("department"),
     position: formData.get("position"),
     phone: formData.get("phone"),
@@ -8604,6 +8776,20 @@ function updateMemberRole(memberId, role) {
   persistState();
   render();
   showToast(`${member.name} 회원 등급을 ${getRoleLabel(role)}으로 변경했습니다.`);
+}
+
+function updateMemberBusinessUnit(memberId, businessUnit) {
+  const member = findMember(memberId);
+
+  if (!member || !isAdmin()) {
+    return;
+  }
+
+  member.businessUnit = normalizeBusinessUnit(businessUnit);
+  addAuditLog("회원 사업부 변경", member.name, member.businessUnit || "미지정");
+  persistState();
+  showToast(`${member.name} 회원의 사업부를 ${member.businessUnit || "미지정"}으로 변경했습니다.`);
+  renderMembers();
 }
 
 function updateRolePermission(role, view, enabled) {
@@ -9232,6 +9418,11 @@ function bindEvents() {
     const memberRoleSelect = event.target.closest("[data-member-role]");
     if (memberRoleSelect) {
       updateMemberRole(memberRoleSelect.dataset.memberRole, memberRoleSelect.value);
+    }
+
+    const memberBusinessUnitSelect = event.target.closest("[data-member-business-unit]");
+    if (memberBusinessUnitSelect) {
+      updateMemberBusinessUnit(memberBusinessUnitSelect.dataset.memberBusinessUnit, memberBusinessUnitSelect.value);
     }
 
     const rolePermissionToggle = event.target.closest("[data-role-permission-role]");
