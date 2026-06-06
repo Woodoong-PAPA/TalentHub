@@ -530,6 +530,7 @@ const state = {
   editSnapshot: null,
   detailTab: "profile",
   editingInterviewId: "",
+  editingMemoId: "",
   screeningFolders: structuredClone(DEFAULT_SCREENING_FOLDERS),
   selectedScreeningFolderId: "screening-folder-001",
   screeningPage: "list",
@@ -861,6 +862,7 @@ function normalizeCandidate(candidate) {
     age: "",
     email: "",
     phone: "",
+    nationality: "",
     linkedinUrl: "",
     referenceUrl: "",
     education: [],
@@ -871,6 +873,7 @@ function normalizeCandidate(candidate) {
     applications: [],
     timeline: [],
     interviews: [],
+    memos: [],
     visibility: "all",
     ...candidate
   });
@@ -880,11 +883,24 @@ function normalizeCandidate(candidate) {
   normalized.createdAt = inferCreatedAt(normalized);
   normalized.updatedAt = normalized.updatedAt || normalized.createdAt;
   normalized.age = calculateAge(normalized.birthYear);
+  normalized.education = (normalized.education || []).map(normalizeEducationRecord).filter(hasAnyRecordValue);
   normalized.interviews = Array.isArray(normalized.interviews)
     ? normalized.interviews.map(normalizeInterviewRecord).filter(Boolean)
     : [];
+  normalized.memos = normalizeMemoRecords(normalized);
 
   return normalized;
+}
+
+function normalizeEducationRecord(record = {}) {
+  return {
+    degree: String(record.degree || "").trim(),
+    school: String(record.school || "").trim(),
+    major: String(record.major || "").trim(),
+    affiliation: String(record.affiliation || record.department || record.organization || "").trim(),
+    start: String(record.start || "").trim(),
+    end: String(record.end || "").trim()
+  };
 }
 
 function normalizeInterviewRecord(record = {}) {
@@ -903,6 +919,43 @@ function normalizeInterviewRecord(record = {}) {
     nextAction: String(record.nextAction || "").trim(),
     updatedAt: record.updatedAt || getTodayDate()
   };
+}
+
+function normalizeMemoRecord(record = {}) {
+  const content = String(record.content || record.text || "").trim();
+
+  if (!content) {
+    return null;
+  }
+
+  return {
+    id: record.id || createId("memo"),
+    content,
+    actor: String(record.actor || record.createdBy || getCurrentActorName()).trim(),
+    createdAt: String(record.createdAt || record.date || getTodayDate()).trim(),
+    updatedAt: String(record.updatedAt || record.createdAt || record.date || getTodayDate()).trim()
+  };
+}
+
+function normalizeMemoRecords(candidate) {
+  const memos = Array.isArray(candidate.memos)
+    ? candidate.memos.map(normalizeMemoRecord).filter(Boolean)
+    : [];
+
+  if (!memos.length && candidate.summary) {
+    const legacyMemo = normalizeMemoRecord({
+      content: candidate.summary,
+      actor: candidate.owner || getCurrentActorName(),
+      createdAt: candidate.updatedAt || candidate.createdAt || getTodayDate(),
+      updatedAt: candidate.updatedAt || candidate.createdAt || getTodayDate()
+    });
+
+    if (legacyMemo) {
+      memos.push(legacyMemo);
+    }
+  }
+
+  return memos;
 }
 
 function normalizeAuditLog(log) {
@@ -2764,6 +2817,7 @@ function setView(view) {
   }
   if (view !== "detail") {
     state.editingInterviewId = "";
+    state.editingMemoId = "";
   }
   syncActiveViewState();
   render();
@@ -2815,6 +2869,7 @@ function openCandidateDetail(candidateId) {
   state.isEditingCandidate = false;
   state.detailTab = "profile";
   state.editingInterviewId = "";
+  state.editingMemoId = "";
   state.auditLogs.unshift({
     actor: candidate.owner,
     action: "후보자 상세 조회",
@@ -6737,7 +6792,8 @@ function renderDetail() {
 
 function renderDetailHero(candidate) {
   const titleLines = [
-    [candidate.company, candidate.role].filter(Boolean).join(", ")
+    formatDetailCareerLine(candidate),
+    formatDetailEducationLine(candidate)
   ].filter(Boolean);
   const linkedin = normalizeExternalUrl(candidate.linkedinUrl);
   const attachment = candidate.resumeAttachment?.dataUrl;
@@ -6754,25 +6810,47 @@ function renderDetailHero(candidate) {
               <h3>${escapeHtml(candidate.name)}</h3>
               ${candidate.organization ? `<span class="detail-business-unit-chip">${escapeHtml(candidate.organization)}</span>` : ""}
             </div>
-            ${renderDetailStatusControl(candidate)}
           </div>
-          <div class="detail-hero-actions">
-            ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
-            ${attachment ? `<a class="icon-link-button" href="${escapeHtml(attachment)}" download="${escapeHtml(candidate.resumeAttachment.name || `${candidate.name}_resume`)}" title="첨부 파일 다운로드">⇩</a>` : ""}
-            ${canManageCandidateProfile(candidate) ? `<button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>` : ""}
+          <div class="detail-hero-side">
+            <div class="detail-hero-actions">
+              ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
+              ${attachment ? `<a class="icon-link-button" href="${escapeHtml(attachment)}" download="${escapeHtml(candidate.resumeAttachment.name || `${candidate.name}_resume`)}" title="첨부 파일 다운로드">⇩</a>` : ""}
+              ${canManageCandidateProfile(candidate) ? `<button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>` : ""}
+            </div>
+            ${renderDetailStatusControl(candidate)}
           </div>
         </div>
         <div class="detail-hero-lines">
           ${titleLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
         </div>
         <div class="detail-hero-footer">
-          <span>Pool 관리 담당 : ${escapeHtml(candidate.owner || "-")}</span>
+          <span>Pool 등록자 : ${escapeHtml(candidate.owner || "-")}</span>
           <span>최초 등록일 : ${escapeHtml(candidate.createdAt || "-")}</span>
-          <span>최종 업데이트 : ${escapeHtml(candidate.updatedAt || "-")}</span>
+          <span>최종 수정일 : ${escapeHtml(candidate.updatedAt || "-")}</span>
         </div>
       </div>
     </section>
   `;
+}
+
+function formatDetailCareerLine(candidate) {
+  const career = getPrimaryCareer(candidate);
+
+  if (!career) {
+    return "";
+  }
+
+  return `경력: ${[career.company, career.rank || career.position, career.position && career.rank ? career.position : "", formatPeriod(career.start, career.end)].filter(Boolean).join(" · ")}`;
+}
+
+function formatDetailEducationLine(candidate) {
+  const education = getPrimaryEducation(candidate);
+
+  if (!education) {
+    return "";
+  }
+
+  return `학력: ${[`${education.degree ? `${education.degree}) ` : ""}${[education.school, education.major].filter(Boolean).join(", ")}`.trim(), education.affiliation].filter(Boolean).join(" · ")}`;
 }
 
 function renderDetailStatusControl(candidate) {
@@ -6833,14 +6911,60 @@ function renderDetailHistoryPanel(candidate) {
 }
 
 function renderDetailMemoPanel(candidate) {
+  const memos = [...(candidate.memos || [])].sort((a, b) =>
+    dateSortValue(b.updatedAt || b.createdAt) - dateSortValue(a.updatedAt || a.createdAt) ||
+    String(b.id).localeCompare(String(a.id))
+  );
+  const canManage = canManageCandidateProfile(candidate);
+  const editingMemo = memos.find((memo) => memo.id === state.editingMemoId) || null;
+  const showForm = canManage && (state.editingMemoId === "new" || editingMemo);
+
   return `
     <section class="detail-side-card">
       <div class="detail-side-card-header">
         <strong>메모</strong>
-        ${canManageCandidateProfile(candidate) ? `<button class="icon-mini-button" type="button" data-start-edit title="메모 수정">＋</button>` : ""}
+        ${canManage ? `<button class="icon-mini-button" type="button" data-new-memo title="메모 추가">＋</button>` : ""}
       </div>
-      <p class="side-note">${candidate.summary ? escapeHtml(candidate.summary) : "등록된 메모가 없습니다."}</p>
+      ${showForm ? renderMemoForm(editingMemo) : ""}
+      ${memos.length ? `
+        <div class="memo-list">
+          ${memos.map((memo) => renderMemoCard(memo, canManage)).join("")}
+        </div>
+      ` : `<p class="side-note">등록된 메모가 없습니다.</p>`}
     </section>
+  `;
+}
+
+function renderMemoForm(memo = null) {
+  const isEdit = Boolean(memo?.id);
+
+  return `
+    <form class="memo-form" id="memo-form">
+      <input type="hidden" name="memoId" value="${inputValue(memo?.id || "")}" />
+      <textarea class="control-textarea compact-textarea" name="memoContent" placeholder="메모 내용을 입력">${inputValue(memo?.content || "")}</textarea>
+      <div class="memo-form-actions">
+        <button class="ghost-button compact-button" type="button" data-cancel-memo-edit>취소</button>
+        <button class="primary-button compact-button" type="submit">${isEdit ? "수정 저장" : "추가"}</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderMemoCard(memo, canManage) {
+  return `
+    <article class="memo-card">
+      <p>${escapeHtml(memo.content)}</p>
+      <div class="memo-meta">
+        <span>${escapeHtml(memo.actor || "-")}</span>
+        <span>${escapeHtml(memo.updatedAt || memo.createdAt || "-")}</span>
+      </div>
+      ${canManage ? `
+        <div class="memo-actions">
+          <button class="ghost-button compact-button" type="button" data-edit-memo="${escapeHtml(memo.id)}">수정</button>
+          <button class="ghost-button danger-button compact-button" type="button" data-delete-memo="${escapeHtml(memo.id)}">삭제</button>
+        </div>
+      ` : ""}
+    </article>
   `;
 }
 
@@ -6911,33 +7035,38 @@ function renderCompetencySection(candidate) {
 }
 
 function renderResumeAttachmentSection(candidate) {
-  const attachment = candidate.resumeAttachment;
+  const attachments = [
+    ...(Array.isArray(candidate.resumeAttachments) ? candidate.resumeAttachments : []),
+    candidate.resumeAttachment
+  ].filter((attachment) => attachment?.dataUrl);
 
-  if (!attachment?.dataUrl) {
-    return `<div class="empty-state">등록된 첨부 파일이 없습니다.</div>`;
+  if (!attachments.length) {
+    return `<div class="empty-state compact-empty">등록된 첨부 파일이 없습니다.</div>`;
   }
 
   return `
-    <div class="attachment-row">
-      <div>
-        <span class="muted">첨부 파일</span>
-        <strong>${escapeHtml(attachment.name || `${candidate.name}_resume`)}</strong>
-        <small>${escapeHtml(formatFileSize(attachment.size))}${attachment.uploadedAt ? ` · ${escapeHtml(attachment.uploadedAt)}` : ""}</small>
-      </div>
-      <a class="soft-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || `${candidate.name}_resume`)}">다운로드</a>
+    <div class="attachment-list">
+      ${attachments.map((attachment) => `
+        <div class="attachment-row">
+          <div>
+            <span class="muted">첨부 파일</span>
+            <strong>${escapeHtml(attachment.name || `${candidate.name}_resume`)}</strong>
+            <small>${escapeHtml(formatFileSize(attachment.size))}${attachment.uploadedAt ? ` · ${escapeHtml(attachment.uploadedAt)}` : ""}</small>
+          </div>
+          <a class="soft-button compact-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || `${candidate.name}_resume`)}">다운로드</a>
+        </div>
+      `).join("")}
     </div>
   `;
 }
 
 function renderOverviewSection(candidate) {
   return detailInfoGrid([
-    { label: "이름", value: candidate.name },
-    { label: "현재/최근 회사", value: candidate.company },
-    { label: "현재/최근 직무", value: candidate.role },
     { label: "사업부", value: candidate.organization },
     { label: "공개 범위", value: getCandidateVisibilityLabel(candidate.visibility) },
     { label: "출생년도", value: candidate.birthYear },
     { label: "나이", value: candidate.age ? `${candidate.age}세` : "" },
+    { label: "국적", value: candidate.nationality },
     { label: "이메일 주소", value: candidate.email },
     { label: "휴대폰 번호", value: candidate.phone },
     { label: "링크드인 주소", html: detailLink(candidate.linkedinUrl) },
@@ -7094,9 +7223,7 @@ function renderEducationTab(candidate) {
             <strong>${escapeHtml(`${item.degree ? `${item.degree}) ` : ""}${[item.school, item.major].filter(Boolean).join(", ")}`.trim())}</strong>
             <span>${escapeHtml(formatPeriod(item.start, item.end))}</span>
           </div>
-          <div class="record-subline">
-            ${[item.school, item.major, item.degree].filter(Boolean).map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
-          </div>
+          ${item.affiliation ? `<div class="record-subline"><span>${escapeHtml(item.affiliation)}</span></div>` : ""}
         </article>
       `).join("")}
     </div>
@@ -7134,7 +7261,7 @@ function inputValue(value) {
 }
 
 function renderCandidateEditForm(candidate) {
-  const education = candidate.education?.length ? candidate.education : [{ degree: "", school: "", major: "", start: "", end: "" }];
+  const education = candidate.education?.length ? candidate.education : [{ degree: "", school: "", major: "", affiliation: "", start: "", end: "" }];
   const career = candidate.career?.length
     ? candidate.career
     : [{ country: "", company: "", rank: "", position: "", start: "", end: "", achievements: "" }];
@@ -7200,6 +7327,10 @@ function renderCandidateEditForm(candidate) {
           <div class="field">
             <label for="edit-age">나이</label>
             <input class="control-input" id="edit-age" name="editAge" type="text" value="${inputValue(candidate.age ? `${candidate.age}세` : "")}" readonly />
+          </div>
+          <div class="field">
+            <label for="edit-nationality">국적</label>
+            <input class="control-input" id="edit-nationality" name="editNationality" value="${inputValue(candidate.nationality)}" />
           </div>
           <div class="field">
             <label for="edit-email">이메일 주소</label>
@@ -7287,6 +7418,10 @@ function renderEducationEditRecord(item, index) {
           <input class="control-input" id="education-major-${index}" name="education-major-${index}" value="${inputValue(item.major)}" />
         </div>
         <div class="field">
+          <label for="education-affiliation-${index}">소속</label>
+          <input class="control-input" id="education-affiliation-${index}" name="education-affiliation-${index}" value="${inputValue(item.affiliation)}" />
+        </div>
+        <div class="field">
           <label for="education-start-${index}">학위 시작</label>
           <input class="control-input" id="education-start-${index}" name="education-start-${index}" type="text" inputmode="numeric" placeholder="YYYY-MM 또는 0" value="${inputValue(item.start)}" />
         </div>
@@ -7357,11 +7492,12 @@ function collectEducationFromForm(form, preserveBlank = false) {
       degree: (formData.get(`education-degree-${index}`) || "").toString().trim(),
       school: (formData.get(`education-school-${index}`) || "").toString().trim(),
       major: (formData.get(`education-major-${index}`) || "").toString().trim(),
+      affiliation: (formData.get(`education-affiliation-${index}`) || "").toString().trim(),
       start: (formData.get(`education-start-${index}`) || "").toString(),
       end: (formData.get(`education-end-${index}`) || "").toString()
     }));
 
-  return preserveBlank ? records : records.filter((item) => item.degree || item.school || item.major || item.start || item.end);
+  return preserveBlank ? records : records.filter((item) => item.degree || item.school || item.major || item.affiliation || item.start || item.end);
 }
 
 function collectCareerFromForm(form, preserveBlank = false) {
@@ -7492,6 +7628,7 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.status = getFormText(form, "editStatus") || candidate.status;
   candidate.birthYear = getFormText(form, "editBirthYear");
   candidate.age = calculateAge(candidate.birthYear);
+  candidate.nationality = getFormText(form, "editNationality");
   candidate.email = getFormText(form, "editEmail");
   candidate.phone = getFormText(form, "editPhone");
   candidate.linkedinUrl = getFormText(form, "editLinkedinUrl");
@@ -7546,7 +7683,7 @@ async function syncEditDraftBeforeAppend() {
 async function addEducationRecord() {
   await syncEditDraftBeforeAppend();
   const candidate = getCandidate();
-  candidate.education.push({ degree: "", school: "", major: "", start: "", end: "" });
+  candidate.education.push({ degree: "", school: "", major: "", affiliation: "", start: "", end: "" });
   state.isEditingCandidate = true;
   renderDetail();
 }
@@ -7565,7 +7702,7 @@ async function removeEducationRecord(index) {
   candidate.education.splice(index, 1);
 
   if (!candidate.education.length) {
-    candidate.education.push({ degree: "", school: "", major: "", start: "", end: "" });
+    candidate.education.push({ degree: "", school: "", major: "", affiliation: "", start: "", end: "" });
   }
 
   state.isEditingCandidate = true;
@@ -10246,6 +10383,105 @@ function deleteInterviewRecord(interviewId) {
   renderDetail();
 }
 
+function startNewMemoRecord() {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 메모를 등록할 수 없습니다.");
+    return;
+  }
+
+  state.editingMemoId = "new";
+  renderDetail();
+}
+
+function editMemoRecord(memoId) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate) || !candidate.memos?.some((memo) => memo.id === memoId)) {
+    showToast("수정할 메모를 찾지 못했습니다.");
+    return;
+  }
+
+  state.editingMemoId = memoId;
+  renderDetail();
+}
+
+function cancelMemoEdit() {
+  state.editingMemoId = "";
+  renderDetail();
+}
+
+function saveMemoRecord(form) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 메모를 저장할 수 없습니다.");
+    return;
+  }
+
+  const memoId = getFormText(form, "memoId");
+  const content = getFormText(form, "memoContent");
+
+  if (!content) {
+    showToast("메모 내용을 입력해주세요.");
+    return;
+  }
+
+  const existingIndex = (candidate.memos || []).findIndex((memo) => memo.id === memoId);
+  const previous = existingIndex >= 0 ? candidate.memos[existingIndex] : null;
+  const today = getTodayDate();
+  const memo = normalizeMemoRecord({
+    id: memoId || createId("memo"),
+    content,
+    actor: previous?.actor || getCurrentActorName(),
+    createdAt: previous?.createdAt || today,
+    updatedAt: today
+  });
+
+  if (existingIndex >= 0) {
+    candidate.memos[existingIndex] = memo;
+  } else {
+    candidate.memos = candidate.memos || [];
+    candidate.memos.unshift(memo);
+  }
+
+  candidate.updatedAt = today;
+  state.editingMemoId = "";
+  addAuditLog(memoId ? "메모 수정" : "메모 등록", candidate.name, content.slice(0, 40));
+  persistState();
+  showToast("메모가 저장되었습니다.");
+  renderDetail();
+}
+
+function deleteMemoRecord(memoId) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("현재 회원등급으로 메모를 삭제할 수 없습니다.");
+    return;
+  }
+
+  const memo = (candidate.memos || []).find((item) => item.id === memoId);
+
+  if (!memo) {
+    showToast("삭제할 메모를 찾지 못했습니다.");
+    return;
+  }
+
+  if (!window.confirm("선택한 메모를 삭제할까요?")) {
+    return;
+  }
+
+  candidate.memos = candidate.memos.filter((item) => item.id !== memoId);
+  candidate.updatedAt = getTodayDate();
+  state.editingMemoId = "";
+  addAuditLog("메모 삭제", candidate.name, memo.content.slice(0, 40));
+  persistState();
+  showToast("메모를 삭제했습니다.");
+  renderDetail();
+}
+
 async function executeAiSearchWithQuery(query, options = {}) {
   state.aiQuery = query.trim();
 
@@ -11206,6 +11442,28 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-new-memo]")) {
+      startNewMemoRecord();
+      return;
+    }
+
+    const editMemoButton = event.target.closest("[data-edit-memo]");
+    if (editMemoButton) {
+      editMemoRecord(editMemoButton.dataset.editMemo);
+      return;
+    }
+
+    const deleteMemoButton = event.target.closest("[data-delete-memo]");
+    if (deleteMemoButton) {
+      deleteMemoRecord(deleteMemoButton.dataset.deleteMemo);
+      return;
+    }
+
+    if (event.target.closest("[data-cancel-memo-edit]")) {
+      cancelMemoEdit();
+      return;
+    }
+
     const addEducationButton = event.target.closest("[data-add-education]");
     if (addEducationButton) {
       addEducationRecord();
@@ -11440,6 +11698,11 @@ function bindEvents() {
     if (event.target.matches("#interview-form")) {
       event.preventDefault();
       saveInterviewRecord(event.target);
+    }
+
+    if (event.target.matches("#memo-form")) {
+      event.preventDefault();
+      saveMemoRecord(event.target);
     }
   });
 

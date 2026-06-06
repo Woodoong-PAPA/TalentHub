@@ -2914,6 +2914,24 @@ tr:last-child td {
   justify-content: flex-end;
 }
 
+.detail-hero-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  min-width: 168px;
+}
+
+.detail-hero-side .detail-status-control,
+.detail-hero-side .detail-status-readonly {
+  justify-items: end;
+  margin-top: 0;
+  text-align: right;
+}
+
+.detail-hero-side .compact-select {
+  min-width: 138px;
+}
+
 .icon-link-button,
 .icon-mini-button {
   display: inline-grid;
@@ -3252,6 +3270,11 @@ tr:last-child td {
   gap: 8px;
 }
 
+.attachment-list {
+  display: grid;
+  gap: 8px;
+}
+
 .attachment-row {
   display: flex;
   align-items: center;
@@ -3259,7 +3282,7 @@ tr:last-child td {
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 10px 12px;
   background: var(--surface-soft);
 }
 
@@ -3278,6 +3301,7 @@ tr:last-child td {
 
 .attachment-row small {
   color: var(--muted);
+  font-size: 12px;
 }
 
 .attachment-row .soft-button {
@@ -3315,6 +3339,59 @@ tr:last-child td {
   line-height: 1.45;
   white-space: pre-line;
   overflow-wrap: anywhere;
+}
+
+.memo-list {
+  display: grid;
+  gap: 10px;
+}
+
+.memo-form {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.memo-form .control-textarea {
+  min-height: 86px;
+}
+
+.memo-form-actions,
+.memo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.memo-card {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.memo-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.memo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .detail-plan-grid {
@@ -3854,6 +3931,11 @@ tr:last-child td {
   .record-mainline {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .detail-hero-side {
+    width: 100%;
+    justify-items: end;
   }
 
   .detail-tab-strip {
