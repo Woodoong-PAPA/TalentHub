@@ -106,6 +106,15 @@ create table if not exists public.trending_people_reports (
 create index if not exists trending_people_generated_at_idx on public.trending_people_reports (generated_at desc);
 create index if not exists trending_people_people_gin_idx on public.trending_people_reports using gin (people);
 
+create table if not exists public.trending_search_settings (
+  id text primary key default 'default' check (id = 'default'),
+  prompt text not null default 'AI, 로보틱스, 모바일, TV, 생활가전 등 삼성전자 DX부문 주요 사업분야 중심. DS/반도체 분야는 제외.',
+  keywords jsonb not null default '["AI","인공지능","로보틱스","로봇","모바일","스마트폰","TV","생활가전","가전"]'::jsonb,
+  updated_at timestamptz not null default now(),
+  updated_by text,
+  payload jsonb not null default '{}'::jsonb
+);
+
 create table if not exists public.trending_mail_settings (
   id text primary key default 'default' check (id = 'default'),
   enabled boolean not null default false,
@@ -142,6 +151,7 @@ alter table public.app_members enable row level security;
 alter table public.app_role_permissions enable row level security;
 alter table public.recruiting_policy_sources enable row level security;
 alter table public.trending_people_reports enable row level security;
+alter table public.trending_search_settings enable row level security;
 alter table public.trending_mail_settings enable row level security;
 alter table public.trending_mail_events enable row level security;
 
@@ -157,6 +167,8 @@ drop policy if exists "demo recruiting policy sources read" on public.recruiting
 drop policy if exists "demo recruiting policy sources write" on public.recruiting_policy_sources;
 drop policy if exists "demo trending people read" on public.trending_people_reports;
 drop policy if exists "demo trending people write" on public.trending_people_reports;
+drop policy if exists "demo trending search settings read" on public.trending_search_settings;
+drop policy if exists "demo trending search settings write" on public.trending_search_settings;
 drop policy if exists "demo trending mail settings read" on public.trending_mail_settings;
 drop policy if exists "demo trending mail settings write" on public.trending_mail_settings;
 drop policy if exists "demo trending mail events read" on public.trending_mail_events;
@@ -240,6 +252,19 @@ to anon, authenticated
 using (true)
 with check (true);
 
+create policy "demo trending search settings read"
+on public.trending_search_settings
+for select
+to anon, authenticated
+using (true);
+
+create policy "demo trending search settings write"
+on public.trending_search_settings
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
 create policy "demo trending mail settings read"
 on public.trending_mail_settings
 for select
@@ -311,6 +336,23 @@ values
 on conflict (role, view) do update set
   enabled = excluded.enabled,
   updated_at = now();
+
+insert into public.trending_search_settings (
+  id,
+  prompt,
+  keywords,
+  payload
+)
+values (
+  'default',
+  'AI, 로보틱스, 모바일, TV, 생활가전 등 삼성전자 DX부문 주요 사업분야 중심. DS/반도체 분야는 제외.',
+  '["AI","인공지능","로보틱스","로봇","모바일","스마트폰","TV","생활가전","가전"]'::jsonb,
+  jsonb_build_object(
+    'prompt', 'AI, 로보틱스, 모바일, TV, 생활가전 등 삼성전자 DX부문 주요 사업분야 중심. DS/반도체 분야는 제외.',
+    'keywords', jsonb_build_array('AI','인공지능','로보틱스','로봇','모바일','스마트폰','TV','생활가전','가전')
+  )
+)
+on conflict (id) do nothing;
 
 insert into public.trending_mail_settings (
   id,

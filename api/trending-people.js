@@ -2,8 +2,19 @@ const MAX_ARTICLES = 90;
 const GOOGLE_NEWS_DECODE_CONCURRENCY = 4;
 const GOOGLE_NEWS_BATCH_URL = "https://news.google.com/_/DotsSplashUi/data/batchexecute";
 const GOOGLE_NEWS_USER_AGENT = "Mozilla/5.0 (compatible; SamsungTalentPoolNewsRadar/1.0)";
-const PROFILE_COMPLETENESS_VERSION = 5;
+const PROFILE_COMPLETENESS_VERSION = 6;
+const DEFAULT_SEARCH_SETTINGS = {
+  prompt: "AI, 로보틱스, 모바일, TV, 생활가전 등 삼성전자 DX부문 주요 사업분야 중심. DS/반도체 분야는 제외.",
+  keywords: ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"],
+  updatedAt: "",
+  updatedBy: ""
+};
 const KNOWN_PROFILE_IMAGE_URLS = [
+  {
+    name: "팀 쿡",
+    organizationPattern: /apple|애플/i,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/Tim_Cook_%282017%2C_cropped%29.jpg/640px-Tim_Cook_%282017%2C_cropped%29.jpg"
+  },
   {
     name: "구광모",
     organizationPattern: /lg|엘지/i,
@@ -251,6 +262,48 @@ function forceRefresh(requestUrl) {
 function wantsHistory(requestUrl) {
   const url = new URL(requestUrl, "http://localhost");
   return url.searchParams.get("history") === "1";
+}
+
+function wantsSearchSettings(requestUrl) {
+  const url = new URL(requestUrl, "http://localhost");
+  return url.searchParams.get("settings") === "1";
+}
+
+function normalizeSearchPrompt(value) {
+  const prompt = String(value || "").trim();
+  return prompt || DEFAULT_SEARCH_SETTINGS.prompt;
+}
+
+function extractInterestKeywords(prompt) {
+  const text = normalizeSearchPrompt(prompt);
+  const quoted = [...text.matchAll(/["'“‘]([^"'“”‘’]{2,40})["'”’]/g)].map((match) => match[1]);
+  const split = text
+    .replace(/[()]/g, " ")
+    .split(/[,;\/\n]|(?:\s+및\s+)|(?:\s+등\s+)|(?:\s+중심\s*)/g)
+    .map((item) => item.replace(/(분야|사업분야|서칭|검색|관심|중심|한정|제외|포함|인물|뉴스|기사|삼성전자|DX부문|DX)$/g, "").trim())
+    .filter((item) => item.length >= 2 && item.length <= 30)
+    .filter((item) => !/^(DS|반도체|HBM|메모리|파운드리)$/i.test(item));
+  const keywords = [...new Set([...quoted, ...split, ...DEFAULT_SEARCH_SETTINGS.keywords]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean))];
+
+  return keywords.slice(0, 14);
+}
+
+function normalizeSearchSettings(settings = {}) {
+  const prompt = normalizeSearchPrompt(settings.prompt || settings.interest_prompt || settings.payload?.prompt);
+  const rawKeywords = Array.isArray(settings.keywords) ? settings.keywords : settings.payload?.keywords;
+  const keywords = Array.isArray(rawKeywords) && rawKeywords.length
+    ? [...new Set(rawKeywords.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 14)
+    : extractInterestKeywords(prompt);
+
+  return {
+    ...DEFAULT_SEARCH_SETTINGS,
+    prompt,
+    keywords,
+    updatedAt: String(settings.updatedAt || settings.updated_at || settings.payload?.updatedAt || "").trim(),
+    updatedBy: String(settings.updatedBy || settings.updated_by || settings.payload?.updatedBy || "").trim()
+  };
 }
 
 function decodeXml(value) {
@@ -639,19 +692,38 @@ async function resolveReportNewsLinks(report) {
   };
 }
 
-async function fetchNewsArticles(targetDate) {
+function buildInterestNewsQueries(searchSettings, baseFilter, personFilter) {
+  const settings = normalizeSearchSettings(searchSettings);
+  const keywordExpression = settings.keywords.length
+    ? `(${settings.keywords.map((keyword) => `"${keyword}"`).join(" OR ")})`
+    : `(${TOPIC_KEYWORDS.map((keyword) => `"${keyword}"`).join(" OR ")})`;
+  const defaultQueries = [
+    `("AI" OR "인공지능") ${personFilter} ${baseFilter}`,
+    `("로봇" OR "로보틱스") ${personFilter} ${baseFilter}`,
+    `("모바일" OR "스마트폰" OR "갤럭시") ${personFilter} ${baseFilter}`,
+    `("TV" OR "디스플레이") ${personFilter} ${baseFilter}`,
+    `("생활가전" OR "가전" OR "냉장고" OR "에어컨") ${personFilter} ${baseFilter}`
+  ];
+
+  return [...new Set([`${keywordExpression} ${personFilter} ${baseFilter}`, ...defaultQueries])].slice(0, 6);
+}
+
+async function fetchNewsArticles(targetDate, searchSettings = DEFAULT_SEARCH_SETTINGS) {
   const nextDate = addDays(targetDate, 1);
   const baseFilter = `after:${targetDate} before:${nextDate} -반도체 -메모리 -HBM -파운드리 -웨이퍼 -낸드 -D램 -"DS부문"`;
   const personFilter = `("대표" OR "CEO" OR "창업자" OR "교수" OR "연구원" OR "개발자" OR "사장" OR "회장" OR "임원" OR "리더")`;
-  const queries = [
+  const legacyQueries = [
     `("AI" OR "인공지능") ${personFilter} ${baseFilter}`,
     `("로봇" OR "로보틱스") ${personFilter} ${baseFilter}`,
     `("모바일" OR "스마트폰" OR "갤럭시") ${personFilter} ${baseFilter}`,
     `("TV" OR "디스플레이") ${personFilter} ${baseFilter}`,
     `("생활가전" OR "가전" OR "냉장고" OR "세탁기") ${personFilter} ${baseFilter}`
   ];
+  const settings = normalizeSearchSettings(searchSettings);
+  const queries = buildInterestNewsQueries(settings, baseFilter, personFilter).concat(legacyQueries).slice(0, 6);
   const batches = await Promise.all(queries.map(async (query, index) => {
     const topic = ["AI", "로보틱스", "모바일", "TV", "생활가전"][index];
+    const effectiveTopic = settings.keywords[index] || topic || "DX";
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=ko&gl=KR&ceid=KR:ko`;
     const response = await fetch(url, {
       headers: {
@@ -663,7 +735,7 @@ async function fetchNewsArticles(targetDate) {
       throw new Error(`Google News RSS failed: ${response.status}`);
     }
 
-    return parseRssItems(await response.text(), topic);
+    return parseRssItems(await response.text(), effectiveTopic);
   }));
   const deduped = new Map();
 
@@ -751,9 +823,48 @@ async function fetchJson(url, options = {}) {
   return JSON.parse(await fetchText(url, options));
 }
 
+async function readJsonBody(request) {
+  const chunks = [];
+
+  for await (const chunk of request) {
+    chunks.push(chunk);
+  }
+
+  const body = Buffer.concat(chunks).toString("utf8");
+  return body ? JSON.parse(body) : {};
+}
+
 async function loadCachedReport(targetDate) {
   const rows = await supabaseRequest(`trending_people_reports?select=payload&report_date=eq.${targetDate}&limit=1`);
   return Array.isArray(rows) && rows[0]?.payload ? rows[0].payload : null;
+}
+
+async function loadSearchSettings() {
+  try {
+    const rows = await supabaseRequest("trending_search_settings?select=*&id=eq.default&limit=1");
+    return normalizeSearchSettings(Array.isArray(rows) ? rows[0] : null);
+  } catch (error) {
+    console.warn("Trending search settings could not be loaded. Falling back to defaults.", error.message);
+    return normalizeSearchSettings();
+  }
+}
+
+async function saveSearchSettings(settings) {
+  const normalized = normalizeSearchSettings(settings);
+  const rows = await supabaseRequest("trending_search_settings?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify([{
+      id: "default",
+      prompt: normalized.prompt,
+      keywords: normalized.keywords,
+      updated_at: new Date().toISOString(),
+      updated_by: normalized.updatedBy || "",
+      payload: normalized
+    }])
+  });
+
+  return normalizeSearchSettings(Array.isArray(rows) ? rows[0] : normalized);
 }
 
 async function loadReportHistory() {
@@ -904,7 +1015,7 @@ async function requestOpenAIJson({ apiKey, model, prompt, schema, schemaName, er
   return JSON.parse(outputText);
 }
 
-async function callOpenAIForPeople(targetDate, articles, excludedNames) {
+async function callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings = DEFAULT_SEARCH_SETTINGS) {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
@@ -912,7 +1023,10 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames) {
   }
 
   const model = process.env.OPENAI_TRENDING_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const settings = normalizeSearchSettings(searchSettings);
   const prompt = [
+    `관리자 관심 분야 설정: ${settings.prompt}`,
+    `관심 분야 키워드: ${settings.keywords.join(", ")}`,
     "너는 삼성전자 DX부문 채용 담당자를 위한 한국 뉴스 기반 인물 리서치 애널리스트다.",
     `대상 기사 기간: ${targetDate} 00:00~24:00 KST.`,
     "검색 범위는 한국 뉴스 기사이며, 관심 분야는 AI, 로보틱스, 모바일, TV, 생활가전 등 DX 사업분야다.",
@@ -1312,6 +1426,69 @@ async function fetchWikipediaProfileImage(person) {
   return "";
 }
 
+function wikimediaFilePath(fileName) {
+  const normalized = String(fileName || "").trim().replace(/^File:/i, "");
+  return normalized
+    ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(normalized)}?width=640`
+    : "";
+}
+
+function scoreWikidataEntity(entity, person) {
+  const name = String(person.name || "").replace(/\s+/g, "").toLowerCase();
+  const org = String(person.currentOrg || "").toLowerCase();
+  const title = String(person.currentTitle || "").toLowerCase();
+  const text = [
+    entity.labels?.ko?.value,
+    entity.labels?.en?.value,
+    entity.descriptions?.ko?.value,
+    entity.descriptions?.en?.value,
+    ...Object.keys(entity.sitelinks || {})
+  ].join(" ").replace(/\s+/g, "").toLowerCase();
+  const spacedText = [
+    entity.labels?.ko?.value,
+    entity.labels?.en?.value,
+    entity.descriptions?.ko?.value,
+    entity.descriptions?.en?.value
+  ].join(" ").toLowerCase();
+  let score = 0;
+
+  if (name && text.includes(name)) score += 5;
+  if (org && spacedText.includes(org)) score += 3;
+  if (title && spacedText.includes(title)) score += 1;
+  if (entity.claims?.P18?.[0]?.mainsnak?.datavalue?.value) score += 3;
+  if (entity.claims?.P31?.some((claim) => claim.mainsnak?.datavalue?.value?.id === "Q5")) score += 3;
+
+  return score;
+}
+
+async function fetchWikidataProfileImage(person) {
+  for (const query of personAssetSearchQueries(person)) {
+    try {
+      const searchUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=ko&uselang=ko&origin=*&limit=5&search=${encodeURIComponent(query)}`;
+      const searchJson = await fetchJson(searchUrl, { timeoutMs: 12000 });
+      const ids = (searchJson.search || []).map((item) => item.id).filter(Boolean).slice(0, 5);
+
+      if (!ids.length) {
+        continue;
+      }
+
+      const entityUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&origin=*&props=labels|descriptions|claims|sitelinks&languages=ko|en&ids=${ids.join("|")}`;
+      const entityJson = await fetchJson(entityUrl, { timeoutMs: 12000 });
+      const best = Object.values(entityJson.entities || {})
+        .filter((entity) => entity.claims?.P18?.[0]?.mainsnak?.datavalue?.value)
+        .sort((a, b) => scoreWikidataEntity(b, person) - scoreWikidataEntity(a, person))[0];
+
+      if (best && scoreWikidataEntity(best, person) >= 6) {
+        return wikimediaFilePath(best.claims.P18[0].mainsnak.datavalue.value);
+      }
+    } catch (error) {
+      console.warn(`Wikidata image lookup failed for ${person.name}.`, error.message);
+    }
+  }
+
+  return "";
+}
+
 function extractLinkedInUrls(html) {
   const decoded = decodeHtml(html);
   const urls = new Set();
@@ -1382,7 +1559,134 @@ function expandImageUrlCandidates(url) {
   return [...candidates];
 }
 
+function normalizedIdentityTokens(person) {
+  return [
+    person?.name,
+    person?.currentOrg,
+    person?.currentTitle
+  ]
+    .map((item) => String(item || "").replace(/\s+/g, "").toLowerCase())
+    .filter((item) => item.length >= 2);
+}
+
+function scoreImageCandidate(url, context, person) {
+  const compact = `${url || ""} ${context || ""}`.replace(/\s+/g, "").toLowerCase();
+  const tokens = normalizedIdentityTokens(person);
+  let score = 0;
+
+  tokens.forEach((token, index) => {
+    if (token && compact.includes(token)) {
+      score += index === 0 ? 7 : 2;
+    }
+  });
+
+  if (/profile|portrait|headshot|photo|people|person|ceo|founder|교수|대표|프로필|인물|기자간담회/i.test(context)) {
+    score += 2;
+  }
+
+  if (/logo|symbol|emblem|banner|sprite|icon|thumb_default|noimage|placeholder|share|sns|ad_|advert/i.test(compact)) {
+    score -= 8;
+  }
+
+  return score;
+}
+
+function stripHtmlText(value) {
+  return decodeHtml(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractPageImageContext(html) {
+  const source = String(html || "");
+  const title = source.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "";
+  const metaTexts = [];
+
+  for (const match of source.matchAll(/<meta\b[^>]+>/gi)) {
+    const tag = match[0];
+
+    if (!/(?:property|name)=["'](?:title|description|og:title|og:description|twitter:title|twitter:description)["']/i.test(tag)) {
+      continue;
+    }
+
+    const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
+
+    if (content) {
+      metaTexts.push(content);
+    }
+  }
+
+  return stripHtmlText([title, ...metaTexts].join(" "));
+}
+
+function extractImageSurroundingContext(html, matchIndex, matchLength) {
+  const source = String(html || "");
+  const start = Math.max(0, matchIndex - 500);
+  const end = Math.min(source.length, matchIndex + matchLength + 700);
+  return stripHtmlText(source.slice(start, end));
+}
+
+function extractImageCandidateRecords(html, pageUrl, options = {}) {
+  const { person = null, requirePositiveScore = false } = options;
+  const records = new Map();
+  const pageContext = extractPageImageContext(html);
+
+  const addRecord = (url, context, sourceType) => {
+    expandImageUrlCandidates(url).forEach((candidateUrl) => {
+      const sourceBoost = sourceType === "img" ? 2 : sourceType === "meta" ? -1 : 0;
+      const score = scoreImageCandidate(candidateUrl, context, person) + sourceBoost;
+      const previous = records.get(candidateUrl);
+
+      if (!previous || score > previous.score) {
+        records.set(candidateUrl, { url: candidateUrl, context, sourceType, score });
+      }
+    });
+  };
+
+  for (const match of String(html || "").matchAll(/<meta\b[^>]+>/gi)) {
+    const tag = match[0];
+
+    if (!/(?:property|name)=["'](?:og:image|twitter:image|image)["']/i.test(tag)) {
+      continue;
+    }
+
+    const content = tag.match(/content=["']([^"']+)["']/i)?.[1];
+
+    if (content) {
+      addRecord(new URL(decodeHtml(content), pageUrl).href, `${tag} ${pageContext}`, "meta");
+    }
+  }
+
+  for (const match of String(html || "").matchAll(/<img\b[^>]+>/gi)) {
+    const tag = decodeHtml(match[0]);
+    const src = tag.match(/\bsrc=["']([^"']+)["']/i)?.[1] || tag.match(/\bdata-src=["']([^"']+)["']/i)?.[1];
+
+    if (src) {
+      const surroundingContext = extractImageSurroundingContext(html, match.index || 0, match[0].length);
+      addRecord(new URL(decodeHtml(src), pageUrl).href, `${tag} ${surroundingContext}`, "img");
+    }
+  }
+
+  return [...records.values()]
+    .filter((record) => !/logo|symbol|emblem|banner|share_sns|printlogo|toplogo|icon[-_]|sprite|placeholder|noimage/i.test(record.url))
+    .filter((record) => !requirePositiveScore || record.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 16);
+}
+
 function extractImageCandidateUrls(html, pageUrl, options = {}) {
+  const records = extractImageCandidateRecords(html, pageUrl, {
+    person: options.person,
+    requirePositiveScore: options.requireNameInImageTag
+  });
+
+  if (records.length) {
+    return records.map((record) => record.url);
+  }
+
   const { person = null, requireNameInImageTag = false } = options;
   const name = String(person?.name || "").replace(/\s+/g, "").toLowerCase();
   const urls = new Set();
@@ -1453,7 +1757,9 @@ async function fetchProfileImageFromSourceLinks(person) {
     try {
       const html = await fetchText(sourceUrl, { timeoutMs: 12000 });
 
-      for (const candidateUrl of extractImageCandidateUrls(html, sourceUrl, { person })) {
+      const candidates = extractImageCandidateRecords(html, sourceUrl, { person, requirePositiveScore: true });
+
+      for (const { url: candidateUrl } of candidates) {
         const imageUrl = await validateImageUrl(candidateUrl);
 
         if (imageUrl) {
@@ -1579,6 +1885,10 @@ async function supplementPublicProfileAssets(people) {
     }
 
     if (!imageUrl) {
+      imageUrl = await validateImageUrl(await fetchWikidataProfileImage(person));
+    }
+
+    if (!imageUrl) {
       imageUrl = await validateImageUrl(findKnownProfileImageUrl(person));
     }
 
@@ -1647,15 +1957,16 @@ function isLikelyPersonName(person) {
 }
 
 async function generateReport(targetDate) {
+  const searchSettings = await loadSearchSettings();
   const excludedNames = await loadExcludedNames(targetDate);
-  const articles = await fetchNewsArticles(targetDate);
+  const articles = await fetchNewsArticles(targetDate, searchSettings);
 
   if (!articles.length) {
     throw new Error("No Korean DX news articles were found for the target date.");
   }
 
   const articleById = new Map(articles.map((article) => [article.id, article]));
-  const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames);
+  const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings);
   const rankedCandidates = (ranked.people || [])
     .filter((person) => person.name && !excludedNames.includes(person.name) && isLikelyPersonName(person))
     .slice(0, 5);
@@ -1671,7 +1982,9 @@ async function generateReport(targetDate) {
     generatedAt: new Date().toISOString(),
     profileCompletenessVersion: PROFILE_COMPLETENESS_VERSION,
     searchScope: "Google News 한국판 RSS, hl=ko, gl=KR, ceid=KR:ko",
-    topics: TOPIC_KEYWORDS,
+    interestPrompt: searchSettings.prompt,
+    topics: searchSettings.keywords,
+    searchSettings,
     excludedNames,
     articleCount: articlesWithResolvedLinks.length,
     articles: articlesWithResolvedLinks,
@@ -1683,7 +1996,7 @@ async function generateReport(targetDate) {
 }
 
 module.exports = async function trendingPeople(request, response) {
-  if (!["GET", "POST"].includes(request.method)) {
+  if (!["GET", "POST", "PUT"].includes(request.method)) {
     sendJson(response, 405, { ok: false, error: "Method not allowed" });
     return;
   }
@@ -1691,6 +2004,23 @@ module.exports = async function trendingPeople(request, response) {
   loadLocalEnv();
 
   try {
+    if (wantsSearchSettings(request.url)) {
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request);
+        sendJson(response, 200, {
+          ok: true,
+          settings: await saveSearchSettings(body)
+        });
+        return;
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        settings: await loadSearchSettings()
+      });
+      return;
+    }
+
     if (wantsHistory(request.url)) {
       sendJson(response, 200, {
         ok: true,

@@ -79,8 +79,14 @@ const DEFAULT_TRENDING_MAIL_SETTINGS = {
   updatedAt: "",
   updatedBy: ""
 };
+const DEFAULT_TRENDING_SEARCH_SETTINGS = {
+  prompt: "AI, 로보틱스, 모바일, TV, 생활가전 등 삼성전자 DX부문 주요 사업분야 중심. DS/반도체 분야는 제외.",
+  keywords: ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"],
+  updatedAt: "",
+  updatedBy: ""
+};
 const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
-const TRENDING_PROFILE_COMPLETENESS_VERSION = 5;
+const TRENDING_PROFILE_COMPLETENESS_VERSION = 6;
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
 const CANDIDATE_VISIBILITY_LABELS = {
   all: "전체 공개",
@@ -576,7 +582,9 @@ const state = {
   trendingError: "",
   trendingModal: "",
   trendingMailSettings: structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
+  trendingSearchSettings: structuredClone(DEFAULT_TRENDING_SEARCH_SETTINGS),
   trendingMailLoading: false,
+  trendingSearchLoading: false,
   trendingMailError: "",
   trendingMailStatus: "",
   registerExtractedPhotoUrl: "",
@@ -1197,6 +1205,24 @@ function normalizeTrendingMailSettings(settings = {}) {
   };
 }
 
+function normalizeTrendingSearchSettings(settings = {}) {
+  const prompt = String(settings.prompt || settings.interest_prompt || settings.payload?.prompt || DEFAULT_TRENDING_SEARCH_SETTINGS.prompt).trim();
+  const keywords = Array.isArray(settings.keywords)
+    ? settings.keywords
+    : Array.isArray(settings.payload?.keywords)
+      ? settings.payload.keywords
+      : DEFAULT_TRENDING_SEARCH_SETTINGS.keywords;
+
+  return {
+    ...structuredClone(DEFAULT_TRENDING_SEARCH_SETTINGS),
+    ...settings,
+    prompt: prompt || DEFAULT_TRENDING_SEARCH_SETTINGS.prompt,
+    keywords: [...new Set(keywords.map((item) => String(item || "").trim()).filter(Boolean))],
+    updatedAt: String(settings.updatedAt || settings.updated_at || settings.payload?.updatedAt || "").trim(),
+    updatedBy: String(settings.updatedBy || settings.updated_by || settings.payload?.updatedBy || "").trim()
+  };
+}
+
 function sanitizeMemberForStorage(member) {
   const normalized = normalizeMember(member);
   const { password, ...safeMember } = normalized;
@@ -1633,6 +1659,7 @@ function persistState(options = {}) {
         trendingHistory: state.trendingHistory,
         trendingSelectedDate: state.trendingSelectedDate,
         trendingMailSettings: state.trendingMailSettings,
+        trendingSearchSettings: state.trendingSearchSettings,
         policySources: state.policySources,
         policyChatMessages: state.policyChatMessages
       })
@@ -1715,6 +1742,10 @@ function restorePersistedState() {
 
   if (persisted.trendingMailSettings && typeof persisted.trendingMailSettings === "object") {
     state.trendingMailSettings = normalizeTrendingMailSettings(persisted.trendingMailSettings);
+  }
+
+  if (persisted.trendingSearchSettings && typeof persisted.trendingSearchSettings === "object") {
+    state.trendingSearchSettings = normalizeTrendingSearchSettings(persisted.trendingSearchSettings);
   }
 
   if (Array.isArray(persisted.policySources)) {
@@ -2849,6 +2880,7 @@ function setView(view) {
 
   if (view === "trending" && isAdmin()) {
     fetchTrendingMailSettings();
+    fetchTrendingSearchSettings();
   }
 }
 
@@ -6574,12 +6606,50 @@ function renderTrendingMailPanel(options = {}) {
   `;
 }
 
+function renderTrendingSearchPanel(options = {}) {
+  if (!isAdmin()) {
+    return "";
+  }
+
+  const settings = state.trendingSearchSettings || DEFAULT_TRENDING_SEARCH_SETTINGS;
+  const hideTitle = Boolean(options.hideTitle);
+
+  return `
+    <form class="trending-mail-panel" id="trending-search-form">
+      <div class="trending-mail-header">
+        <div>
+          ${hideTitle ? "" : "<strong>관심 분야 설정</strong>"}
+          <span>${settings.updatedAt ? `마지막 수정: ${escapeHtml(settings.updatedAt)}` : "리포트 생성과 인물 선정에 반영됩니다."}</span>
+        </div>
+      </div>
+      <div class="trending-mail-grid">
+        <div class="field full">
+          <label for="trending-search-prompt">검색/선정 프롬프트</label>
+          <textarea class="control-textarea" id="trending-search-prompt" name="prompt" rows="8" placeholder="예: AI 에이전트, 휴머노이드 로봇, 온디바이스 AI, 모바일 UX, TV 플랫폼, 생활가전 서비스 중심. DS/반도체 분야는 제외.">${escapeHtml(settings.prompt)}</textarea>
+          <div class="field-caption">이 문장은 매일 06:00 KST 자동 리포트 생성 시 Google News 검색 쿼리와 Top 5 선정 기준에 함께 반영됩니다.</div>
+        </div>
+        <div class="field full">
+          <label>자동 키워드 미리보기</label>
+          <div class="recipient-chip-list">
+            ${(settings.keywords || []).map((keyword) => `<span class="recipient-chip">${escapeHtml(keyword)}</span>`).join("")}
+          </div>
+        </div>
+      </div>
+      <div class="trending-mail-actions">
+        <button class="primary-button compact-button" type="button" data-save-trending-search ${state.trendingSearchLoading ? "disabled" : ""}>설정 저장</button>
+      </div>
+    </form>
+  `;
+}
+
 function renderTrendingModal() {
   if (!state.trendingModal) {
     return "";
   }
 
-  const isMailModal = state.trendingModal === "mail";
+  const modalType = state.trendingModal;
+  const isMailModal = modalType === "mail";
+  const isSearchModal = modalType === "search";
   const title = isMailModal ? "메일링 설정" : "리포트 보관함";
   const description = isMailModal
     ? "발송 시간과 복수 수신처를 설정하고 테스트 메일을 발송합니다."
@@ -6587,8 +6657,15 @@ function renderTrendingModal() {
   const content = isMailModal
     ? renderTrendingMailPanel({ hideTitle: true })
     : renderTrendingHistoryPanel({ hideTitle: true });
+  const effectiveTitle = isMailModal ? "메일링 설정" : isSearchModal ? "관심 분야 설정" : "리포트 보관함";
+  const effectiveDescription = isMailModal
+    ? "발송 시간과 복수 수신처를 설정하고 테스트 메일을 발송합니다."
+    : isSearchModal
+      ? "매일 Today's Talent에서 검색해야 하는 관심 분야를 자연어 프롬프트로 관리합니다."
+      : "저장된 날짜를 선택해 과거 Today's Talent 리포트를 조회합니다.";
+  const effectiveContent = isSearchModal ? renderTrendingSearchPanel({ hideTitle: true }) : content;
 
-  if (!content) {
+  if (!effectiveContent) {
     return "";
   }
 
@@ -6597,13 +6674,13 @@ function renderTrendingModal() {
       <section class="trending-modal" role="dialog" aria-modal="true" aria-labelledby="trending-modal-title">
         <div class="trending-modal-header">
           <div>
-            <strong id="trending-modal-title">${escapeHtml(title)}</strong>
-            <span>${escapeHtml(description)}</span>
+            <strong id="trending-modal-title">${escapeHtml(effectiveTitle)}</strong>
+            <span>${escapeHtml(effectiveDescription)}</span>
           </div>
           <button class="ghost-button compact-button" type="button" data-close-trending-modal>닫기</button>
         </div>
         <div class="trending-modal-body">
-          ${content}
+          ${effectiveContent}
         </div>
       </section>
     </div>
@@ -6611,13 +6688,17 @@ function renderTrendingModal() {
 }
 
 function openTrendingModal(type) {
-  if (type === "mail" && !isAdmin()) {
+  if (["mail", "search"].includes(type) && !isAdmin()) {
     showToast("관리자만 메일링 설정을 변경할 수 있습니다.");
     return;
   }
 
-  state.trendingModal = type === "mail" ? "mail" : "history";
+  state.trendingModal = type === "mail" ? "mail" : type === "search" ? "search" : "history";
   renderTrendingPeople();
+
+  if (type === "search") {
+    fetchTrendingSearchSettings();
+  }
 }
 
 function closeTrendingModal() {
@@ -6718,9 +6799,9 @@ function renderTrendingPeople() {
       </div>
       <div class="trending-toolbar-actions">
         <button class="ghost-button" type="button" data-open-trending-modal="history">리포트 보관함</button>
+        ${isAdmin() ? `<button class="ghost-button" type="button" data-open-trending-modal="search">관심 분야 설정</button>` : ""}
         ${isAdmin() ? `<button class="ghost-button" type="button" data-open-trending-modal="mail">메일링 설정</button>` : ""}
-        <button class="ghost-button" type="button" data-refresh-trending="latest" ${state.trendingLoading ? "disabled" : ""}>최신 리포트</button>
-        <button class="primary-button" type="button" data-refresh-trending="force" ${state.trendingLoading ? "disabled" : ""}>현재 날짜 재생성</button>
+        ${isAdmin() ? `<button class="primary-button" type="button" data-refresh-trending="force" ${state.trendingLoading ? "disabled" : ""}>현재 날짜 재생성</button>` : ""}
       </div>
     </div>
     <div class="trending-scope">
@@ -9505,6 +9586,32 @@ async function fetchTrendingHistory(options = {}) {
   }
 }
 
+async function fetchTrendingSearchSettings() {
+  if (!isAdmin() || state.trendingSearchLoading) {
+    return;
+  }
+
+  state.trendingSearchLoading = true;
+
+  try {
+    const response = await fetch("/api/trending-people?settings=1");
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending search settings failed: ${response.status}`);
+    }
+
+    state.trendingSearchSettings = normalizeTrendingSearchSettings(payload.settings);
+    persistState({ skipRemoteSync: true });
+  } catch (error) {
+    console.warn("Trending search settings failed.", error);
+    showToast("관심 분야 설정을 불러오지 못했습니다.");
+  } finally {
+    state.trendingSearchLoading = false;
+    renderTrendingPeople();
+  }
+}
+
 async function fetchTrendingMailSettings() {
   if (!isAdmin() || state.trendingMailLoading) {
     return;
@@ -9584,6 +9691,54 @@ async function saveTrendingMailSettings() {
     showToast(state.trendingMailError);
   } finally {
     state.trendingMailLoading = false;
+    renderTrendingPeople();
+  }
+}
+
+function collectTrendingSearchSettingsFromForm(form) {
+  const prompt = String(form.prompt.value || "").trim();
+
+  if (!prompt) {
+    throw new Error("관심 분야 프롬프트를 입력해주세요.");
+  }
+
+  return normalizeTrendingSearchSettings({
+    prompt,
+    updatedBy: getCurrentActorName()
+  });
+}
+
+async function saveTrendingSearchSettings() {
+  const form = $("#trending-search-form");
+
+  if (!form || !isAdmin()) {
+    return;
+  }
+
+  try {
+    state.trendingSearchLoading = true;
+    renderTrendingPeople();
+    const settings = collectTrendingSearchSettingsFromForm(form);
+    const response = await fetch("/api/trending-people?settings=1", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings)
+    });
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Trending search settings save failed: ${response.status}`);
+    }
+
+    state.trendingSearchSettings = normalizeTrendingSearchSettings(payload.settings);
+    addAuditLog("Today's Talent 관심 분야 설정", "Today's Talent", state.trendingSearchSettings.prompt);
+    persistState();
+    showToast("관심 분야 설정을 저장했습니다.");
+  } catch (error) {
+    console.warn("Trending search settings save failed.", error);
+    showToast(error.message || "관심 분야 설정 저장에 실패했습니다.");
+  } finally {
+    state.trendingSearchLoading = false;
     renderTrendingPeople();
   }
 }
@@ -11572,6 +11727,11 @@ function bindEvents() {
 
     if (event.target.closest("[data-save-trending-mail]")) {
       saveTrendingMailSettings();
+      return;
+    }
+
+    if (event.target.closest("[data-save-trending-search]")) {
+      saveTrendingSearchSettings();
       return;
     }
 
