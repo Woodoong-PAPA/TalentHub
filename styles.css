@@ -1088,7 +1088,7 @@ tr:last-child td {
 }
 
 .policy-chat-layout {
-  grid-template-columns: minmax(260px, 0.78fr) minmax(360px, 1.2fr) minmax(260px, 0.78fr);
+  grid-template-columns: minmax(420px, 1fr) minmax(280px, 0.42fr);
   align-items: start;
 }
 
@@ -1101,7 +1101,6 @@ tr:last-child td {
 .policy-source-form {
   display: grid;
   gap: 12px;
-  margin-bottom: 16px;
 }
 
 .policy-source-form .control-textarea {
@@ -1127,6 +1126,39 @@ tr:last-child td {
   font-size: 13px;
 }
 
+.policy-source-viewer {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.policy-source-viewer-header {
+  display: grid;
+  gap: 3px;
+}
+
+.policy-source-viewer-header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.policy-source-viewer pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface-soft);
+  font: inherit;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .policy-source-list,
 .policy-message-list {
   display: grid;
@@ -1144,6 +1176,11 @@ tr:last-child td {
   background: var(--surface);
 }
 
+.policy-source-card.is-active {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
 .policy-source-card strong,
 .policy-source-card span,
 .policy-source-card small {
@@ -1156,6 +1193,16 @@ tr:last-child td {
 .policy-source-card small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.policy-source-card-actions,
+.policy-source-form-actions,
+.policy-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .policy-chat-panel {
@@ -1226,6 +1273,28 @@ tr:last-child td {
 
 .policy-chat-form .control-textarea {
   min-height: 112px;
+}
+
+.policy-source-modal {
+  max-width: min(1080px, calc(100vw - 36px));
+}
+
+.policy-source-modal-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(360px, 1fr);
+  gap: 16px;
+}
+
+.policy-source-modal-list,
+.policy-source-modal-editor {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.policy-source-modal .empty-state {
+  min-height: 160px;
 }
 
 .policy-citation-panel {
@@ -3295,6 +3364,10 @@ tr:last-child td {
   .screening-folder-side {
     min-width: 0;
     width: 100%;
+  }
+
+  .policy-source-modal-body {
+    grid-template-columns: 1fr;
   }
 
   .screening-card-tags {

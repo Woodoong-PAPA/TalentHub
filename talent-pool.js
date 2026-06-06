@@ -551,6 +551,8 @@ const state = {
   policyChatQuestion: "",
   policyChatSourceLoading: false,
   policyChatSourceError: "",
+  policySourceModalOpen: false,
+  policyEditingSourceId: "",
   policyChatSelectedCitationId: "",
   trendingReport: null,
   trendingHistory: [],
@@ -995,6 +997,13 @@ function ensurePolicySourceDefaults() {
     !findPolicyCitation(state.policyChatSelectedCitationId)
   ) {
     state.policyChatSelectedCitationId = "";
+  }
+
+  if (
+    state.policyEditingSourceId &&
+    !state.policySources.some((source) => source.id === state.policyEditingSourceId)
+  ) {
+    state.policyEditingSourceId = "";
   }
 }
 
@@ -4517,35 +4526,56 @@ function findPolicyCitation(citationId) {
     .find((citation) => citation.id === citationId) || null;
 }
 
+function findPolicySource(sourceId) {
+  return state.policySources.find((source) => source.id === sourceId) || null;
+}
+
 function renderPolicySourceForm() {
+  const editingSource = findPolicySource(state.policyEditingSourceId);
+
   if (!isAdmin()) {
+    const readableSource = editingSource || state.policySources[0] || null;
+
     return `
       <div class="policy-source-readonly">
         <strong>등록된 소스 ${state.policySources.length}개</strong>
         <span>관리자가 등록한 채용 기준 문서에 근거해 답변합니다.</span>
       </div>
+      ${readableSource ? `
+        <article class="policy-source-viewer">
+          <div class="policy-source-viewer-header">
+            <strong>${escapeHtml(readableSource.title)}</strong>
+            <span>${escapeHtml([readableSource.fileName || readableSource.sourceType, readableSource.updatedAt].filter(Boolean).join(" · "))}</span>
+          </div>
+          <pre>${escapeHtml(readableSource.content)}</pre>
+        </article>
+      ` : ""}
     `;
   }
 
   return `
     <form id="policy-source-form" class="policy-source-form">
+      <input type="hidden" name="sourceId" value="${escapeHtml(editingSource?.id || "")}" />
       <div class="field">
         <label for="policy-source-title">소스 제목</label>
-        <input class="control-input" id="policy-source-title" name="title" placeholder="예: 경력 채용 운영 기준" />
+        <input class="control-input" id="policy-source-title" name="title" placeholder="예: 경력 채용 운영 기준" value="${inputValue(editingSource?.title || "")}" />
       </div>
       <div class="field">
         <label for="policy-source-file">문서 업로드</label>
         <div class="dropzone policy-source-upload">
           <input id="policy-source-file" name="sourceFile" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
-          <span id="policy-source-file-status" class="form-help">${state.policyChatSourceLoading ? "문서를 읽는 중입니다." : "업로드하거나 아래에 직접 입력할 수 있습니다."}</span>
+          <span id="policy-source-file-status" class="form-help">${state.policyChatSourceLoading ? "문서를 읽는 중입니다." : editingSource?.fileName ? `${escapeHtml(editingSource.fileName)} 기반 소스입니다. 새 파일을 업로드하면 본문과 파일 정보가 교체됩니다.` : "업로드하거나 아래에 직접 입력할 수 있습니다."}</span>
         </div>
       </div>
       <div class="field">
         <label for="policy-source-content">소스 본문</label>
-        <textarea class="control-textarea" id="policy-source-content" name="content" placeholder="채용 기준, 면접 운영 규정, 평가 원칙 등을 붙여넣으세요."></textarea>
+        <textarea class="control-textarea" id="policy-source-content" name="content" placeholder="채용 기준, 면접 운영 규정, 평가 원칙 등을 붙여넣으세요.">${escapeHtml(editingSource?.content || "")}</textarea>
       </div>
       ${state.policyChatSourceError ? `<div class="form-error"><strong>소스 저장 오류</strong><span>${escapeHtml(state.policyChatSourceError)}</span></div>` : ""}
-      <button class="primary-button" type="submit">소스 저장</button>
+      <div class="policy-source-form-actions">
+        <button class="primary-button" type="submit">${editingSource ? "수정 저장" : "소스 저장"}</button>
+        ${editingSource ? `<button class="ghost-button" type="button" data-new-policy-source>신규 소스</button>` : ""}
+      </div>
     </form>
   `;
 }
@@ -4558,15 +4588,54 @@ function renderPolicySourceList() {
   return `
     <div class="policy-source-list">
       ${state.policySources.map((source) => `
-        <article class="policy-source-card">
+        <article class="policy-source-card ${source.id === state.policyEditingSourceId ? "is-active" : ""}">
           <div>
             <strong>${escapeHtml(source.title)}</strong>
             <span>${escapeHtml([source.fileName || source.sourceType, source.createdBy, source.updatedAt].filter(Boolean).join(" · "))}</span>
             <small>${escapeHtml(`${source.content.length.toLocaleString()}자`)}</small>
           </div>
-          ${isAdmin() ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-policy-source="${escapeHtml(source.id)}">삭제</button>` : ""}
+          <div class="policy-source-card-actions">
+            <button class="ghost-button compact-button" type="button" data-edit-policy-source="${escapeHtml(source.id)}">${isAdmin() ? "수정" : "보기"}</button>
+            ${isAdmin() ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-policy-source="${escapeHtml(source.id)}">삭제</button>` : ""}
+          </div>
         </article>
       `).join("")}
+    </div>
+  `;
+}
+
+function renderPolicySourceModal() {
+  if (!state.policySourceModalOpen) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-policy-source-modal-backdrop>
+      <section class="trending-modal policy-source-modal" role="dialog" aria-modal="true" aria-labelledby="policy-source-modal-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="policy-source-modal-title">소스 데이터</strong>
+            <span>채용 기준 Q&A 답변에 사용되는 원본 문서와 문구를 관리합니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-policy-source-modal>닫기</button>
+        </div>
+        <div class="trending-modal-body policy-source-modal-body">
+          <section class="policy-source-modal-list">
+            <div class="panel-header">
+              <h4>등록 소스</h4>
+              <span class="small-pill">${state.policySources.length}개</span>
+            </div>
+            ${renderPolicySourceList()}
+          </section>
+          <section class="policy-source-modal-editor">
+            <div class="panel-header">
+              <h4>${isAdmin() ? (findPolicySource(state.policyEditingSourceId) ? "소스 수정" : "신규 소스") : "소스 원문"}</h4>
+              ${isAdmin() ? `<button class="ghost-button compact-button" type="button" data-new-policy-source>신규 소스</button>` : ""}
+            </div>
+            ${renderPolicySourceForm()}
+          </section>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -4633,19 +4702,13 @@ function renderPolicyChat() {
 
   content.innerHTML = `
     <div class="policy-chat-layout">
-      <section class="content-panel policy-source-panel">
-        <div class="panel-header">
-          <h4>소스 데이터</h4>
-          <span class="small-pill">${state.policySources.length}개</span>
-        </div>
-        ${renderPolicySourceForm()}
-        ${renderPolicySourceList()}
-      </section>
-
       <section class="content-panel policy-chat-panel">
         <div class="panel-header">
           <h4>채용 기준 Q&A</h4>
-          <button class="ghost-button compact-button" type="button" data-clear-policy-chat>대화 초기화</button>
+          <div class="policy-chat-actions">
+            <button class="ghost-button compact-button" type="button" data-open-policy-sources>소스 데이터 ${state.policySources.length}개</button>
+            <button class="ghost-button compact-button" type="button" data-clear-policy-chat>대화 초기화</button>
+          </div>
         </div>
         <div class="policy-chat-notice">등록된 소스에 없는 내용은 답변하지 않습니다. 근거 버튼으로 원문 문구를 확인할 수 있습니다.</div>
         <div class="policy-message-list">${messages}</div>
@@ -4657,6 +4720,7 @@ function renderPolicyChat() {
 
       ${renderPolicyCitationPanel()}
     </div>
+    ${renderPolicySourceModal()}
   `;
 }
 
@@ -4667,6 +4731,8 @@ async function savePolicySourceFromForm(form) {
 
   const formData = new FormData(form);
   const file = formData.get("sourceFile");
+  const sourceId = String(formData.get("sourceId") || "").trim();
+  const existingSource = findPolicySource(sourceId);
   const title = String(formData.get("title") || "").trim();
   const content = normalizePolicyText(formData.get("content"));
 
@@ -4679,16 +4745,17 @@ async function savePolicySourceFromForm(form) {
   }
 
   const source = normalizePolicySource({
-    id: createId("policy-source"),
-    title: title || file?.name || "채용 기준 문서",
-    sourceType: file?.name ? "file" : "manual",
-    fileName: file?.name || "",
-    fileType: file?.type || "",
-    size: file?.size || content.length,
+    ...(existingSource || {}),
+    id: existingSource?.id || createId("policy-source"),
+    title: title || file?.name || existingSource?.title || "채용 기준 문서",
+    sourceType: file?.name ? "file" : existingSource?.sourceType || "manual",
+    fileName: file?.name || existingSource?.fileName || "",
+    fileType: file?.type || existingSource?.fileType || "",
+    size: file?.size || existingSource?.size || content.length,
     content,
-    createdAt: getTimestampText(),
+    createdAt: existingSource?.createdAt || getTimestampText(),
     updatedAt: getTimestampText(),
-    createdBy: getCurrentActorName()
+    createdBy: existingSource?.createdBy || getCurrentActorName()
   });
 
   state.policySources = [
@@ -4696,11 +4763,13 @@ async function savePolicySourceFromForm(form) {
     ...state.policySources.filter((item) => item.id !== source.id)
   ];
   state.policyChatSourceError = "";
+  state.policySourceModalOpen = true;
+  state.policyEditingSourceId = source.id;
   state.policyChatSelectedCitationId = "";
-  addAuditLog("채용 AI 소스 등록", source.title, `${source.content.length.toLocaleString()}자`);
+  addAuditLog(existingSource ? "채용 AI 소스 수정" : "채용 AI 소스 등록", source.title, `${source.content.length.toLocaleString()}자`);
   persistState();
   renderPolicyChat();
-  showToast("채용 기준 소스를 저장했습니다.");
+  showToast(existingSource ? "채용 기준 소스를 수정했습니다." : "채용 기준 소스를 저장했습니다.");
 }
 
 async function loadPolicySourceFile(file) {
@@ -4799,6 +4868,10 @@ async function deletePolicySource(sourceId) {
     state.policyChatSelectedCitationId = "";
   }
 
+  if (state.policyEditingSourceId === sourceId) {
+    state.policyEditingSourceId = "";
+  }
+
   addAuditLog("채용 AI 소스 삭제", source.title, "소스 데이터 제거");
   persistState();
   renderPolicyChat();
@@ -4829,6 +4902,33 @@ function openPolicyCitation(citationId) {
 function closePolicyCitation() {
   state.policyChatSelectedCitationId = "";
   persistState({ skipRemoteSync: true });
+  renderPolicyChat();
+}
+
+function openPolicySourceModal() {
+  state.policySourceModalOpen = true;
+  state.policyChatSourceError = "";
+  renderPolicyChat();
+}
+
+function closePolicySourceModal() {
+  state.policySourceModalOpen = false;
+  state.policyChatSourceError = "";
+  state.policyChatSourceLoading = false;
+  renderPolicyChat();
+}
+
+function editPolicySource(sourceId) {
+  state.policySourceModalOpen = true;
+  state.policyEditingSourceId = sourceId;
+  state.policyChatSourceError = "";
+  renderPolicyChat();
+}
+
+function newPolicySource() {
+  state.policySourceModalOpen = true;
+  state.policyEditingSourceId = "";
+  state.policyChatSourceError = "";
   renderPolicyChat();
 }
 
@@ -9739,6 +9839,27 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-open-policy-sources]")) {
+      openPolicySourceModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-policy-source-modal]") || event.target.matches("[data-policy-source-modal-backdrop]")) {
+      closePolicySourceModal();
+      return;
+    }
+
+    const editPolicySourceButton = event.target.closest("[data-edit-policy-source]");
+    if (editPolicySourceButton) {
+      editPolicySource(editPolicySourceButton.dataset.editPolicySource);
+      return;
+    }
+
+    if (event.target.closest("[data-new-policy-source]")) {
+      newPolicySource();
+      return;
+    }
+
     const deletePolicySourceButton = event.target.closest("[data-delete-policy-source]");
     if (deletePolicySourceButton) {
       deletePolicySource(deletePolicySourceButton.dataset.deletePolicySource).catch((error) => {
@@ -9904,6 +10025,10 @@ function bindEvents() {
 
     if (event.key === "Escape" && state.memberProfileModalOpen) {
       closeMemberProfileModal();
+    }
+
+    if (event.key === "Escape" && state.policySourceModalOpen) {
+      closePolicySourceModal();
     }
 
     if (event.key === "Escape" && state.policyChatSelectedCitationId) {
