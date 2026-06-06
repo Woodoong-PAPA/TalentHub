@@ -1627,6 +1627,27 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function decodeTextDataUrl(dataUrl = "") {
+  const match = String(dataUrl || "").match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+
+  if (!match) {
+    return "";
+  }
+
+  try {
+    const encoded = match[3] || "";
+    const raw = match[2]
+      ? atob(encoded)
+      : decodeURIComponent(encoded);
+    const bytes = new Uint8Array([...raw].map((char) => char.charCodeAt(0)));
+
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch (error) {
+    console.warn("Text data URL decode failed.", error);
+    return "";
+  }
+}
+
 function formatFileSize(bytes = 0) {
   if (!bytes) {
     return "-";
@@ -3271,6 +3292,60 @@ function renderScreeningTimeline(applicant) {
   `;
 }
 
+function attachmentFileType(attachment = {}) {
+  const name = String(attachment.name || "").toLowerCase();
+  const type = String(attachment.type || "").toLowerCase();
+  const dataUrl = String(attachment.dataUrl || "").toLowerCase();
+
+  if (type.includes("pdf") || name.endsWith(".pdf") || dataUrl.startsWith("data:application/pdf")) return "pdf";
+  if (type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(name)) return "image";
+  if (type.startsWith("text/") || /\.(txt|md|csv|log)$/i.test(name) || dataUrl.startsWith("data:text/")) return "text";
+  if (/\.(docx|hwpx|hwp|doc)$/i.test(name)) return "document";
+  return "unknown";
+}
+
+function renderResumeInlineViewer(attachment, applicant) {
+  if (!attachment) {
+    return `<div class="empty-state compact-empty">등록된 이력서 첨부 파일이 없습니다.</div>`;
+  }
+
+  const fileType = attachmentFileType(attachment);
+  const fileName = attachment.name || `${applicant.name || "지원자"}_resume`;
+  const extractedText = String(attachment.text || "").trim()
+    || (fileType === "text" ? decodeTextDataUrl(attachment.dataUrl) : "").trim();
+
+  if (fileType === "pdf" && attachment.dataUrl) {
+    return `
+      <div class="screening-resume-viewer">
+        <iframe class="screening-resume-frame" src="${escapeHtml(attachment.dataUrl)}#toolbar=1&navpanes=0" title="${escapeHtml(fileName)} 이력서 뷰어"></iframe>
+      </div>
+    `;
+  }
+
+  if (fileType === "image" && attachment.dataUrl) {
+    return `
+      <div class="screening-resume-viewer">
+        <img class="screening-resume-image" src="${escapeHtml(attachment.dataUrl)}" alt="${escapeHtml(fileName)} 이력서 미리보기" />
+      </div>
+    `;
+  }
+
+  if (extractedText) {
+    return `
+      <div class="screening-resume-viewer screening-resume-text-viewer">
+        <pre>${escapeHtml(extractedText)}</pre>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="screening-resume-viewer screening-resume-placeholder">
+      <strong>이 파일 형식은 브라우저 내 직접 미리보기가 제한됩니다.</strong>
+      <span>PDF, 이미지, TXT 또는 텍스트 추출 가능한 DOCX/HWPX 파일을 등록하면 이 영역에서 바로 확인할 수 있습니다.</span>
+    </div>
+  `;
+}
+
 function renderScreeningApplicantDetailModal(folder) {
   if (!folder || !state.screeningApplicantDetailId) {
     return "";
@@ -3324,8 +3399,8 @@ function renderScreeningApplicantDetailModal(folder) {
                   <strong>${escapeHtml(applicant.resumeAttachment.name || "첨부 이력서")}</strong>
                   <small>${escapeHtml(applicant.resumeAttachment.type || "파일 형식 미확인")}</small>
                 </span>
-                ${applicant.resumeAttachment.dataUrl ? `<a class="soft-button compact-button" href="${escapeHtml(applicant.resumeAttachment.dataUrl)}" download="${escapeHtml(applicant.resumeAttachment.name || `${applicant.name}_resume`)}">다운로드</a>` : ""}
               </div>
+              ${renderResumeInlineViewer(applicant.resumeAttachment, applicant)}
             ` : `<div class="empty-state compact-empty">등록된 이력서 첨부 파일이 없습니다.</div>`}
           </section>
 
@@ -7504,11 +7579,21 @@ async function attachmentFromFile(file) {
     return null;
   }
 
+  let text = "";
+
+  try {
+    const result = await readResumeText(file);
+    text = result.text || "";
+  } catch (error) {
+    console.warn("Attachment text extraction failed.", error);
+  }
+
   return {
     name: file.name,
     size: file.size,
     type: file.type || "",
-    dataUrl: await readFileAsDataUrl(file)
+    dataUrl: await readFileAsDataUrl(file),
+    text
   };
 }
 
