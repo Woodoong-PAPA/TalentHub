@@ -2855,7 +2855,7 @@ function candidateTable(candidates) {
             <th>학력</th>
             <th>경력</th>
             <th>직무</th>
-            <th>상태</th>
+            <th>사업부</th>
             <th>담당자</th>
             <th>관리</th>
           </tr>
@@ -2873,7 +2873,6 @@ function candidateTable(candidates) {
                   <span>
                     <button class="candidate-name-button" type="button" data-select-candidate="${candidate.id}">${escapeHtml(candidate.name)}</button>
                     <span>${escapeHtml(formatBirthAge(candidate))}</span>
-                    <span>${escapeHtml(getCandidateVisibilityLabel(candidate.visibility))}</span>
                   </span>
                 </div>
               </td>
@@ -2886,7 +2885,7 @@ function candidateTable(candidates) {
                 <span>${escapeHtml(careerSummary.meta)}</span>
               </td>
               <td class="role-cell">${escapeHtml(candidate.role)}</td>
-              <td>${getStatusChip(candidate.status)}</td>
+              <td>${escapeHtml(candidate.organization || "사업부 미입력")}</td>
               <td>${escapeHtml(candidate.owner)}</td>
               <td>
                 ${canManageCandidateProfile(candidate) ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-candidate="${candidate.id}">삭제</button>` : `<span class="muted-text">-</span>`}
