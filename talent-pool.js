@@ -4359,6 +4359,10 @@ function policyTokens(value) {
     .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token)))];
 }
 
+const POLICY_HIGHLIGHT_GENERIC_TOKENS = new Set([
+  "기준", "면접", "채용", "평가", "관련", "질문", "소스", "직무"
+]);
+
 function splitPolicyContentIntoPassages(source) {
   const paragraphs = normalizePolicyText(source.content)
     .split(/\n{2,}/)
@@ -4424,18 +4428,79 @@ function scorePolicyPassage(passage, queryTokens, rawQuery) {
 }
 
 function splitPolicySentences(text) {
-  return String(text || "")
-    .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
+  const prepared = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\s+(?=(?:#{1,6}\s*)?\d+(?:\.\d+)*\s)/g, "\n")
+    .replace(/\s+(?=(?:[-*]\s*)?\*{0,3}(?:평가 위원|면접 위원|면접위원|심사위원|면접관|인터뷰어|평가 방식|주요 평가 항목|기술의 깊이|조직 적합성)\s*[:：])/g, "\n");
+  const sentences = [];
+
+  prepared.split(/\n+/).forEach((line) => {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    const parts = trimmed
+      .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9*#])/g)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+
+    sentences.push(...(parts.length ? parts : [trimmed]));
+  });
+
+  return sentences;
 }
 
-function scorePolicySentence(sentence, queryTokens) {
+function getPolicyQuestionIntent(referenceText) {
+  const text = policySearchText(referenceText);
+  const committeeTerms = ["위원", "면접관", "인터뷰어", "패널", "interviewer"];
+  const countTerms = ["수", "인원", "몇", "구성", "명", "인", "number", "count"];
+
+  return {
+    committeeCount: committeeTerms.some((term) => text.includes(policySearchText(term))) &&
+      countTerms.some((term) => text.includes(policySearchText(term)))
+  };
+}
+
+function scorePolicySentence(sentence, queryTokens, referenceText = "") {
   const text = policySearchText(sentence);
-  return queryTokens.reduce((sum, token) => sum + (text.includes(token) ? 1 : 0), 0);
+  const intent = getPolicyQuestionIntent(referenceText || queryTokens.join(" "));
+  let score = 0;
+
+  queryTokens.forEach((token) => {
+    if (!text.includes(token)) {
+      return;
+    }
+
+    score += POLICY_HIGHLIGHT_GENERIC_TOKENS.has(token)
+      ? 1
+      : token.length >= 4 ? 4 : 3;
+  });
+
+  if (intent.committeeCount) {
+    const hasCommitteeTerm = /위원|면접관|인터뷰어|패널|interviewer/i.test(sentence);
+    const hasCountSignal = /\d+\s*(명|인)|[일이삼사오육칠팔구십]\s*(명|인)|이상|이내|이하|구성|참여/.test(sentence);
+    const hasSenioritySignal = /시니어|파트장|리더|manager|담당자|현업|실무/.test(sentence);
+    const isBroadHeading = /면접 및 심층 평가 체계|평가 방식|주요 평가 항목|기술의 깊이|조직 적합성/.test(sentence);
+
+    if (hasCommitteeTerm) score += 20;
+    if (hasCountSignal) score += 18;
+    if (hasCommitteeTerm && hasCountSignal) score += 50;
+    if (hasCommitteeTerm && hasSenioritySignal) score += 8;
+    if (!hasCommitteeTerm) score -= 8;
+    if (isBroadHeading && !hasCommitteeTerm) score -= 15;
+  }
+
+  if (/^\s*#{1,6}\s/.test(sentence) || sentence.length < 12) {
+    score -= 2;
+  }
+
+  return score;
 }
 
-function selectPolicyHighlightSentences(passage, queryTokens) {
+function selectPolicyHighlightSentences(passage, queryTokens, referenceText = "") {
   const sentences = splitPolicySentences(passage.text);
 
   if (!sentences.length) {
@@ -4446,7 +4511,7 @@ function selectPolicyHighlightSentences(passage, queryTokens) {
     .map((sentence, index) => ({
       sentence,
       index,
-      score: scorePolicySentence(sentence, queryTokens)
+      score: scorePolicySentence(sentence, queryTokens, referenceText)
     }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
@@ -4457,7 +4522,7 @@ function selectPolicyHighlightSentences(passage, queryTokens) {
   return selected.length ? selected : sentences.slice(0, 1);
 }
 
-function selectPolicyAnswerText(passage, queryTokens) {
+function selectPolicyAnswerText(passage, queryTokens, referenceText = "") {
   const sentences = splitPolicySentences(passage.text);
 
   if (!sentences.length) {
@@ -4468,7 +4533,7 @@ function selectPolicyAnswerText(passage, queryTokens) {
     return {
       sentence,
       index,
-      score: scorePolicySentence(sentence, queryTokens)
+      score: scorePolicySentence(sentence, queryTokens, referenceText)
     };
   });
   const selected = scored
@@ -4502,7 +4567,7 @@ function findPolicyContexts(question) {
     .slice(0, POLICY_CHAT_MAX_CONTEXTS);
 }
 
-function createPolicyCitations(contexts, createdAt, queryTokens = []) {
+function createPolicyCitations(contexts, createdAt, queryTokens = [], referenceText = "") {
   return contexts.map((context, index) => ({
     id: createId("policy-citation"),
     number: index + 1,
@@ -4511,9 +4576,26 @@ function createPolicyCitations(contexts, createdAt, queryTokens = []) {
     fileName: context.source.fileName,
     passageIndex: context.index,
     quote: context.text,
-    keySentences: selectPolicyHighlightSentences(context, queryTokens),
+    keySentences: selectPolicyHighlightSentences(context, queryTokens, referenceText),
     createdAt
   }));
+}
+
+function refreshPolicyCitationHighlights(citations, answerItems, question) {
+  citations.forEach((citation) => {
+    const relatedAnswerText = answerItems
+      .filter((item) => item.citationId === citation.id)
+      .map((item) => item.text)
+      .join(" ");
+    const referenceText = [question, relatedAnswerText].filter(Boolean).join(" ");
+    const referenceTokens = policyTokens(referenceText);
+
+    citation.keySentences = selectPolicyHighlightSentences(
+      { text: citation.quote },
+      referenceTokens.length ? referenceTokens : policyTokens(question),
+      referenceText || question
+    );
+  });
 }
 
 function buildLocalPolicyAnswerItems(question, contexts, citations, queryTokens) {
@@ -4527,7 +4609,7 @@ function buildLocalPolicyAnswerItems(question, contexts, citations, queryTokens)
   }];
 
   contexts.slice(0, 3).forEach((context, index) => {
-    const evidence = selectPolicyAnswerText(context, queryTokens)
+    const evidence = selectPolicyAnswerText(context, queryTokens, question)
       .replace(/\s+/g, " ")
       .trim();
     const text = [
@@ -4622,7 +4704,7 @@ async function buildPolicyAssistantMessage(question) {
   }
 
   const queryTokens = policyTokens(question);
-  const citations = createPolicyCitations(contexts, createdAt, queryTokens);
+  const citations = createPolicyCitations(contexts, createdAt, queryTokens, question);
   let answerItems = [];
 
   try {
@@ -4638,6 +4720,8 @@ async function buildPolicyAssistantMessage(question) {
     answerItems = buildLocalPolicyAnswerItems(question, contexts, citations, queryTokens);
   }
 
+  refreshPolicyCitationHighlights(citations, answerItems, question);
+
   return {
     id: createId("policy-message"),
     role: "assistant",
@@ -4647,10 +4731,37 @@ async function buildPolicyAssistantMessage(question) {
   };
 }
 
+function findPolicyCitationContext(citationId) {
+  const messages = state.policyChatMessages || [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const citation = (message.citations || []).find((item) => item.id === citationId);
+
+    if (!citation) {
+      continue;
+    }
+
+    const question = [...messages.slice(0, index)]
+      .reverse()
+      .find((item) => item.role === "user")?.text || "";
+    const answerText = (message.answerItems || [])
+      .filter((item) => item.citationId === citationId)
+      .map((item) => item.text)
+      .join(" ");
+
+    return {
+      citation,
+      question,
+      answerText
+    };
+  }
+
+  return null;
+}
+
 function findPolicyCitation(citationId) {
-  return (state.policyChatMessages || [])
-    .flatMap((message) => message.citations || [])
-    .find((citation) => citation.id === citationId) || null;
+  return findPolicyCitationContext(citationId)?.citation || null;
 }
 
 function findPolicySource(sourceId) {
@@ -4827,7 +4938,8 @@ function renderPolicyMessage(message) {
 }
 
 function renderPolicyCitationPanel() {
-  const citation = findPolicyCitation(state.policyChatSelectedCitationId);
+  const citationContext = findPolicyCitationContext(state.policyChatSelectedCitationId);
+  const citation = citationContext?.citation || null;
 
   if (!citation) {
     return `
@@ -4840,6 +4952,18 @@ function renderPolicyCitationPanel() {
     `;
   }
 
+  const referenceText = [citationContext.question, citationContext.answerText].filter(Boolean).join(" ");
+  const renderCitation = referenceText
+    ? {
+      ...citation,
+      keySentences: selectPolicyHighlightSentences(
+        { text: citation.quote },
+        policyTokens(referenceText),
+        referenceText
+      )
+    }
+    : citation;
+
   return `
     <aside class="policy-citation-panel is-open">
       <div class="policy-citation-header">
@@ -4849,7 +4973,7 @@ function renderPolicyCitationPanel() {
         </div>
         <button class="ghost-button compact-button" type="button" data-close-policy-citation>닫기</button>
       </div>
-      <blockquote>${renderHighlightedPolicyQuote(citation)}</blockquote>
+      <blockquote>${renderHighlightedPolicyQuote(renderCitation)}</blockquote>
     </aside>
   `;
 }
