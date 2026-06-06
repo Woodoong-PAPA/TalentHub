@@ -4353,15 +4353,57 @@ function policySearchText(value) {
 }
 
 function policyTokens(value) {
-  return [...new Set(policySearchText(value)
+  const baseTokens = policySearchText(value)
     .split(" ")
     .map((token) => token.trim())
-    .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token)))];
+    .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token));
+  const expanded = [];
+
+  baseTokens.forEach((token) => {
+    expanded.push(token);
+
+    if (token.includes("면접위원")) {
+      expanded.push("면접", "위원", "면접관", "인터뷰어", "평가위원", "평가");
+    }
+
+    if (token.includes("평가위원")) {
+      expanded.push("평가", "위원", "면접위원", "면접관", "인터뷰어");
+    }
+  });
+
+  return [...new Set(expanded)];
 }
 
 const POLICY_HIGHLIGHT_GENERIC_TOKENS = new Set([
   "기준", "면접", "채용", "평가", "관련", "질문", "소스", "직무"
 ]);
+
+function expandPolicyQueryTokens(rawQuery, queryTokens) {
+  const expanded = [...queryTokens];
+  const intent = getPolicyQuestionIntent(rawQuery);
+
+  if (intent.committeeCount) {
+    expanded.push(
+      "위원",
+      "평가위원",
+      "평가 위원",
+      "면접위원",
+      "면접관",
+      "인터뷰어",
+      "패널",
+      "구성",
+      "인원",
+      "참여",
+      "3인",
+      "명",
+      "이상",
+      "시니어",
+      "파트장"
+    );
+  }
+
+  return [...new Set(expanded.map((token) => policySearchText(token)).filter((token) => token.length >= 2))];
+}
 
 function splitPolicyContentIntoPassages(source) {
   const paragraphs = normalizePolicyText(source.content)
@@ -4416,13 +4458,33 @@ function splitPolicyContentIntoPassages(source) {
 function scorePolicyPassage(passage, queryTokens, rawQuery) {
   const text = policySearchText([passage.source.title, passage.text].join(" "));
   const exactQuery = policySearchText(rawQuery);
+  const expandedTokens = expandPolicyQueryTokens(rawQuery, queryTokens);
+  const intent = getPolicyQuestionIntent(rawQuery);
   let score = exactQuery && text.includes(exactQuery) ? 18 : 0;
 
-  queryTokens.forEach((token) => {
+  expandedTokens.forEach((token) => {
     if (text.includes(token)) {
       score += token.length >= 4 ? 5 : 3;
     }
   });
+
+  const sentenceScores = splitPolicySentences(passage.text)
+    .map((sentence) => scorePolicySentence(sentence, expandedTokens, rawQuery));
+
+  if (sentenceScores.length) {
+    score += Math.max(...sentenceScores);
+  }
+
+  if (intent.committeeCount) {
+    const hasCommitteeTerm = /위원|면접관|인터뷰어|패널|interviewer/i.test(passage.text);
+    const hasCountSignal = /\d+\s*(명|인)|[일이삼사오육칠팔구십]\s*(명|인)|이상|이내|이하|구성|참여/.test(passage.text);
+
+    if (hasCommitteeTerm && hasCountSignal) {
+      score += 45;
+    } else if (!hasCommitteeTerm) {
+      score -= 12;
+    }
+  }
 
   return score;
 }
@@ -4548,7 +4610,7 @@ function selectPolicyAnswerText(passage, queryTokens, referenceText = "") {
 }
 
 function findPolicyContexts(question) {
-  const queryTokens = policyTokens(question);
+  const queryTokens = expandPolicyQueryTokens(question, policyTokens(question));
   const passages = state.policySources.flatMap(splitPolicyContentIntoPassages);
 
   if (!passages.length) {
@@ -4703,7 +4765,7 @@ async function buildPolicyAssistantMessage(question) {
     };
   }
 
-  const queryTokens = policyTokens(question);
+  const queryTokens = expandPolicyQueryTokens(question, policyTokens(question));
   const citations = createPolicyCitations(contexts, createdAt, queryTokens, question);
   let answerItems = [];
 
