@@ -29,6 +29,7 @@ const MENU_CONFIG = [
 ];
 
 const MEMBER_ROLES = {
+  applicant: "지원자",
   general: "일반회원",
   search_firm: "서치펌 담당자",
   hiring_manager: "현업 담당자",
@@ -37,7 +38,7 @@ const MEMBER_ROLES = {
   admin: "관리자"
 };
 
-const MEMBER_ROLE_ORDER = ["general", "search_firm", "hiring_manager", "business_recruiter", "division_recruiter", "admin"];
+const MEMBER_ROLE_ORDER = ["applicant", "general", "search_firm", "hiring_manager", "business_recruiter", "division_recruiter", "admin"];
 const SIGNUP_ROLE_ORDER = MEMBER_ROLE_ORDER.filter((role) => role !== "admin");
 const LEGACY_MEMBER_ROLE_MAP = {
   associate: "general",
@@ -56,11 +57,12 @@ const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
 const CANDIDATE_REGISTER_ROLES = new Set(["search_firm", "business_recruiter", "division_recruiter", "admin"]);
 
 const DEFAULT_ROLE_PERMISSIONS = {
+  applicant: ["screening"],
   general: ["dashboard", "pool", "policy-chat", "trending"],
   search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
   hiring_manager: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
-  division_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending", "members"],
+  division_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -1251,16 +1253,6 @@ function normalizeRolePermissions(permissions = {}) {
       normalized[role] = sourcePermissions[role].filter((view) => MENU_CONFIG.some((item) => item.view === view));
     }
 
-    if (!normalized[role].includes("dashboard")) {
-      normalized[role].unshift("dashboard");
-    }
-
-    ["screening", "trending"].forEach((view) => {
-      if (DEFAULT_ROLE_PERMISSIONS[role]?.includes(view) && !normalized[role].includes(view)) {
-        normalized[role].push(view);
-      }
-    });
-
     normalized[role] = MENU_CONFIG
       .map((item) => item.view)
       .filter((view) => normalized[role].includes(view));
@@ -1331,11 +1323,35 @@ function canAccessView(view, member = getCurrentMember()) {
     return false;
   }
 
+  if (view === "members") {
+    return getAllowedViewsForRole(member.role).includes("members") && canUseManagement(member);
+  }
+
   return getAllowedViewsForRole(member.role).includes(view);
 }
 
 function canManageCandidates(member = getCurrentMember()) {
   return Boolean(member && member.status === "active" && CANDIDATE_REGISTER_ROLES.has(member.role));
+}
+
+function canCreateMemberAccounts(member = getCurrentMember()) {
+  return Boolean(member && member.status === "active" && ["business_recruiter", "division_recruiter", "admin"].includes(member.role));
+}
+
+function canUseManagement(member = getCurrentMember()) {
+  return Boolean(member && member.status === "active" && (isAdmin(member) || canCreateMemberAccounts(member)));
+}
+
+function getCreatableMemberRoles(member = getCurrentMember()) {
+  if (!canCreateMemberAccounts(member)) {
+    return [];
+  }
+
+  if (isAdmin(member)) {
+    return MEMBER_ROLE_ORDER;
+  }
+
+  return ["applicant", "search_firm", "hiring_manager"];
 }
 
 function isRecruitingRole(member = getCurrentMember()) {
@@ -1508,8 +1524,9 @@ function canRegisterScreeningApplicant(folder, member = getCurrentMember()) {
 }
 
 function getDefaultView(member = getCurrentMember()) {
-  return getAllowedViewsForRole(member?.role)
-    .find((view) => MENU_CONFIG.some((item) => item.view === view)) || "dashboard";
+  return MENU_CONFIG
+    .map((item) => item.view)
+    .find((view) => canAccessView(view, member)) || "";
 }
 
 function getCurrentActorName() {
@@ -7865,6 +7882,7 @@ function getMemberStatusChip(status) {
 
 function getRoleChip(role) {
   const chipClass = {
+    applicant: "chip-gray",
     general: "chip-blue",
     search_firm: "chip-amber",
     hiring_manager: "chip-green",
@@ -8010,7 +8028,7 @@ function renderRolePermissionMatrix() {
               </th>
               ${MENU_CONFIG.map((menu) => {
                 const checked = getAllowedViewsForRole(role).includes(menu.view);
-                const locked = role === "admin" || menu.view === "dashboard" || menu.view === "members";
+                const locked = role === "admin";
 
                 return `
                   <td>
@@ -8031,6 +8049,7 @@ function renderRolePermissionMatrix() {
 
 function rolePermissionDescription(role) {
   return {
+    applicant: "지원자 전용 접수 및 진행 현황 확인 계정",
     general: "기본 조회 중심의 일반 사용자 계정",
     search_firm: "외부 서치펌 후보자 발굴과 등록 계정",
     hiring_manager: "현업 검토와 후보자 탐색 중심 계정",
@@ -8040,7 +8059,7 @@ function rolePermissionDescription(role) {
   }[role] || "";
 }
 
-function renderManagementTabs() {
+function renderManagementTabsLegacy() {
   const tabs = [
     { id: "members", label: "회원 관리" },
     { id: "logs", label: "Log 관리" }
@@ -8057,7 +8076,7 @@ function renderManagementTabs() {
   `;
 }
 
-function renderMembers() {
+function renderMembersLegacy() {
   const content = $("#members-content");
 
   if (!content) {
@@ -8148,6 +8167,211 @@ function renderMemberTable() {
   }
 
   tableContent.innerHTML = memberTable(getFilteredMembers());
+}
+
+function getAvailableManagementTabs(member = getCurrentMember()) {
+  const tabs = [];
+
+  if (isAdmin(member)) {
+    tabs.push({ id: "members", label: "회원 관리" });
+  }
+
+  if (canCreateMemberAccounts(member)) {
+    tabs.push({ id: "create", label: "계정 생성" });
+  }
+
+  if (isAdmin(member)) {
+    tabs.push({ id: "logs", label: "Log 관리" });
+  }
+
+  return tabs;
+}
+
+function renderManagementTabs() {
+  const tabs = getAvailableManagementTabs();
+
+  return `
+    <div class="management-tabs" role="tablist" aria-label="Management tabs">
+      ${tabs.map((tab) => `
+        <button class="management-tab ${state.managementTab === tab.id ? "is-active" : ""}" type="button" role="tab" aria-selected="${state.managementTab === tab.id}" data-management-tab="${tab.id}">
+          ${tab.label}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMemberCreatePanel() {
+  const currentMember = getCurrentMember();
+  const roleOptions = getCreatableMemberRoles(currentMember);
+  const selectedBusinessUnit = isAdmin(currentMember) ? "" : currentMember?.businessUnit || "";
+
+  return `
+    <section class="content-panel span-12">
+      <div class="panel-header">
+        <h4>계정 생성</h4>
+        <span class="small-pill">생성 즉시 활성화</span>
+      </div>
+      <form id="member-create-form" class="member-create-form">
+        <div class="form-error" id="member-create-error" hidden></div>
+        <div class="form-grid">
+          <label>
+            이름
+            <input class="control-input" name="name" type="text" autocomplete="name" />
+          </label>
+          <label>
+            이메일
+            <input class="control-input" name="email" type="email" autocomplete="email" />
+          </label>
+          <label>
+            비밀번호
+            <input class="control-input" name="password" type="password" autocomplete="new-password" />
+          </label>
+          <label>
+            비밀번호 확인
+            <input class="control-input" name="passwordConfirm" type="password" autocomplete="new-password" />
+          </label>
+          <label>
+            권한
+            <select class="control-select" name="role">
+              ${roleOptions.map((role) => `<option value="${role}">${escapeHtml(MEMBER_ROLES[role])}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            사업부
+            <select class="control-select" name="businessUnit">
+              ${renderBusinessUnitOptions(selectedBusinessUnit)}
+            </select>
+          </label>
+          <label>
+            부서
+            <input class="control-input" name="department" type="text" />
+          </label>
+          <label>
+            직책/직무
+            <input class="control-input" name="position" type="text" />
+          </label>
+          <label>
+            휴대폰 번호
+            <input class="control-input" name="phone" type="tel" />
+          </label>
+          <label>
+            운영 메모
+            <input class="control-input" name="note" type="text" />
+          </label>
+        </div>
+        <div class="member-create-actions">
+          <button class="primary-button" type="submit">계정 생성</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function renderMembers() {
+  const content = $("#members-content");
+
+  if (!content) {
+    return;
+  }
+
+  if (!canAccessView("members")) {
+    content.innerHTML = `<div class="empty-state">Management 메뉴 접근 권한이 없습니다.</div>`;
+    return;
+  }
+
+  const tabs = getAvailableManagementTabs();
+  const availableTabIds = tabs.map((tab) => tab.id);
+
+  if (!availableTabIds.includes(state.managementTab)) {
+    state.managementTab = availableTabIds[0] || "create";
+  }
+
+  const renderedTabs = renderManagementTabs();
+
+  if (state.managementTab === "create") {
+    content.innerHTML = `
+      ${renderedTabs}
+      <div class="dashboard-grid member-dashboard">
+        ${renderMemberCreatePanel()}
+      </div>
+    `;
+    return;
+  }
+
+  if (state.managementTab === "logs" && isAdmin()) {
+    content.innerHTML = `
+      ${renderedTabs}
+      <div class="dashboard-grid member-dashboard">
+        <section class="content-panel span-12">
+          <div class="panel-header">
+            <h4>Log 관리</h4>
+            <span class="small-pill">관리자 전용</span>
+          </div>
+          ${renderAuditContent({ manageable: true })}
+        </section>
+      </div>
+    `;
+    return;
+  }
+
+  if (!isAdmin()) {
+    state.managementTab = "create";
+    content.innerHTML = `
+      ${renderManagementTabs()}
+      <div class="dashboard-grid member-dashboard">
+        ${renderMemberCreatePanel()}
+      </div>
+    `;
+    return;
+  }
+
+  const pending = state.members.filter((member) => member.status === "pending").length;
+  const active = state.members.filter((member) => member.status === "active").length;
+  const suspended = state.members.filter((member) => member.status === "suspended").length;
+  const filteredMembers = getFilteredMembers();
+
+  content.innerHTML = `
+    ${renderedTabs}
+    <div class="dashboard-grid member-dashboard">
+      <div class="kpi-row">
+        ${metricCard("전체 회원", state.members.length, "등록된 계정")}
+        ${metricCard("승인 대기", pending, "관리자 확인 필요")}
+        ${metricCard("활성 회원", active, "로그인 가능")}
+        ${metricCard("정지 회원", suspended, "접속 차단")}
+        ${metricCard("회원 권한", MEMBER_ROLE_ORDER.length, "권한표 운영")}
+      </div>
+
+      <section class="content-panel span-12">
+        <div class="panel-header">
+          <h4>회원 목록 및 승인 관리</h4>
+          <span class="small-pill">승인 후 접속 가능</span>
+        </div>
+        <div class="filter-strip">
+          <input class="control-input" id="member-query" type="search" value="${escapeHtml(state.memberFilters.query)}" placeholder="이름, 이메일, 부서, 사용 목적 검색" />
+          <select class="control-select" id="member-role-filter">
+            <option value="all">전체 권한</option>
+            ${MEMBER_ROLE_ORDER.map((role) => `<option value="${role}" ${state.memberFilters.role === role ? "selected" : ""}>${escapeHtml(MEMBER_ROLES[role])}</option>`).join("")}
+          </select>
+          <select class="control-select" id="member-status-filter">
+            <option value="all">전체 상태</option>
+            ${MEMBER_STATUS_ORDER.map((status) => `<option value="${status}" ${state.memberFilters.status === status ? "selected" : ""}>${escapeHtml(MEMBER_STATUSES[status])}</option>`).join("")}
+          </select>
+        </div>
+        <div id="member-table-content">
+          ${memberTable(filteredMembers)}
+        </div>
+      </section>
+
+      <section class="content-panel span-12">
+        <div class="panel-header">
+          <h4>권한별 메뉴 접근 권한</h4>
+          <span class="small-pill">관리자 권한은 전체 메뉴 고정</span>
+        </div>
+        ${renderRolePermissionMatrix()}
+      </section>
+    </div>
+  `;
 }
 
 function collectRegisterEducationFromForm(formElement, preserveBlank = false) {
@@ -10811,6 +11035,94 @@ async function handleSignupSubmit(form) {
   render();
 }
 
+function showMemberCreateError(message) {
+  const errorBox = $("#member-create-error");
+
+  if (!errorBox) {
+    return;
+  }
+
+  if (!message) {
+    errorBox.hidden = true;
+    errorBox.innerHTML = "";
+    return;
+  }
+
+  errorBox.hidden = false;
+  errorBox.innerHTML = `<strong>계정 생성 확인</strong><span>${escapeHtml(message)}</span>`;
+}
+
+async function createMemberAccountFromForm(form) {
+  const currentMember = getCurrentMember();
+
+  if (!canCreateMemberAccounts(currentMember)) {
+    showMemberCreateError("계정을 생성할 수 있는 권한이 없습니다.");
+    return;
+  }
+
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+  const password = String(formData.get("password") || "");
+  const passwordConfirm = String(formData.get("passwordConfirm") || "");
+  const rawRole = String(formData.get("role") || "").trim();
+  const role = LEGACY_MEMBER_ROLE_MAP[rawRole] || rawRole;
+  const creatableRoles = getCreatableMemberRoles(currentMember);
+
+  if (!name || !email || !password) {
+    showMemberCreateError("이름, 이메일, 비밀번호를 입력해주세요.");
+    return;
+  }
+
+  if (!creatableRoles.includes(role)) {
+    showMemberCreateError("현재 권한으로 생성할 수 없는 회원 권한입니다.");
+    return;
+  }
+
+  if (state.members.some((member) => member.email === email)) {
+    showMemberCreateError("이미 등록되어 있거나 승인 대기 중인 이메일입니다.");
+    return;
+  }
+
+  if (password.length < 8) {
+    showMemberCreateError("비밀번호는 8자 이상으로 입력해주세요.");
+    return;
+  }
+
+  if (password !== passwordConfirm) {
+    showMemberCreateError("비밀번호 확인 값이 일치하지 않습니다.");
+    return;
+  }
+
+  const member = normalizeMember({
+    id: createId("member"),
+    name,
+    email,
+    password: "",
+    passwordHash: await hashPassword(email, password),
+    role,
+    status: "active",
+    businessUnit: formData.get("businessUnit"),
+    department: formData.get("department"),
+    position: formData.get("position"),
+    phone: formData.get("phone"),
+    requestedAt: getTodayDate(),
+    approvedAt: getTodayDate(),
+    approvedBy: getCurrentActorName(),
+    lastLoginAt: "",
+    note: formData.get("note")
+  });
+
+  state.members.unshift(member);
+  state.memberFilters.role = "all";
+  state.memberFilters.status = "all";
+  state.memberFilters.query = "";
+  addAuditLog("회원 계정 생성", member.name, `${getRoleLabel(member.role)} 계정 생성`, getCurrentActorName());
+  persistState();
+  showToast(`${member.name} 계정을 생성했습니다.`);
+  renderMembers();
+}
+
 function logout() {
   const member = getCurrentMember();
   if (member) {
@@ -10833,7 +11145,13 @@ function updateMemberFilters() {
 }
 
 function setManagementTab(tab) {
-  if (!["members", "logs"].includes(tab) || !isAdmin()) {
+  if (!canAccessView("members")) {
+    return;
+  }
+
+  const availableTabs = getAvailableManagementTabs().map((item) => item.id);
+
+  if (!availableTabs.includes(tab)) {
     return;
   }
 
@@ -11037,7 +11355,7 @@ function updateMemberBusinessUnit(memberId, businessUnit) {
 }
 
 function updateRolePermission(role, view, enabled) {
-  if (!isAdmin() || !MEMBER_ROLES[role] || role === "admin" || view === "dashboard" || view === "members") {
+  if (!isAdmin() || !MEMBER_ROLES[role] || role === "admin") {
     renderMembers();
     return;
   }
@@ -11050,7 +11368,6 @@ function updateRolePermission(role, view, enabled) {
     permissions.delete(view);
   }
 
-  permissions.add("dashboard");
   state.rolePermissions[role] = MENU_CONFIG
     .map((item) => item.view)
     .filter((menuView) => permissions.has(menuView));
@@ -11666,6 +11983,15 @@ function bindEvents() {
       handleSignupSubmit(event.target).catch((error) => {
         console.warn(error);
         setAuthMessage("가입 신청 처리 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    if (event.target.matches("#member-create-form")) {
+      event.preventDefault();
+      createMemberAccountFromForm(event.target).catch((error) => {
+        console.warn(error);
+        showMemberCreateError("계정 생성 중 오류가 발생했습니다.");
       });
       return;
     }

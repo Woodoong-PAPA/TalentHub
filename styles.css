@@ -398,6 +398,12 @@ body.is-authenticated .app-shell {
   border-color: transparent;
 }
 
+.chip-gray {
+  color: var(--muted);
+  background: var(--surface-soft);
+  border-color: transparent;
+}
+
 .chip-green {
   color: var(--green);
   background: var(--green-soft);
@@ -2446,6 +2452,16 @@ tr:last-child td {
 .member-profile-form {
   display: grid;
   gap: 16px;
+}
+
+.member-create-form {
+  display: grid;
+  gap: 16px;
+}
+
+.member-create-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .readonly-profile-value {
