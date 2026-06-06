@@ -65,11 +65,32 @@ create index if not exists app_members_business_unit_idx on public.app_members (
 
 create table if not exists public.app_role_permissions (
   role text not null check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
-  view text not null check (view in ('dashboard', 'pool', 'register', 'ai-search', 'trending', 'audit', 'members')),
+  view text not null check (view in ('dashboard', 'pool', 'screening', 'register', 'ai-search', 'policy-chat', 'trending', 'audit', 'members')),
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   primary key (role, view)
 );
+
+create table if not exists public.recruiting_policy_sources (
+  id text primary key,
+  title text not null,
+  source_type text not null default 'manual'
+    check (source_type in ('manual', 'file')),
+  file_name text,
+  file_type text,
+  size_bytes integer,
+  content text not null,
+  created_by text,
+  updated_at timestamptz not null default now(),
+  payload jsonb not null default '{}'::jsonb
+);
+
+create index if not exists recruiting_policy_sources_updated_at_idx
+on public.recruiting_policy_sources (updated_at desc);
+create index if not exists recruiting_policy_sources_title_idx
+on public.recruiting_policy_sources (title);
+create index if not exists recruiting_policy_sources_payload_gin_idx
+on public.recruiting_policy_sources using gin (payload);
 
 create table if not exists public.trending_people_reports (
   report_date date primary key,
@@ -119,6 +140,7 @@ alter table public.candidates enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.app_members enable row level security;
 alter table public.app_role_permissions enable row level security;
+alter table public.recruiting_policy_sources enable row level security;
 alter table public.trending_people_reports enable row level security;
 alter table public.trending_mail_settings enable row level security;
 alter table public.trending_mail_events enable row level security;
@@ -131,6 +153,8 @@ drop policy if exists "demo app members read" on public.app_members;
 drop policy if exists "demo app members write" on public.app_members;
 drop policy if exists "demo role permissions read" on public.app_role_permissions;
 drop policy if exists "demo role permissions write" on public.app_role_permissions;
+drop policy if exists "demo recruiting policy sources read" on public.recruiting_policy_sources;
+drop policy if exists "demo recruiting policy sources write" on public.recruiting_policy_sources;
 drop policy if exists "demo trending people read" on public.trending_people_reports;
 drop policy if exists "demo trending people write" on public.trending_people_reports;
 drop policy if exists "demo trending mail settings read" on public.trending_mail_settings;
@@ -190,6 +214,19 @@ to anon, authenticated
 using (true)
 with check (true);
 
+create policy "demo recruiting policy sources read"
+on public.recruiting_policy_sources
+for select
+to anon, authenticated
+using (true);
+
+create policy "demo recruiting policy sources write"
+on public.recruiting_policy_sources
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
 create policy "demo trending people read"
 on public.trending_people_reports
 for select
@@ -233,30 +270,41 @@ insert into public.app_role_permissions (role, view, enabled)
 values
   ('general', 'dashboard', true),
   ('general', 'pool', true),
+  ('general', 'policy-chat', true),
   ('general', 'trending', true),
   ('search_firm', 'dashboard', true),
   ('search_firm', 'pool', true),
+  ('search_firm', 'screening', true),
   ('search_firm', 'register', true),
   ('search_firm', 'ai-search', true),
+  ('search_firm', 'policy-chat', true),
   ('hiring_manager', 'dashboard', true),
   ('hiring_manager', 'pool', true),
+  ('hiring_manager', 'screening', true),
   ('hiring_manager', 'ai-search', true),
+  ('hiring_manager', 'policy-chat', true),
   ('hiring_manager', 'trending', true),
   ('business_recruiter', 'dashboard', true),
   ('business_recruiter', 'pool', true),
+  ('business_recruiter', 'screening', true),
   ('business_recruiter', 'register', true),
   ('business_recruiter', 'ai-search', true),
+  ('business_recruiter', 'policy-chat', true),
   ('business_recruiter', 'trending', true),
   ('division_recruiter', 'dashboard', true),
   ('division_recruiter', 'pool', true),
+  ('division_recruiter', 'screening', true),
   ('division_recruiter', 'register', true),
   ('division_recruiter', 'ai-search', true),
+  ('division_recruiter', 'policy-chat', true),
   ('division_recruiter', 'trending', true),
   ('division_recruiter', 'audit', true),
   ('admin', 'dashboard', true),
   ('admin', 'pool', true),
+  ('admin', 'screening', true),
   ('admin', 'register', true),
   ('admin', 'ai-search', true),
+  ('admin', 'policy-chat', true),
   ('admin', 'trending', true),
   ('admin', 'audit', true),
   ('admin', 'members', true)

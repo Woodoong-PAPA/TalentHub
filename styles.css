@@ -1059,7 +1059,8 @@ tr:last-child td {
 
 .filter-strip,
 .form-grid,
-.ai-layout {
+.ai-layout,
+.policy-chat-layout {
   display: grid;
   gap: 16px;
 }
@@ -1084,6 +1085,199 @@ tr:last-child td {
   padding: 18px;
   background: var(--surface);
   box-shadow: var(--shadow);
+}
+
+.policy-chat-layout {
+  grid-template-columns: minmax(260px, 0.78fr) minmax(360px, 1.2fr) minmax(260px, 0.78fr);
+  align-items: start;
+}
+
+.policy-source-panel,
+.policy-chat-panel,
+.policy-citation-panel {
+  min-width: 0;
+}
+
+.policy-source-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.policy-source-form .control-textarea {
+  min-height: 180px;
+}
+
+.policy-source-upload {
+  min-height: 88px;
+}
+
+.policy-source-readonly {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.policy-source-readonly span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.policy-source-list,
+.policy-message-list {
+  display: grid;
+  gap: 10px;
+}
+
+.policy-source-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.policy-source-card strong,
+.policy-source-card span,
+.policy-source-card small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.policy-source-card span,
+.policy-source-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.policy-chat-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.policy-chat-notice {
+  border: 1px solid var(--blue-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.policy-message-list {
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.policy-message {
+  display: grid;
+  gap: 8px;
+  max-width: 92%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.policy-message p {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.policy-message.is-user {
+  justify-self: end;
+  color: #ffffff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.policy-message.is-assistant {
+  justify-self: start;
+  background: var(--surface-soft);
+}
+
+.policy-answer-item {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.policy-answer-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.policy-chat-form {
+  display: grid;
+  gap: 10px;
+}
+
+.policy-chat-form .control-textarea {
+  min-height: 112px;
+}
+
+.policy-citation-panel {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.policy-citation-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.policy-citation-header strong,
+.policy-citation-header span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.policy-citation-header span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.policy-citation-panel blockquote {
+  margin: 0;
+  border-left: 3px solid var(--blue);
+  padding: 4px 0 4px 12px;
+  color: var(--text);
+  line-height: 1.7;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.policy-citation-empty {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.policy-citation-empty strong {
+  color: var(--text);
 }
 
 .screening-layout {
@@ -3081,6 +3275,7 @@ tr:last-child td {
 
   .form-grid,
   .ai-layout,
+  .policy-chat-layout,
   .screening-layout,
   .detail-page-shell {
     grid-template-columns: 1fr;
@@ -3107,6 +3302,10 @@ tr:last-child td {
   }
 
   .detail-side-column {
+    position: static;
+  }
+
+  .policy-citation-panel {
     position: static;
   }
 }
@@ -3145,6 +3344,14 @@ tr:last-child td {
 
   .main-content {
     padding: 20px 16px 32px;
+  }
+
+  .policy-message {
+    max-width: 100%;
+  }
+
+  .policy-source-card {
+    grid-template-columns: 1fr;
   }
 
   .section-heading {

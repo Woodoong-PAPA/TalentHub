@@ -24,6 +24,7 @@ const MENU_CONFIG = [
   { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
   { view: "register", label: "Add Talent", description: "후보자 신규 등록과 이력서 파싱" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
+  { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "audit", label: "Log", description: "사용자·AI 처리 이력 확인" },
   { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한 관리" }
@@ -56,11 +57,11 @@ const MEMBER_STATUSES = {
 const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  general: ["dashboard", "pool", "trending"],
-  search_firm: ["dashboard", "pool", "screening", "register", "ai-search"],
-  hiring_manager: ["dashboard", "pool", "screening", "ai-search", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "register", "ai-search", "trending"],
-  division_recruiter: ["dashboard", "pool", "screening", "register", "ai-search", "trending", "audit"],
+  general: ["dashboard", "pool", "policy-chat", "trending"],
+  search_firm: ["dashboard", "pool", "screening", "register", "ai-search", "policy-chat"],
+  hiring_manager: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "register", "ai-search", "policy-chat", "trending"],
+  division_recruiter: ["dashboard", "pool", "screening", "register", "ai-search", "policy-chat", "trending", "audit"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -85,6 +86,8 @@ const CANDIDATE_VISIBILITY_LABELS = {
   business_unit: "사업부 공개"
 };
 const CANDIDATE_VISIBILITY_ORDER = ["all", "business_unit"];
+const POLICY_CHAT_MAX_CONTEXTS = 4;
+const POLICY_CHAT_MAX_MESSAGES = 20;
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
 const VISIT_SESSION_KEY = "samsung-talent-pool-visit-counted";
 const SCREENING_STAGE_LABELS = {
@@ -543,6 +546,12 @@ const state = {
   aiResults: [],
   aiSearchLoading: false,
   aiSearchFileName: "",
+  policySources: [],
+  policyChatMessages: [],
+  policyChatQuestion: "",
+  policyChatSourceLoading: false,
+  policyChatSourceError: "",
+  policyChatSelectedCitationId: "",
   trendingReport: null,
   trendingHistory: [],
   trendingSelectedDate: "",
@@ -567,8 +576,10 @@ const state = {
 const viewTitles = {
   dashboard: "Dashboard",
   pool: "Talent Pool",
+  screening: "Screening",
   register: "Add Talent",
   "ai-search": "AI Search",
+  "policy-chat": "채용 AI 챗봇",
   trending: "Today's Talent",
   detail: "상세 프로필",
   audit: "Log",
@@ -942,6 +953,51 @@ function normalizeScreeningFolder(folder = {}) {
   };
 }
 
+function normalizePolicyText(value) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizePolicySource(source = {}) {
+  const content = normalizePolicyText(source.content || source.text || source.body);
+  const title = String(source.title || source.fileName || source.file_name || "").trim();
+  const createdAt = source.createdAt || source.created_at || getTimestampText();
+
+  return {
+    id: source.id || createId("policy-source"),
+    title: title || "채용 기준 문서",
+    sourceType: source.sourceType || source.source_type || (source.fileName || source.file_name ? "file" : "manual"),
+    fileName: String(source.fileName || source.file_name || "").trim(),
+    fileType: String(source.fileType || source.file_type || "").trim(),
+    size: Number(source.size || 0) || 0,
+    content,
+    createdAt,
+    updatedAt: source.updatedAt || source.updated_at || createdAt,
+    createdBy: String(source.createdBy || source.created_by || "").trim()
+  };
+}
+
+function ensurePolicySourceDefaults() {
+  state.policySources = state.policySources
+    .map(normalizePolicySource)
+    .filter((source) => source.content);
+
+  state.policyChatMessages = (state.policyChatMessages || [])
+    .filter((message) => message && ["user", "assistant"].includes(message.role))
+    .slice(-POLICY_CHAT_MAX_MESSAGES);
+
+  if (
+    state.policyChatSelectedCitationId &&
+    !findPolicyCitation(state.policyChatSelectedCitationId)
+  ) {
+    state.policyChatSelectedCitationId = "";
+  }
+}
+
 function ensureScreeningDefaults() {
   state.screeningFolders = state.screeningFolders.map(normalizeScreeningFolder);
 
@@ -1311,7 +1367,9 @@ function persistState(options = {}) {
         trendingReport: state.trendingReport,
         trendingHistory: state.trendingHistory,
         trendingSelectedDate: state.trendingSelectedDate,
-        trendingMailSettings: state.trendingMailSettings
+        trendingMailSettings: state.trendingMailSettings,
+        policySources: state.policySources,
+        policyChatMessages: state.policyChatMessages
       })
     );
   } catch (error) {
@@ -1386,6 +1444,14 @@ function restorePersistedState() {
     state.trendingMailSettings = normalizeTrendingMailSettings(persisted.trendingMailSettings);
   }
 
+  if (Array.isArray(persisted.policySources)) {
+    state.policySources = persisted.policySources.map(normalizePolicySource).filter((source) => source.content);
+  }
+
+  if (Array.isArray(persisted.policyChatMessages)) {
+    state.policyChatMessages = persisted.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
+  }
+
   if (state.candidates.some((candidate) => candidate.id === persisted.selectedCandidateId)) {
     state.selectedCandidateId = persisted.selectedCandidateId;
   } else {
@@ -1401,6 +1467,7 @@ function restorePersistedState() {
   ensureAuditLogIds();
   ensureMemberDefaults();
   ensureScreeningDefaults();
+  ensurePolicySourceDefaults();
 }
 
 function getSupabaseHeaders(extraHeaders = {}) {
@@ -1526,6 +1593,38 @@ function memberFromSupabaseRow(row) {
   });
 }
 
+function policySourceToSupabaseRow(source) {
+  const normalized = normalizePolicySource(source);
+
+  return {
+    id: normalized.id,
+    title: normalized.title,
+    source_type: normalized.sourceType,
+    file_name: normalized.fileName || null,
+    file_type: normalized.fileType || null,
+    size_bytes: normalized.size || null,
+    content: normalized.content,
+    created_by: normalized.createdBy || null,
+    updated_at: new Date().toISOString(),
+    payload: normalized
+  };
+}
+
+function policySourceFromSupabaseRow(row) {
+  return normalizePolicySource({
+    ...(row.payload || {}),
+    id: row.id,
+    title: row.title,
+    sourceType: row.source_type,
+    fileName: row.file_name,
+    fileType: row.file_type,
+    size: row.size_bytes,
+    content: row.content,
+    createdBy: row.created_by,
+    updatedAt: row.updated_at
+  });
+}
+
 function mergeMembers(localMembers, remoteMembers) {
   const membersByEmail = new Map();
 
@@ -1602,6 +1701,7 @@ async function syncStateToSupabase() {
     const auditRows = state.auditLogs.map(auditLogToSupabaseRow);
     const memberRows = state.members.map(memberToSupabaseRow);
     const permissionRows = rolePermissionToSupabaseRows();
+    const policySourceRows = state.policySources.map(policySourceToSupabaseRow);
 
     if (candidateRows.length) {
       await supabaseRequest("candidates?on_conflict=id", {
@@ -1635,6 +1735,18 @@ async function syncStateToSupabase() {
       });
     }
 
+    if (policySourceRows.length) {
+      try {
+        await supabaseRequest("recruiting_policy_sources?on_conflict=id", {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify(policySourceRows)
+        });
+      } catch (error) {
+        console.warn("Policy sources could not be synced.", error);
+      }
+    }
+
     state.remoteSyncStatus = "Supabase 연결됨";
   } catch (error) {
     state.remoteSyncStatus = "Supabase 동기화 실패";
@@ -1651,11 +1763,15 @@ async function loadStateFromSupabase() {
 
   try {
     state.remoteSyncStatus = "Supabase 불러오는 중";
-    const [candidateRows, auditRows, memberRows, permissionRows] = await Promise.all([
+    const [candidateRows, auditRows, memberRows, permissionRows, policySourceRows] = await Promise.all([
       supabaseRequest("candidates?select=profile&order=updated_at.desc"),
       supabaseRequest("audit_logs?select=payload&order=created_at.desc&limit=200"),
       supabaseRequest("app_members?select=*&order=requested_at.desc"),
-      supabaseRequest("app_role_permissions?select=*")
+      supabaseRequest("app_role_permissions?select=*"),
+      supabaseRequest("recruiting_policy_sources?select=*&order=updated_at.desc").catch((error) => {
+        console.warn("Policy sources could not be loaded.", error);
+        return [];
+      })
     ]);
 
     if (Array.isArray(candidateRows) && candidateRows.length) {
@@ -1679,8 +1795,13 @@ async function loadStateFromSupabase() {
       state.rolePermissions = rolePermissionsFromSupabaseRows(permissionRows);
     }
 
+    if (Array.isArray(policySourceRows) && policySourceRows.length) {
+      state.policySources = policySourceRows.map(policySourceFromSupabaseRow).filter((source) => source.content);
+    }
+
     ensureMemberDefaults();
     ensureScreeningDefaults();
+    ensurePolicySourceDefaults();
     state.remoteSyncStatus = "Supabase 연결됨";
     persistState({ skipRemoteSync: true });
     render();
@@ -2554,6 +2675,7 @@ function render() {
 
   ensureCandidateDefaults();
   ensureScreeningDefaults();
+  ensurePolicySourceDefaults();
   ensureActiveViewAllowed();
   syncActiveViewState();
   renderSidePanel();
@@ -2562,6 +2684,7 @@ function render() {
   renderScreening();
   renderRegister();
   renderAiSearch();
+  renderPolicyChat();
   renderTrendingPeople();
   renderDetail();
   renderAudit();
@@ -4208,6 +4331,505 @@ function renderAiSearch() {
       </section>
     </div>
   `;
+}
+
+function policySearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^0-9a-z가-힣+#.]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function policyTokens(value) {
+  return [...new Set(policySearchText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token)))];
+}
+
+function splitPolicyContentIntoPassages(source) {
+  const paragraphs = normalizePolicyText(source.content)
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const passages = [];
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (paragraph.length <= 900) {
+      passages.push({
+        source,
+        index: paragraphIndex,
+        text: paragraph
+      });
+      return;
+    }
+
+    const sentences = paragraph
+      .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    let buffer = "";
+    let chunkIndex = 0;
+
+    sentences.forEach((sentence) => {
+      if (`${buffer} ${sentence}`.trim().length > 850 && buffer) {
+        passages.push({
+          source,
+          index: Number(`${paragraphIndex}${chunkIndex}`),
+          text: buffer.trim()
+        });
+        buffer = sentence;
+        chunkIndex += 1;
+      } else {
+        buffer = `${buffer} ${sentence}`.trim();
+      }
+    });
+
+    if (buffer) {
+      passages.push({
+        source,
+        index: Number(`${paragraphIndex}${chunkIndex}`),
+        text: buffer.trim()
+      });
+    }
+  });
+
+  return passages;
+}
+
+function scorePolicyPassage(passage, queryTokens, rawQuery) {
+  const text = policySearchText([passage.source.title, passage.text].join(" "));
+  const exactQuery = policySearchText(rawQuery);
+  let score = exactQuery && text.includes(exactQuery) ? 18 : 0;
+
+  queryTokens.forEach((token) => {
+    if (text.includes(token)) {
+      score += token.length >= 4 ? 5 : 3;
+    }
+  });
+
+  return score;
+}
+
+function selectPolicyAnswerText(passage, queryTokens) {
+  const sentences = passage.text
+    .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  if (!sentences.length) {
+    return passage.text.slice(0, 320);
+  }
+
+  const scored = sentences.map((sentence, index) => {
+    const text = policySearchText(sentence);
+    const score = queryTokens.reduce((sum, token) => sum + (text.includes(token) ? 1 : 0), 0);
+    return { sentence, index, score };
+  });
+  const selected = scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 2)
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.sentence);
+  const text = selected.length ? selected.join(" ") : sentences.slice(0, 2).join(" ");
+
+  return text.length > 340 ? `${text.slice(0, 337).trim()}...` : text;
+}
+
+function findPolicyContexts(question) {
+  const queryTokens = policyTokens(question);
+
+  if (!queryTokens.length) {
+    return [];
+  }
+
+  return state.policySources
+    .flatMap(splitPolicyContentIntoPassages)
+    .map((passage) => ({
+      ...passage,
+      score: scorePolicyPassage(passage, queryTokens, question)
+    }))
+    .filter((passage) => passage.score > 0)
+    .sort((a, b) => b.score - a.score || a.source.title.localeCompare(b.source.title))
+    .slice(0, POLICY_CHAT_MAX_CONTEXTS);
+}
+
+function buildPolicyAssistantMessage(question) {
+  const contexts = findPolicyContexts(question);
+  const createdAt = getTimestampText();
+
+  if (!state.policySources.length) {
+    return {
+      id: createId("policy-message"),
+      role: "assistant",
+      createdAt,
+      answerItems: [{
+        text: "등록된 채용 기준 소스가 없습니다. 관리자가 먼저 기준 문서를 업로드하거나 직접 입력해야 답변할 수 있습니다.",
+        citationId: ""
+      }],
+      citations: []
+    };
+  }
+
+  if (!contexts.length) {
+    return {
+      id: createId("policy-message"),
+      role: "assistant",
+      createdAt,
+      answerItems: [{
+        text: "등록된 소스 데이터에서 해당 질문과 직접 관련된 근거를 찾지 못했습니다. 질문 표현을 바꾸거나 관련 기준 문서를 추가해주세요.",
+        citationId: ""
+      }],
+      citations: []
+    };
+  }
+
+  const queryTokens = policyTokens(question);
+  const citations = contexts.map((context, index) => ({
+    id: createId("policy-citation"),
+    number: index + 1,
+    sourceId: context.source.id,
+    sourceTitle: context.source.title,
+    fileName: context.source.fileName,
+    passageIndex: context.index,
+    quote: context.text,
+    createdAt
+  }));
+  const answerItems = contexts.slice(0, 3).map((context, index) => ({
+    text: selectPolicyAnswerText(context, queryTokens),
+    citationId: citations[index].id
+  }));
+
+  return {
+    id: createId("policy-message"),
+    role: "assistant",
+    createdAt,
+    answerItems,
+    citations
+  };
+}
+
+function findPolicyCitation(citationId) {
+  return (state.policyChatMessages || [])
+    .flatMap((message) => message.citations || [])
+    .find((citation) => citation.id === citationId) || null;
+}
+
+function renderPolicySourceForm() {
+  if (!isAdmin()) {
+    return `
+      <div class="policy-source-readonly">
+        <strong>등록된 소스 ${state.policySources.length}개</strong>
+        <span>관리자가 등록한 채용 기준 문서에 근거해 답변합니다.</span>
+      </div>
+    `;
+  }
+
+  return `
+    <form id="policy-source-form" class="policy-source-form">
+      <div class="field">
+        <label for="policy-source-title">소스 제목</label>
+        <input class="control-input" id="policy-source-title" name="title" placeholder="예: 경력 채용 운영 기준" />
+      </div>
+      <div class="field">
+        <label for="policy-source-file">문서 업로드</label>
+        <div class="dropzone policy-source-upload">
+          <input id="policy-source-file" name="sourceFile" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
+          <span id="policy-source-file-status" class="form-help">${state.policyChatSourceLoading ? "문서를 읽는 중입니다." : "업로드하거나 아래에 직접 입력할 수 있습니다."}</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="policy-source-content">소스 본문</label>
+        <textarea class="control-textarea" id="policy-source-content" name="content" placeholder="채용 기준, 면접 운영 규정, 평가 원칙 등을 붙여넣으세요."></textarea>
+      </div>
+      ${state.policyChatSourceError ? `<div class="form-error"><strong>소스 저장 오류</strong><span>${escapeHtml(state.policyChatSourceError)}</span></div>` : ""}
+      <button class="primary-button" type="submit">소스 저장</button>
+    </form>
+  `;
+}
+
+function renderPolicySourceList() {
+  if (!state.policySources.length) {
+    return `<div class="empty-state">등록된 채용 기준 소스가 없습니다.</div>`;
+  }
+
+  return `
+    <div class="policy-source-list">
+      ${state.policySources.map((source) => `
+        <article class="policy-source-card">
+          <div>
+            <strong>${escapeHtml(source.title)}</strong>
+            <span>${escapeHtml([source.fileName || source.sourceType, source.createdBy, source.updatedAt].filter(Boolean).join(" · "))}</span>
+            <small>${escapeHtml(`${source.content.length.toLocaleString()}자`)}</small>
+          </div>
+          ${isAdmin() ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-policy-source="${escapeHtml(source.id)}">삭제</button>` : ""}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderPolicyMessage(message) {
+  if (message.role === "user") {
+    return `
+      <article class="policy-message is-user">
+        <p>${escapeHtml(message.text)}</p>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="policy-message is-assistant">
+      ${(message.answerItems || []).map((item) => `
+        <div class="policy-answer-item">
+          <p>${escapeHtml(item.text)}</p>
+          ${item.citationId ? `<button class="soft-button compact-button" type="button" data-policy-citation="${escapeHtml(item.citationId)}">근거 보기</button>` : ""}
+        </div>
+      `).join("")}
+    </article>
+  `;
+}
+
+function renderPolicyCitationPanel() {
+  const citation = findPolicyCitation(state.policyChatSelectedCitationId);
+
+  if (!citation) {
+    return `
+      <aside class="policy-citation-panel">
+        <div class="policy-citation-empty">
+          <strong>근거 원문</strong>
+          <span>답변의 근거 보기 버튼을 누르면 원본 문구가 이 영역에 표시됩니다.</span>
+        </div>
+      </aside>
+    `;
+  }
+
+  return `
+    <aside class="policy-citation-panel is-open">
+      <div class="policy-citation-header">
+        <div>
+          <strong>${escapeHtml(citation.sourceTitle)}</strong>
+          <span>${escapeHtml(citation.fileName || `문단 ${citation.passageIndex + 1}`)}</span>
+        </div>
+        <button class="ghost-button compact-button" type="button" data-close-policy-citation>닫기</button>
+      </div>
+      <blockquote>${escapeHtml(citation.quote)}</blockquote>
+    </aside>
+  `;
+}
+
+function renderPolicyChat() {
+  const content = $("#policy-chat-content");
+
+  if (!content) {
+    return;
+  }
+
+  const messages = state.policyChatMessages.length
+    ? state.policyChatMessages.map(renderPolicyMessage).join("")
+    : `<div class="empty-state">채용 기준 문서에 대해 자연어로 질문해보세요. 답변은 등록된 소스 데이터에서 확인되는 내용만 사용합니다.</div>`;
+
+  content.innerHTML = `
+    <div class="policy-chat-layout">
+      <section class="content-panel policy-source-panel">
+        <div class="panel-header">
+          <h4>소스 데이터</h4>
+          <span class="small-pill">${state.policySources.length}개</span>
+        </div>
+        ${renderPolicySourceForm()}
+        ${renderPolicySourceList()}
+      </section>
+
+      <section class="content-panel policy-chat-panel">
+        <div class="panel-header">
+          <h4>채용 기준 Q&A</h4>
+          <button class="ghost-button compact-button" type="button" data-clear-policy-chat>대화 초기화</button>
+        </div>
+        <div class="policy-chat-notice">등록된 소스에 없는 내용은 답변하지 않습니다. 근거 버튼으로 원문 문구를 확인할 수 있습니다.</div>
+        <div class="policy-message-list">${messages}</div>
+        <form id="policy-chat-form" class="policy-chat-form">
+          <textarea class="control-textarea" id="policy-chat-question" name="question" placeholder="예: 경력직 면접위원 구성 기준은 어떻게 돼?">${escapeHtml(state.policyChatQuestion)}</textarea>
+          <button class="primary-button" type="submit">질문하기</button>
+        </form>
+      </section>
+
+      ${renderPolicyCitationPanel()}
+    </div>
+  `;
+}
+
+async function savePolicySourceFromForm(form) {
+  if (!isAdmin() || !form) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const file = formData.get("sourceFile");
+  const title = String(formData.get("title") || "").trim();
+  const content = normalizePolicyText(formData.get("content"));
+
+  state.policyChatSourceError = "";
+
+  if (!content) {
+    state.policyChatSourceError = "소스 본문을 입력하거나 문서를 업로드해주세요.";
+    renderPolicyChat();
+    return;
+  }
+
+  const source = normalizePolicySource({
+    id: createId("policy-source"),
+    title: title || file?.name || "채용 기준 문서",
+    sourceType: file?.name ? "file" : "manual",
+    fileName: file?.name || "",
+    fileType: file?.type || "",
+    size: file?.size || content.length,
+    content,
+    createdAt: getTimestampText(),
+    updatedAt: getTimestampText(),
+    createdBy: getCurrentActorName()
+  });
+
+  state.policySources = [
+    source,
+    ...state.policySources.filter((item) => item.id !== source.id)
+  ];
+  state.policyChatSourceError = "";
+  state.policyChatSelectedCitationId = "";
+  addAuditLog("채용 AI 소스 등록", source.title, `${source.content.length.toLocaleString()}자`);
+  persistState();
+  renderPolicyChat();
+  showToast("채용 기준 소스를 저장했습니다.");
+}
+
+async function loadPolicySourceFile(file) {
+  const status = $("#policy-source-file-status");
+  const titleInput = $("#policy-source-title");
+  const contentInput = $("#policy-source-content");
+
+  if (!file || !contentInput) {
+    return;
+  }
+
+  state.policyChatSourceLoading = true;
+  state.policyChatSourceError = "";
+
+  if (status) {
+    status.textContent = "문서를 읽는 중입니다.";
+  }
+
+  try {
+    const parsed = await readResumeText(file);
+    const text = normalizePolicyText(parsed.text || parsed.rawText || "");
+
+    if (!text) {
+      throw new Error("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
+    }
+
+    if (titleInput && !titleInput.value.trim()) {
+      titleInput.value = file.name.replace(/\.[^.]+$/, "");
+    }
+
+    contentInput.value = text;
+
+    if (status) {
+      status.textContent = `${file.name} 내용을 본문에 불러왔습니다. 저장 전 내용을 확인해주세요.`;
+    }
+  } catch (error) {
+    console.warn("Policy source file read failed.", error);
+    state.policyChatSourceError = error.message || "문서 읽기 중 오류가 발생했습니다.";
+
+    if (status) {
+      status.textContent = "문서 읽기에 실패했습니다. 직접 본문을 붙여넣어주세요.";
+    }
+  } finally {
+    state.policyChatSourceLoading = false;
+  }
+}
+
+function askPolicyChat(form) {
+  if (!form) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const question = String(formData.get("question") || "").trim();
+
+  if (!question) {
+    showToast("질문을 입력해주세요.");
+    return;
+  }
+
+  state.policyChatQuestion = "";
+  state.policyChatMessages.push({
+    id: createId("policy-message"),
+    role: "user",
+    text: question,
+    createdAt: getTimestampText()
+  });
+
+  const answer = buildPolicyAssistantMessage(question);
+  state.policyChatMessages.push(answer);
+  state.policyChatMessages = state.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
+  state.policyChatSelectedCitationId = answer.citations?.[0]?.id || "";
+  addAuditLog("채용 AI 챗봇 질문", "채용 기준 Q&A", question);
+  persistState();
+  renderPolicyChat();
+}
+
+async function deletePolicySource(sourceId) {
+  if (!isAdmin()) {
+    return;
+  }
+
+  const source = state.policySources.find((item) => item.id === sourceId);
+
+  if (!source) {
+    return;
+  }
+
+  if (!window.confirm(`${source.title} 소스를 삭제할까요? 해당 소스 기반 근거는 더 이상 사용할 수 없습니다.`)) {
+    return;
+  }
+
+  state.policySources = state.policySources.filter((item) => item.id !== sourceId);
+
+  if (findPolicyCitation(state.policyChatSelectedCitationId)?.sourceId === sourceId) {
+    state.policyChatSelectedCitationId = "";
+  }
+
+  addAuditLog("채용 AI 소스 삭제", source.title, "소스 데이터 제거");
+  persistState();
+  renderPolicyChat();
+
+  try {
+    await deleteSupabaseRecord("recruiting_policy_sources", sourceId);
+    showToast("채용 기준 소스를 삭제했습니다.");
+  } catch (error) {
+    console.warn("Policy source remote delete failed.", error);
+    showToast("화면에서는 삭제됐지만 원격 DB 삭제 확인에 실패했습니다.");
+  }
+}
+
+function clearPolicyChat() {
+  state.policyChatMessages = [];
+  state.policyChatSelectedCitationId = "";
+  state.policyChatQuestion = "";
+  persistState();
+  renderPolicyChat();
+}
+
+function openPolicyCitation(citationId) {
+  state.policyChatSelectedCitationId = citationId;
+  persistState({ skipRemoteSync: true });
+  renderPolicyChat();
+}
+
+function closePolicyCitation() {
+  state.policyChatSelectedCitationId = "";
+  persistState({ skipRemoteSync: true });
+  renderPolicyChat();
 }
 
 function interpretQuery(query) {
@@ -9101,6 +9723,31 @@ function bindEvents() {
       return;
     }
 
+    const policyCitationButton = event.target.closest("[data-policy-citation]");
+    if (policyCitationButton) {
+      openPolicyCitation(policyCitationButton.dataset.policyCitation);
+      return;
+    }
+
+    if (event.target.closest("[data-close-policy-citation]")) {
+      closePolicyCitation();
+      return;
+    }
+
+    if (event.target.closest("[data-clear-policy-chat]")) {
+      clearPolicyChat();
+      return;
+    }
+
+    const deletePolicySourceButton = event.target.closest("[data-delete-policy-source]");
+    if (deletePolicySourceButton) {
+      deletePolicySource(deletePolicySourceButton.dataset.deletePolicySource).catch((error) => {
+        console.warn(error);
+        showToast("채용 기준 소스 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       setView(viewButton.dataset.view);
@@ -9258,6 +9905,10 @@ function bindEvents() {
     if (event.key === "Escape" && state.memberProfileModalOpen) {
       closeMemberProfileModal();
     }
+
+    if (event.key === "Escape" && state.policyChatSelectedCitationId) {
+      closePolicyCitation();
+    }
   });
 
   document.addEventListener("submit", (event) => {
@@ -9333,6 +9984,22 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.matches("#policy-source-form")) {
+      event.preventDefault();
+      savePolicySourceFromForm(event.target).catch((error) => {
+        console.warn(error);
+        state.policyChatSourceError = "소스 저장 중 오류가 발생했습니다.";
+        renderPolicyChat();
+      });
+      return;
+    }
+
+    if (event.target.matches("#policy-chat-form")) {
+      event.preventDefault();
+      askPolicyChat(event.target);
+      return;
+    }
+
     if (event.target.matches("#register-form")) {
       registerCandidate(event);
     }
@@ -9387,6 +10054,10 @@ function bindEvents() {
 
     if (event.target.matches("[data-screening-access-search]")) {
       updateScreeningAccessResults(event.target);
+    }
+
+    if (event.target.id === "policy-chat-question") {
+      state.policyChatQuestion = event.target.value;
     }
   });
 
@@ -9456,6 +10127,14 @@ function bindEvents() {
 
       if (file) {
         handleAiSearchFileUpload(file);
+      }
+    }
+
+    if (event.target.id === "policy-source-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        loadPolicySourceFile(file);
       }
     }
 
