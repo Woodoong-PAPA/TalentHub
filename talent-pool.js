@@ -55,6 +55,7 @@ const MEMBER_STATUSES = {
 
 const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
 const CANDIDATE_REGISTER_ROLES = new Set(["search_firm", "business_recruiter", "division_recruiter", "admin"]);
+const MEMBER_ROLES_WITHOUT_BUSINESS_UNIT = new Set(["applicant", "search_firm", "hiring_manager"]);
 
 const DEFAULT_ROLE_PERMISSIONS = {
   applicant: ["screening"],
@@ -1378,6 +1379,10 @@ function getCreatableMemberRoles(member = getCurrentMember()) {
   }
 
   return ["applicant", "search_firm", "hiring_manager"];
+}
+
+function memberRoleNeedsBusinessUnit(role) {
+  return Boolean(role && !MEMBER_ROLES_WITHOUT_BUSINESS_UNIT.has(role));
 }
 
 function isRecruitingRole(member = getCurrentMember()) {
@@ -8285,6 +8290,8 @@ function renderManagementTabs() {
 function renderMemberCreatePanel() {
   const currentMember = getCurrentMember();
   const roleOptions = getCreatableMemberRoles(currentMember);
+  const selectedRole = roleOptions[0] || "";
+  const showBusinessUnit = memberRoleNeedsBusinessUnit(selectedRole);
   const selectedBusinessUnit = isAdmin(currentMember) ? "" : currentMember?.businessUnit || "";
 
   return `
@@ -8314,13 +8321,13 @@ function renderMemberCreatePanel() {
           </label>
           <label>
             권한
-            <select class="control-select" name="role">
+            <select class="control-select" name="role" data-member-create-role>
               ${roleOptions.map((role) => `<option value="${role}">${escapeHtml(MEMBER_ROLES[role])}</option>`).join("")}
             </select>
           </label>
-          <label>
+          <label data-member-create-business-unit-field class="${showBusinessUnit ? "" : "is-hidden"}">
             사업부
-            <select class="control-select" name="businessUnit">
+            <select class="control-select" name="businessUnit" data-member-create-business-unit ${showBusinessUnit ? "" : "disabled"}>
               ${renderBusinessUnitOptions(selectedBusinessUnit)}
             </select>
           </label>
@@ -8329,7 +8336,7 @@ function renderMemberCreatePanel() {
             <input class="control-input" name="department" type="text" />
           </label>
           <label>
-            직책/직무
+            직급/직책
             <input class="control-input" name="position" type="text" />
           </label>
           <label>
@@ -8337,7 +8344,7 @@ function renderMemberCreatePanel() {
             <input class="control-input" name="phone" type="tel" />
           </label>
           <label>
-            운영 메모
+            기타 사항
             <input class="control-input" name="note" type="text" />
           </label>
         </div>
@@ -11207,6 +11214,30 @@ function showMemberCreateError(message) {
   errorBox.innerHTML = `<strong>계정 생성 확인</strong><span>${escapeHtml(message)}</span>`;
 }
 
+function syncMemberCreateBusinessUnitVisibility(form = $("#member-create-form")) {
+  if (!form) {
+    return;
+  }
+
+  const rawRole = String(form.elements.role?.value || "").trim();
+  const role = LEGACY_MEMBER_ROLE_MAP[rawRole] || rawRole;
+  const shouldShow = memberRoleNeedsBusinessUnit(role);
+  const field = form.querySelector("[data-member-create-business-unit-field]");
+  const select = form.querySelector("[data-member-create-business-unit]");
+
+  if (field) {
+    field.classList.toggle("is-hidden", !shouldShow);
+  }
+
+  if (select) {
+    select.disabled = !shouldShow;
+
+    if (!shouldShow) {
+      select.value = "";
+    }
+  }
+}
+
 async function createMemberAccountFromForm(form) {
   const currentMember = getCurrentMember();
 
@@ -11223,6 +11254,7 @@ async function createMemberAccountFromForm(form) {
   const rawRole = String(formData.get("role") || "").trim();
   const role = LEGACY_MEMBER_ROLE_MAP[rawRole] || rawRole;
   const creatableRoles = getCreatableMemberRoles(currentMember);
+  const businessUnit = memberRoleNeedsBusinessUnit(role) ? formData.get("businessUnit") : "";
 
   if (!name || !email || !password) {
     showMemberCreateError("이름, 이메일, 비밀번호를 입력해주세요.");
@@ -11257,7 +11289,7 @@ async function createMemberAccountFromForm(form) {
     passwordHash: await hashPassword(email, password),
     role,
     status: "active",
-    businessUnit: formData.get("businessUnit"),
+    businessUnit,
     department: formData.get("department"),
     position: formData.get("position"),
     phone: formData.get("phone"),
@@ -12328,6 +12360,11 @@ function bindEvents() {
 
     if (["member-role-filter", "member-status-filter"].includes(event.target.id)) {
       updateMemberFilters();
+    }
+
+    if (event.target.matches("[data-member-create-role]")) {
+      syncMemberCreateBusinessUnitVisibility(event.target.closest("#member-create-form"));
+      return;
     }
 
     if (event.target.matches("[data-detail-status-select]")) {
