@@ -919,6 +919,58 @@ tr:last-child td {
   accent-color: var(--blue);
 }
 
+.management-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 4px;
+  background: var(--surface);
+}
+
+.management-tab {
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 16px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.management-tab.is-active {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.audit-management-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 14px;
+}
+
+.audit-management-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.audit-management-header strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.audit-management-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .candidate-name > span:last-child {
   min-width: 0;
 }

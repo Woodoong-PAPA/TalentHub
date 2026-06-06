@@ -22,12 +22,10 @@ const MENU_CONFIG = [
   { view: "dashboard", label: "Dashboard", description: "운영 현황과 KPI 조회" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
-  { view: "register", label: "Add Talent", description: "후보자 신규 등록과 이력서 파싱" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
   { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
-  { view: "audit", label: "Log", description: "사용자·AI 처리 이력 확인" },
-  { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한 관리" }
+  { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
 ];
 
 const MEMBER_ROLES = {
@@ -55,13 +53,14 @@ const MEMBER_STATUSES = {
 };
 
 const MEMBER_STATUS_ORDER = ["pending", "active", "suspended", "rejected"];
+const CANDIDATE_REGISTER_ROLES = new Set(["search_firm", "business_recruiter", "division_recruiter", "admin"]);
 
 const DEFAULT_ROLE_PERMISSIONS = {
   general: ["dashboard", "pool", "policy-chat", "trending"],
-  search_firm: ["dashboard", "pool", "screening", "register", "ai-search", "policy-chat"],
+  search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
   hiring_manager: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "register", "ai-search", "policy-chat", "trending"],
-  division_recruiter: ["dashboard", "pool", "screening", "register", "ai-search", "policy-chat", "trending", "audit"],
+  business_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
+  division_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -524,6 +523,7 @@ const state = {
     role: "all",
     status: "all"
   },
+  managementTab: "members",
   candidates: structuredClone(ENRICHED_CANDIDATES),
   selectedCandidateId: "cand-001",
   isEditingCandidate: false,
@@ -1246,11 +1246,19 @@ function canAccessView(view, member = getCurrentMember()) {
     return getAllowedViewsForRole(member.role).includes("pool");
   }
 
+  if (view === "register") {
+    return canManageCandidates(member);
+  }
+
+  if (view === "audit") {
+    return false;
+  }
+
   return getAllowedViewsForRole(member.role).includes(view);
 }
 
 function canManageCandidates(member = getCurrentMember()) {
-  return Boolean(member && member.status === "active" && (isAdmin(member) || getAllowedViewsForRole(member.role).includes("register")));
+  return Boolean(member && member.status === "active" && CANDIDATE_REGISTER_ROLES.has(member.role));
 }
 
 function isRecruitingRole(member = getCurrentMember()) {
@@ -1525,6 +1533,7 @@ function persistState(options = {}) {
         members: state.members.map(sanitizeMemberForStorage),
         rolePermissions: state.rolePermissions,
         memberFilters: state.memberFilters,
+        managementTab: state.managementTab,
         currentUserId: state.currentUserId,
         trendingReport: state.trendingReport,
         trendingHistory: state.trendingHistory,
@@ -1588,6 +1597,10 @@ function restorePersistedState() {
 
   if (persisted.memberFilters && typeof persisted.memberFilters === "object") {
     state.memberFilters = { ...state.memberFilters, ...persisted.memberFilters };
+  }
+
+  if (["members", "logs"].includes(persisted.managementTab)) {
+    state.managementTab = persisted.managementTab;
   }
 
   if (persisted.currentUserId) {
@@ -7477,36 +7490,75 @@ async function removeCareerRecord(index) {
   renderDetail();
 }
 
-function renderAudit() {
+function renderAuditContent(options = {}) {
+  const { manageable = false } = options;
+  ensureAuditLogIds();
   const viewCount = state.auditLogs.filter((log) => log.action.includes("조회")).length;
   const aiCount = state.auditLogs.filter((log) => log.action.includes("AI") || log.actor.includes("AI")).length;
 
-  $("#audit-content").innerHTML = `
+  return `
     <div class="audit-grid">
       ${metricCard("오늘 조회", viewCount, "권한 기반")}
       ${metricCard("AI 처리", aiCount, "모델 버전 기록")}
       ${metricCard("다운로드", 0, "승인 URL 없음")}
       ${metricCard("권한 실패", 0, "정상")}
     </div>
+    ${manageable ? `
+      <div class="audit-management-header">
+        <div>
+          <strong>Log 관리</strong>
+          <span>${state.auditLogs.length}개 이력</span>
+        </div>
+        <button class="ghost-button danger-button compact-button" type="button" data-clear-audit-logs ${state.auditLogs.length ? "" : "disabled"}>전체 삭제</button>
+      </div>
+    ` : ""}
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>시각</th><th>사용자</th><th>행위</th><th>대상</th><th>목적</th></tr>
+          <tr>
+            <th>시각</th>
+            <th>사용자</th>
+            <th>행위</th>
+            <th>대상</th>
+            <th>목적</th>
+            ${manageable ? "<th>관리</th>" : ""}
+          </tr>
         </thead>
         <tbody>
-          ${state.auditLogs.map((log) => `
+          ${state.auditLogs.length ? state.auditLogs.map((log) => `
             <tr>
               <td>${log.time}</td>
               <td>${escapeHtml(log.actor)}</td>
               <td>${escapeHtml(log.action)}</td>
               <td>${escapeHtml(log.resource)}</td>
               <td>${escapeHtml(log.purpose)}</td>
+              ${manageable ? `
+                <td>
+                  <button class="ghost-button danger-button compact-button" type="button" data-delete-audit-log="${log.id}">삭제</button>
+                </td>
+              ` : ""}
             </tr>
-          `).join("")}
+          `).join("") : `
+            <tr>
+              <td colspan="${manageable ? 6 : 5}">
+                <div class="empty-state compact-empty">표시할 로그가 없습니다.</div>
+              </td>
+            </tr>
+          `}
         </tbody>
       </table>
     </div>
   `;
+}
+
+function renderAudit() {
+  const content = $("#audit-content");
+
+  if (!content) {
+    return;
+  }
+
+  content.innerHTML = renderAuditContent();
 }
 
 function getMemberStatusChip(status) {
@@ -7692,9 +7744,26 @@ function rolePermissionDescription(role) {
     search_firm: "외부 서치펌 후보자 발굴과 등록 계정",
     hiring_manager: "현업 검토와 후보자 탐색 중심 계정",
     business_recruiter: "사업부 단위 후보자 등록과 운영 계정",
-    division_recruiter: "부문 단위 채용 운영과 감사 로그 확인 계정",
+    division_recruiter: "부문 단위 채용 운영 계정",
     admin: "회원 승인과 권한 설정까지 가능한 관리자"
   }[role] || "";
+}
+
+function renderManagementTabs() {
+  const tabs = [
+    { id: "members", label: "회원 관리" },
+    { id: "logs", label: "Log 관리" }
+  ];
+
+  return `
+    <div class="management-tabs" role="tablist" aria-label="Management tabs">
+      ${tabs.map((tab) => `
+        <button class="management-tab ${state.managementTab === tab.id ? "is-active" : ""}" type="button" role="tab" aria-selected="${state.managementTab === tab.id}" data-management-tab="${tab.id}">
+          ${tab.label}
+        </button>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderMembers() {
@@ -7709,12 +7778,35 @@ function renderMembers() {
     return;
   }
 
+  if (!["members", "logs"].includes(state.managementTab)) {
+    state.managementTab = "members";
+  }
+
+  const tabs = renderManagementTabs();
+
+  if (state.managementTab === "logs") {
+    content.innerHTML = `
+      ${tabs}
+      <div class="dashboard-grid member-dashboard">
+        <section class="content-panel span-12">
+          <div class="panel-header">
+            <h4>Log 관리</h4>
+            <span class="small-pill">관리자 전용</span>
+          </div>
+          ${renderAuditContent({ manageable: true })}
+        </section>
+      </div>
+    `;
+    return;
+  }
+
   const pending = state.members.filter((member) => member.status === "pending").length;
   const active = state.members.filter((member) => member.status === "active").length;
   const suspended = state.members.filter((member) => member.status === "suspended").length;
   const filteredMembers = getFilteredMembers();
 
   content.innerHTML = `
+    ${tabs}
     <div class="dashboard-grid member-dashboard">
       <div class="kpi-row">
         ${metricCard("전체 회원", state.members.length, "등록된 계정")}
@@ -10229,6 +10321,66 @@ function updateMemberFilters() {
   renderMemberTable();
 }
 
+function setManagementTab(tab) {
+  if (!["members", "logs"].includes(tab) || !isAdmin()) {
+    return;
+  }
+
+  state.managementTab = tab;
+  persistState();
+  renderMembers();
+}
+
+async function deleteAuditLog(logId) {
+  if (!isAdmin()) {
+    return;
+  }
+
+  const log = state.auditLogs.find((item) => item.id === logId);
+
+  if (!log) {
+    return;
+  }
+
+  if (!window.confirm("선택한 로그를 삭제할까요?")) {
+    return;
+  }
+
+  state.auditLogs = state.auditLogs.filter((item) => item.id !== logId);
+  persistState();
+  renderMembers();
+  showToast("로그를 삭제했습니다.");
+
+  try {
+    await deleteSupabaseRecord("audit_logs", logId);
+  } catch (error) {
+    console.warn("Audit log remote delete failed.", error);
+    showToast("화면에서는 삭제됐지만 원격 DB 삭제 확인에 실패했습니다.");
+  }
+}
+
+async function clearAuditLogs() {
+  if (!isAdmin() || !state.auditLogs.length) {
+    return;
+  }
+
+  if (!window.confirm("전체 로그를 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) {
+    return;
+  }
+
+  const logIds = state.auditLogs.map((log) => log.id).filter(Boolean);
+  state.auditLogs = [];
+  persistState();
+  renderMembers();
+  showToast("전체 로그를 삭제했습니다.");
+
+  try {
+    await Promise.allSettled(logIds.map((logId) => deleteSupabaseRecord("audit_logs", logId)));
+  } catch (error) {
+    console.warn("Audit logs remote clear failed.", error);
+  }
+}
+
 function findMember(memberId) {
   return state.members.find((member) => member.id === memberId);
 }
@@ -10460,6 +10612,29 @@ function bindEvents() {
       deleteMemberAccount(deleteMemberButton.dataset.deleteMember).catch((error) => {
         console.warn(error);
         showToast("회원 계정 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    const managementTabButton = event.target.closest("[data-management-tab]");
+    if (managementTabButton) {
+      setManagementTab(managementTabButton.dataset.managementTab);
+      return;
+    }
+
+    const deleteAuditLogButton = event.target.closest("[data-delete-audit-log]");
+    if (deleteAuditLogButton) {
+      deleteAuditLog(deleteAuditLogButton.dataset.deleteAuditLog).catch((error) => {
+        console.warn(error);
+        showToast("로그 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    if (event.target.closest("[data-clear-audit-logs]")) {
+      clearAuditLogs().catch((error) => {
+        console.warn(error);
+        showToast("로그 전체 삭제 중 오류가 발생했습니다.");
       });
       return;
     }
