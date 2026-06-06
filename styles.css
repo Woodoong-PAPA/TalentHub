@@ -1339,6 +1339,15 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.policy-citation-highlight {
+  border-radius: 4px;
+  padding: 1px 3px;
+  color: var(--text);
+  background: #fff3a3;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 .policy-citation-empty {
   display: grid;
   gap: 4px;

@@ -4423,20 +4423,53 @@ function scorePolicyPassage(passage, queryTokens, rawQuery) {
   return score;
 }
 
-function selectPolicyAnswerText(passage, queryTokens) {
-  const sentences = passage.text
+function splitPolicySentences(text) {
+  return String(text || "")
     .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
+}
+
+function scorePolicySentence(sentence, queryTokens) {
+  const text = policySearchText(sentence);
+  return queryTokens.reduce((sum, token) => sum + (text.includes(token) ? 1 : 0), 0);
+}
+
+function selectPolicyHighlightSentences(passage, queryTokens) {
+  const sentences = splitPolicySentences(passage.text);
+
+  if (!sentences.length) {
+    return [];
+  }
+
+  const selected = sentences
+    .map((sentence, index) => ({
+      sentence,
+      index,
+      score: scorePolicySentence(sentence, queryTokens)
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 2)
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.sentence);
+
+  return selected.length ? selected : sentences.slice(0, 1);
+}
+
+function selectPolicyAnswerText(passage, queryTokens) {
+  const sentences = splitPolicySentences(passage.text);
 
   if (!sentences.length) {
     return passage.text.slice(0, 320);
   }
 
   const scored = sentences.map((sentence, index) => {
-    const text = policySearchText(sentence);
-    const score = queryTokens.reduce((sum, token) => sum + (text.includes(token) ? 1 : 0), 0);
-    return { sentence, index, score };
+    return {
+      sentence,
+      index,
+      score: scorePolicySentence(sentence, queryTokens)
+    };
   });
   const selected = scored
     .filter((item) => item.score > 0)
@@ -4469,7 +4502,7 @@ function findPolicyContexts(question) {
     .slice(0, POLICY_CHAT_MAX_CONTEXTS);
 }
 
-function createPolicyCitations(contexts, createdAt) {
+function createPolicyCitations(contexts, createdAt, queryTokens = []) {
   return contexts.map((context, index) => ({
     id: createId("policy-citation"),
     number: index + 1,
@@ -4478,6 +4511,7 @@ function createPolicyCitations(contexts, createdAt) {
     fileName: context.source.fileName,
     passageIndex: context.index,
     quote: context.text,
+    keySentences: selectPolicyHighlightSentences(context, queryTokens),
     createdAt
   }));
 }
@@ -4588,7 +4622,7 @@ async function buildPolicyAssistantMessage(question) {
   }
 
   const queryTokens = policyTokens(question);
-  const citations = createPolicyCitations(contexts, createdAt);
+  const citations = createPolicyCitations(contexts, createdAt, queryTokens);
   let answerItems = [];
 
   try {
@@ -4621,6 +4655,44 @@ function findPolicyCitation(citationId) {
 
 function findPolicySource(sourceId) {
   return state.policySources.find((source) => source.id === sourceId) || null;
+}
+
+function renderHighlightedPolicyQuote(citation) {
+  const keySentences = Array.isArray(citation.keySentences)
+    ? citation.keySentences.map((sentence) => String(sentence || "").trim()).filter(Boolean)
+    : [];
+
+  if (!keySentences.length) {
+    return escapeHtml(citation.quote);
+  }
+
+  let segments = [{ text: String(citation.quote || ""), highlighted: false }];
+
+  keySentences.forEach((sentence) => {
+    segments = segments.flatMap((segment) => {
+      if (segment.highlighted || !segment.text) {
+        return [segment];
+      }
+
+      const index = segment.text.indexOf(sentence);
+
+      if (index < 0) {
+        return [segment];
+      }
+
+      return [
+        { text: segment.text.slice(0, index), highlighted: false },
+        { text: segment.text.slice(index, index + sentence.length), highlighted: true },
+        { text: segment.text.slice(index + sentence.length), highlighted: false }
+      ].filter((item) => item.text);
+    });
+  });
+
+  return segments
+    .map((segment) => segment.highlighted
+      ? `<mark class="policy-citation-highlight">${escapeHtml(segment.text)}</mark>`
+      : escapeHtml(segment.text))
+    .join("");
 }
 
 function renderPolicySourceForm() {
@@ -4777,7 +4849,7 @@ function renderPolicyCitationPanel() {
         </div>
         <button class="ghost-button compact-button" type="button" data-close-policy-citation>닫기</button>
       </div>
-      <blockquote>${escapeHtml(citation.quote)}</blockquote>
+      <blockquote>${renderHighlightedPolicyQuote(citation)}</blockquote>
     </aside>
   `;
 }
