@@ -49,6 +49,10 @@
       "dest": "/api/search-candidates.js"
     },
     {
+      "src": "/api/policy-chat",
+      "dest": "/api/policy-chat.js"
+    },
+    {
       "src": "/api/trending-people",
       "dest": "/api/trending-people.js"
     },

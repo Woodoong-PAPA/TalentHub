@@ -88,6 +88,7 @@ const CANDIDATE_VISIBILITY_LABELS = {
 const CANDIDATE_VISIBILITY_ORDER = ["all", "business_unit"];
 const POLICY_CHAT_MAX_CONTEXTS = 4;
 const POLICY_CHAT_MAX_MESSAGES = 20;
+const POLICY_CHAT_MAX_CONTEXT_CHARS = 1800;
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
 const VISIT_SESSION_KEY = "samsung-talent-pool-visit-counted";
 const SCREENING_STAGE_LABELS = {
@@ -549,6 +550,7 @@ const state = {
   policySources: [],
   policyChatMessages: [],
   policyChatQuestion: "",
+  policyChatLoading: false,
   policyChatSourceLoading: false,
   policyChatSourceError: "",
   policySourceModalOpen: false,
@@ -4449,23 +4451,113 @@ function selectPolicyAnswerText(passage, queryTokens) {
 
 function findPolicyContexts(question) {
   const queryTokens = policyTokens(question);
+  const passages = state.policySources.flatMap(splitPolicyContentIntoPassages);
 
-  if (!queryTokens.length) {
+  if (!passages.length) {
     return [];
   }
 
-  return state.policySources
-    .flatMap(splitPolicyContentIntoPassages)
+  const ranked = passages
     .map((passage) => ({
       ...passage,
       score: scorePolicyPassage(passage, queryTokens, question)
     }))
-    .filter((passage) => passage.score > 0)
-    .sort((a, b) => b.score - a.score || a.source.title.localeCompare(b.source.title))
+    .sort((a, b) => b.score - a.score || a.source.title.localeCompare(b.source.title));
+  const directMatches = ranked.filter((passage) => passage.score > 0);
+
+  return (directMatches.length ? directMatches : ranked)
     .slice(0, POLICY_CHAT_MAX_CONTEXTS);
 }
 
-function buildPolicyAssistantMessage(question) {
+function createPolicyCitations(contexts, createdAt) {
+  return contexts.map((context, index) => ({
+    id: createId("policy-citation"),
+    number: index + 1,
+    sourceId: context.source.id,
+    sourceTitle: context.source.title,
+    fileName: context.source.fileName,
+    passageIndex: context.index,
+    quote: context.text,
+    createdAt
+  }));
+}
+
+function buildLocalPolicyAnswerItems(question, contexts, citations, queryTokens) {
+  const sourceNames = [...new Set(contexts.map((context) => context.source.title))].slice(0, 3);
+  const intro = sourceNames.length
+    ? `질문은 ${sourceNames.join(", ")} 소스의 기준과 연결됩니다. 등록된 소스 기준으로 정리하면 다음과 같습니다.`
+    : "등록된 소스 기준으로 정리하면 다음과 같습니다.";
+  const answerItems = [{
+    text: intro,
+    citationId: citations[0]?.id || ""
+  }];
+
+  contexts.slice(0, 3).forEach((context, index) => {
+    const evidence = selectPolicyAnswerText(context, queryTokens)
+      .replace(/\s+/g, " ")
+      .trim();
+    const text = [
+      `${index + 1}. ${context.source.title} 기준`,
+      evidence
+        ? `해당 소스의 핵심 취지는 ${evidence.replace(/[.。]$/, "")}로 해석됩니다.`
+        : "해당 소스에서 질문과 관련된 기준 문구가 확인됩니다."
+    ].join("\n");
+
+    answerItems.push({
+      text,
+      citationId: citations[index]?.id || citations[0]?.id || ""
+    });
+  });
+
+  return answerItems;
+}
+
+function normalizePolicyApiAnswerItems(payload, citations) {
+  if (!payload?.ok || !Array.isArray(payload.answerItems)) {
+    return [];
+  }
+
+  return payload.answerItems
+    .map((item) => {
+      const citation = citations.find((candidate) => candidate.number === Number(item.citationNumber));
+      const text = String(item.text || "").trim();
+
+      if (!text) {
+        return null;
+      }
+
+      return {
+        text,
+        citationId: citation?.id || citations[0]?.id || ""
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+async function callPolicyChatApi(question, contexts, citations) {
+  const response = await fetch("/api/policy-chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question,
+      contexts: contexts.map((context, index) => ({
+        number: citations[index].number,
+        sourceTitle: context.source.title,
+        fileName: context.source.fileName,
+        text: context.text.slice(0, POLICY_CHAT_MAX_CONTEXT_CHARS)
+      }))
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Policy chat API failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function buildPolicyAssistantMessage(question) {
   const contexts = findPolicyContexts(question);
   const createdAt = getTimestampText();
 
@@ -4496,20 +4588,21 @@ function buildPolicyAssistantMessage(question) {
   }
 
   const queryTokens = policyTokens(question);
-  const citations = contexts.map((context, index) => ({
-    id: createId("policy-citation"),
-    number: index + 1,
-    sourceId: context.source.id,
-    sourceTitle: context.source.title,
-    fileName: context.source.fileName,
-    passageIndex: context.index,
-    quote: context.text,
-    createdAt
-  }));
-  const answerItems = contexts.slice(0, 3).map((context, index) => ({
-    text: selectPolicyAnswerText(context, queryTokens),
-    citationId: citations[index].id
-  }));
+  const citations = createPolicyCitations(contexts, createdAt);
+  let answerItems = [];
+
+  try {
+    answerItems = normalizePolicyApiAnswerItems(
+      await callPolicyChatApi(question, contexts, citations),
+      citations
+    );
+  } catch (error) {
+    console.warn("Policy chat API failed. Using local grounded answer.", error);
+  }
+
+  if (!answerItems.length) {
+    answerItems = buildLocalPolicyAnswerItems(question, contexts, citations, queryTokens);
+  }
 
   return {
     id: createId("policy-message"),
@@ -4699,6 +4792,15 @@ function renderPolicyChat() {
   const messages = state.policyChatMessages.length
     ? state.policyChatMessages.map(renderPolicyMessage).join("")
     : `<div class="empty-state">채용 기준 문서에 대해 자연어로 질문해보세요. 답변은 등록된 소스 데이터에서 확인되는 내용만 사용합니다.</div>`;
+  const loadingMessage = state.policyChatLoading
+    ? `
+      <article class="policy-message is-assistant">
+        <div class="policy-answer-item">
+          <p>소스 데이터를 읽고 질문 의도에 맞는 답변을 정리하는 중입니다.</p>
+        </div>
+      </article>
+    `
+    : "";
 
   content.innerHTML = `
     <div class="policy-chat-layout">
@@ -4711,10 +4813,10 @@ function renderPolicyChat() {
           </div>
         </div>
         <div class="policy-chat-notice">등록된 소스에 없는 내용은 답변하지 않습니다. 근거 버튼으로 원문 문구를 확인할 수 있습니다.</div>
-        <div class="policy-message-list">${messages}</div>
+        <div class="policy-message-list">${messages}${loadingMessage}</div>
         <form id="policy-chat-form" class="policy-chat-form">
           <textarea class="control-textarea" id="policy-chat-question" name="question" placeholder="예: 경력직 면접위원 구성 기준은 어떻게 돼?">${escapeHtml(state.policyChatQuestion)}</textarea>
-          <button class="primary-button" type="submit">질문하기</button>
+          <button class="primary-button" type="submit" ${state.policyChatLoading ? "disabled" : ""}>${state.policyChatLoading ? "답변 정리 중" : "질문하기"}</button>
         </form>
       </section>
 
@@ -4817,8 +4919,8 @@ async function loadPolicySourceFile(file) {
   }
 }
 
-function askPolicyChat(form) {
-  if (!form) {
+async function askPolicyChat(form) {
+  if (!form || state.policyChatLoading) {
     return;
   }
 
@@ -4831,20 +4933,39 @@ function askPolicyChat(form) {
   }
 
   state.policyChatQuestion = "";
+  state.policyChatLoading = true;
   state.policyChatMessages.push({
     id: createId("policy-message"),
     role: "user",
     text: question,
     createdAt: getTimestampText()
   });
-
-  const answer = buildPolicyAssistantMessage(question);
-  state.policyChatMessages.push(answer);
-  state.policyChatMessages = state.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
-  state.policyChatSelectedCitationId = answer.citations?.[0]?.id || "";
-  addAuditLog("채용 AI 챗봇 질문", "채용 기준 Q&A", question);
   persistState();
   renderPolicyChat();
+
+  try {
+    const answer = await buildPolicyAssistantMessage(question);
+    state.policyChatMessages.push(answer);
+    state.policyChatMessages = state.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
+    state.policyChatSelectedCitationId = answer.citations?.[0]?.id || "";
+    addAuditLog("채용 AI 챗봇 질문", "채용 기준 Q&A", question);
+  } catch (error) {
+    console.warn("Policy answer failed.", error);
+    state.policyChatMessages.push({
+      id: createId("policy-message"),
+      role: "assistant",
+      createdAt: getTimestampText(),
+      answerItems: [{
+        text: "답변 생성 중 오류가 발생했습니다. 잠시 후 다시 질문해주세요.",
+        citationId: ""
+      }],
+      citations: []
+    });
+  } finally {
+    state.policyChatLoading = false;
+    persistState();
+    renderPolicyChat();
+  }
 }
 
 async function deletePolicySource(sourceId) {
@@ -4889,6 +5010,7 @@ function clearPolicyChat() {
   state.policyChatMessages = [];
   state.policyChatSelectedCitationId = "";
   state.policyChatQuestion = "";
+  state.policyChatLoading = false;
   persistState();
   renderPolicyChat();
 }
@@ -10121,7 +10243,12 @@ function bindEvents() {
 
     if (event.target.matches("#policy-chat-form")) {
       event.preventDefault();
-      askPolicyChat(event.target);
+      askPolicyChat(event.target).catch((error) => {
+        console.warn(error);
+        state.policyChatLoading = false;
+        showToast("채용 AI 챗봇 답변 생성 중 오류가 발생했습니다.");
+        renderPolicyChat();
+      });
       return;
     }
 
