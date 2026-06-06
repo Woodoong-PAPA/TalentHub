@@ -1396,7 +1396,7 @@ function canViewScreeningApplicant(applicant, member = getCurrentMember()) {
   }
 
   if (member.role === "hiring_manager") {
-    return ["first_pass", "second_draft", "second_reject"].includes(applicant.stage);
+    return ["first_pass", "second_draft", "second_reject", "second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage);
   }
 
   return true;
@@ -4104,8 +4104,8 @@ function renderScreeningApplicantDetailModal(folder) {
   `;
 }
 
-function renderApplicantContactForm(folder, applicant) {
-  const canEdit = canManageScreeningContact(folder, applicant);
+function renderApplicantContactForm(folder, applicant, locked = false) {
+  const canEdit = !locked && canManageScreeningContact(folder, applicant);
 
   if (!["second_pass", "contact_requested", "contact_ready"].includes(applicant.stage) && !(applicant.sourceType === "search_firm" && applicant.stage === "interview_mail_sent")) {
     return `
@@ -4125,10 +4125,11 @@ function renderApplicantContactForm(folder, applicant) {
   `;
 }
 
-function renderApplicantActions(folder, applicant) {
+function renderApplicantActions(folder, applicant, step = state.screeningDetailStep) {
   const actions = [];
+  const locked = isScreeningStageSnapshotLocked(applicant, step);
   const revertAction = {
-    registered: applicant.sourceType === "search_firm" ? "접수로 되돌리기" : "",
+    registered: "접수로 되돌리기",
     first_pass: "1차로 되돌리기",
     first_reject: "1차 재검토",
     second_draft: "통과 예정 취소",
@@ -4138,6 +4139,10 @@ function renderApplicantActions(folder, applicant) {
     contact_ready: "2차로 되돌리기",
     interview_mail_sent: "2차로 되돌리기"
   }[applicant.stage];
+
+  if (locked) {
+    return `<span class="muted-text">${escapeHtml(SCREENING_STAGE_LABELS[applicant.stage] || applicant.stage)} · 잠금</span>`;
+  }
 
   if (canSubmitScreeningApplicant(folder, applicant)) {
     actions.push(`<button class="primary-button compact-button" type="button" data-screening-submit-applicant="${applicant.id}">최종 제출</button>`);
@@ -4178,9 +4183,9 @@ function renderApplicantActions(folder, applicant) {
 
 function getScreeningStepApplicants(folder, step = state.screeningDetailStep) {
   const stageMap = {
-    reception: ["reception"],
-    first: ["registered", "first_reject"],
-    second: ["first_pass", "second_draft", "second_reject"],
+    reception: SCREENING_STAGE_ORDER,
+    first: ["registered", "first_pass", "first_reject", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
+    second: ["first_pass", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
     mail: ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]
   };
   const stages = stageMap[step] || stageMap.reception;
@@ -4201,6 +4206,46 @@ function getScreeningStepApplicants(folder, step = state.screeningDetailStep) {
 
 function screeningStepCount(folder, step) {
   return getScreeningStepApplicants(folder, step).length;
+}
+
+function getScreeningStepRank(step) {
+  return {
+    reception: 0,
+    first: 1,
+    second: 2,
+    mail: 3
+  }[step] ?? 0;
+}
+
+function getScreeningApplicantActiveStep(applicant) {
+  if (["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage)) {
+    return "mail";
+  }
+
+  if (["first_pass", "second_draft", "second_reject"].includes(applicant.stage)) {
+    return "second";
+  }
+
+  if (["registered", "first_reject"].includes(applicant.stage)) {
+    return "first";
+  }
+
+  return "reception";
+}
+
+function isScreeningStageSnapshotLocked(applicant, step) {
+  return getScreeningStepRank(getScreeningApplicantActiveStep(applicant)) > getScreeningStepRank(step);
+}
+
+function getScreeningStageSnapshotNote(applicant, step) {
+  if (!isScreeningStageSnapshotLocked(applicant, step)) {
+    return "";
+  }
+
+  const currentStep = SCREENING_DETAIL_STEPS.find((item) => item.id === getScreeningApplicantActiveStep(applicant))?.label || "다음 단계";
+  const currentStage = SCREENING_STAGE_LABELS[applicant.stage] || applicant.stage;
+
+  return `${currentStep}로 복사되어 진행 중입니다. 현재 상태: ${currentStage}`;
 }
 
 function getVisibleScreeningDetailSteps(folder, member = getCurrentMember()) {
@@ -4233,20 +4278,12 @@ function renderScreeningStepNav(folder) {
   `;
 }
 
-function isScreeningReceptionLocked(applicant, member = getCurrentMember()) {
-  return Boolean(
-    isSearchFirmRole(member) &&
-    applicant?.sourceType === "search_firm" &&
-    applicant.stage !== "reception" &&
-    (applicant.searchFirmMemberId === member.id || applicant.registeredById === member.id)
-  );
-}
-
-function renderApplicantCard(folder, applicant) {
+function renderApplicantCard(folder, applicant, step = state.screeningDetailStep) {
   const firm = applicant.searchFirmMemberId ? state.members.find((member) => member.id === applicant.searchFirmMemberId) : null;
   const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌" : "직접 등록";
   const sourceMeta = firm ? `${firm.name} · ${firm.email}` : applicant.registeredByName || "-";
-  const locked = isScreeningReceptionLocked(applicant);
+  const locked = isScreeningStageSnapshotLocked(applicant, step);
+  const lockedNote = getScreeningStageSnapshotNote(applicant, step);
 
   return `
     <article class="screening-applicant-card ${locked ? "is-locked" : ""}">
@@ -4255,7 +4292,7 @@ function renderApplicantCard(folder, applicant) {
           <button class="screening-applicant-name-button" type="button" data-open-screening-applicant-detail="${escapeHtml(applicant.id)}">${escapeHtml(applicant.name || "-")}</button>
           <span>${escapeHtml([applicant.company, applicant.currentRole].filter(Boolean).join(" · ") || "회사/직무 미입력")}</span>
           ${applicant.resumeAttachment ? `<span>첨부: ${escapeHtml(applicant.resumeAttachment.name)} (${formatFileSize(applicant.resumeAttachment.size)})</span>` : ""}
-          ${locked ? `<span class="screening-lock-note">최종 제출 완료 후 현재 단계와 결과가 이 카드에 동기화됩니다.</span>` : ""}
+          ${lockedNote ? `<span class="screening-lock-note">${escapeHtml(lockedNote)}</span>` : ""}
         </div>
         <div class="screening-card-tags">
           ${fitGradeChip(applicant.fitGrade)}
@@ -4274,25 +4311,25 @@ function renderApplicantCard(folder, applicant) {
         </div>
         <div class="screening-card-field">
           <span>연락처</span>
-          ${renderApplicantContactForm(folder, applicant)}
+          ${renderApplicantContactForm(folder, applicant, locked)}
         </div>
         <div class="screening-card-field">
           <span>액션</span>
-          ${renderApplicantActions(folder, applicant)}
+          ${renderApplicantActions(folder, applicant, step)}
         </div>
       </div>
     </article>
   `;
 }
 
-function renderApplicantList(folder, applicants, emptyText) {
+function renderApplicantList(folder, applicants, emptyText, step = state.screeningDetailStep) {
   if (!applicants.length) {
     return `<div class="empty-state compact-empty">${escapeHtml(emptyText)}</div>`;
   }
 
   return `
     <div class="screening-applicant-list">
-      ${applicants.map((applicant) => renderApplicantCard(folder, applicant)).join("")}
+      ${applicants.map((applicant) => renderApplicantCard(folder, applicant, step)).join("")}
     </div>
   `;
 }
@@ -4364,9 +4401,9 @@ function renderScreeningStepContent(folder) {
       <section class="profile-panel">
         <div class="panel-header">
           <h4>${escapeHtml(title)}</h4>
-          <span class="small-pill">접수 ${applicants.length}명</span>
+          <span class="small-pill">접수 이력 ${applicants.length}명</span>
         </div>
-        ${renderApplicantList(folder, applicants, emptyText)}
+        ${renderApplicantList(folder, applicants, emptyText, "reception")}
       </section>
     `;
   }
@@ -4378,9 +4415,9 @@ function renderScreeningStepContent(folder) {
       <section class="profile-panel">
         <div class="panel-header">
           <h4>2차 스크리닝 리스트</h4>
-          <span class="small-pill">1차 합격자 ${applicants.length}명</span>
+          <span class="small-pill">2차 도달 ${applicants.length}명</span>
         </div>
-        ${renderApplicantList(folder, applicants, "1차 합격 처리된 지원자가 없습니다.")}
+        ${renderApplicantList(folder, applicants, "1차 합격 처리된 지원자가 없습니다.", "second")}
       </section>
       ${renderSecondScreeningPanel(folder)}
     `;
@@ -4395,7 +4432,7 @@ function renderScreeningStepContent(folder) {
           <h4>전화면접 안내 대상</h4>
           <span class="small-pill">대상 ${applicants.length}명</span>
         </div>
-        ${renderApplicantList(folder, applicants, "2차 최종 통과 지원자가 없습니다.")}
+        ${renderApplicantList(folder, applicants, "2차 최종 통과 지원자가 없습니다.", "mail")}
       </section>
       ${renderScreeningMailQueue(folder)}
     `;
@@ -4407,9 +4444,9 @@ function renderScreeningStepContent(folder) {
     <section class="profile-panel">
       <div class="panel-header">
         <h4>지원자별 스크리닝 1차</h4>
-        <span class="small-pill">신규/검토 ${applicants.length}명</span>
+        <span class="small-pill">1차 도달 ${applicants.length}명</span>
       </div>
-      ${renderApplicantList(folder, applicants, "1차 스크리닝 대상 지원자가 없습니다.")}
+      ${renderApplicantList(folder, applicants, "1차 스크리닝 대상 지원자가 없습니다.", "first")}
     </section>
   `;
 }
@@ -9578,7 +9615,7 @@ function revertScreeningApplicantStage(applicantId) {
   }
 
   const previousStageMap = {
-    registered: applicant.sourceType === "search_firm" ? "reception" : "",
+    registered: "reception",
     first_pass: "registered",
     first_reject: "registered",
     second_draft: "first_pass",
