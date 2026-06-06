@@ -1648,6 +1648,26 @@ function decodeTextDataUrl(dataUrl = "") {
   }
 }
 
+function dataUrlToUint8Array(dataUrl = "") {
+  const match = String(dataUrl || "").match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+
+  if (!match) {
+    return new Uint8Array();
+  }
+
+  const payload = match[3] || "";
+  const raw = match[2]
+    ? atob(payload)
+    : decodeURIComponent(payload);
+  const bytes = new Uint8Array(raw.length);
+
+  for (let index = 0; index < raw.length; index += 1) {
+    bytes[index] = raw.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
 function formatFileSize(bytes = 0) {
   if (!bytes) {
     return "-";
@@ -3316,8 +3336,11 @@ function renderResumeInlineViewer(attachment, applicant) {
 
   if (fileType === "pdf" && attachment.dataUrl) {
     return `
-      <div class="screening-resume-viewer">
-        <iframe class="screening-resume-frame" src="${escapeHtml(attachment.dataUrl)}#toolbar=1&navpanes=0" title="${escapeHtml(fileName)} 이력서 뷰어"></iframe>
+      <div class="screening-resume-viewer screening-resume-pdf-viewer" data-screening-pdf-viewer="${escapeHtml(applicant.id)}">
+        <div class="screening-resume-loading">
+          <strong>PDF 이력서를 불러오는 중입니다.</strong>
+          <span>브라우저 다운로드 화면으로 이동하지 않고 이 영역에 바로 표시합니다.</span>
+        </div>
       </div>
     `;
   }
@@ -3344,6 +3367,83 @@ function renderResumeInlineViewer(attachment, applicant) {
       <span>PDF, 이미지, TXT 또는 텍스트 추출 가능한 DOCX/HWPX 파일을 등록하면 이 영역에서 바로 확인할 수 있습니다.</span>
     </div>
   `;
+}
+
+async function renderPdfAttachmentToViewer(viewer, attachment) {
+  if (!viewer || !attachment?.dataUrl || viewer.dataset.rendered === "true") {
+    return;
+  }
+
+  viewer.dataset.rendered = "true";
+
+  try {
+    const bytes = dataUrlToUint8Array(attachment.dataUrl);
+
+    if (!bytes.length) {
+      throw new Error("PDF 데이터를 읽을 수 없습니다.");
+    }
+
+    const pdfjs = await loadPdfJs();
+    const pdf = await pdfjs.getDocument({ data: bytes, useWorkerFetch: true }).promise;
+    const pageCount = pdf.numPages || 0;
+    const maxWidth = Math.min(Math.max(320, viewer.clientWidth || 720), 900);
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    viewer.innerHTML = "";
+
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = maxWidth / baseViewport.width;
+      const viewport = page.getViewport({ scale });
+      const pageShell = document.createElement("div");
+      const pageLabel = document.createElement("span");
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+
+      pageShell.className = "screening-pdf-page";
+      pageLabel.textContent = `${pageNumber} / ${pageCount}`;
+      canvas.width = Math.floor(viewport.width * ratio);
+      canvas.height = Math.floor(viewport.height * ratio);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      pageShell.append(pageLabel, canvas);
+      viewer.append(pageShell);
+
+      await page.render({ canvasContext: context, viewport }).promise;
+    }
+
+    if (!pageCount) {
+      throw new Error("PDF 페이지를 찾지 못했습니다.");
+    }
+  } catch (error) {
+    console.warn("Inline PDF viewer failed.", error);
+    const fallbackText = String(attachment.text || "").trim();
+    viewer.classList.add("screening-resume-text-viewer");
+    viewer.innerHTML = fallbackText
+      ? `<pre>${escapeHtml(fallbackText)}</pre>`
+      : `
+        <div class="screening-resume-placeholder">
+          <strong>PDF를 화면 안에서 렌더링하지 못했습니다.</strong>
+          <span>파일 자체는 등록되어 있지만, 현재 브라우저가 PDF 렌더링을 차단했습니다.</span>
+        </div>
+      `;
+  }
+}
+
+function hydrateScreeningResumeViewers(folder = getSelectedScreeningFolder()) {
+  if (!folder) {
+    return;
+  }
+
+  document.querySelectorAll("[data-screening-pdf-viewer]").forEach((viewer) => {
+    const applicant = getScreeningApplicant(folder, viewer.dataset.screeningPdfViewer);
+    const attachment = applicant?.resumeAttachment;
+
+    if (attachmentFileType(attachment) === "pdf") {
+      renderPdfAttachmentToViewer(viewer, attachment);
+    }
+  });
 }
 
 function renderScreeningApplicantDetailModal(folder) {
@@ -3744,6 +3844,7 @@ function renderScreening() {
       ${renderScreeningAccessModal(selectedFolder)}
       ${renderScreeningApplicantDetailModal(selectedFolder)}
     `;
+    hydrateScreeningResumeViewers(selectedFolder);
     return;
   }
 

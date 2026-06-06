@@ -1426,21 +1426,60 @@ tr:last-child td {
   background: var(--surface-soft);
 }
 
-.screening-resume-frame {
-  display: block;
-  width: 100%;
-  height: min(70vh, 760px);
-  min-height: 520px;
-  border: 0;
-  background: #ffffff;
-}
-
 .screening-resume-image {
   display: block;
   width: 100%;
   max-height: 760px;
   object-fit: contain;
   background: #ffffff;
+}
+
+.screening-resume-pdf-viewer {
+  display: grid;
+  gap: 14px;
+  padding: 12px;
+  overflow: auto;
+  max-height: min(72vh, 820px);
+}
+
+.screening-resume-loading {
+  display: grid;
+  min-height: 320px;
+  place-content: center;
+  gap: 6px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.screening-resume-loading strong {
+  color: var(--text);
+}
+
+.screening-pdf-page {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.screening-pdf-page span {
+  justify-self: start;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.screening-pdf-page canvas {
+  display: block;
+  max-width: 100%;
+  height: auto !important;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: var(--shadow);
 }
 
 .screening-resume-text-viewer {
@@ -3146,9 +3185,13 @@ tr:last-child td {
     min-height: 360px;
   }
 
-  .screening-resume-frame {
-    height: 58vh;
-    min-height: 360px;
+  .screening-resume-pdf-viewer {
+    max-height: 58vh;
+    padding: 8px;
+  }
+
+  .screening-resume-loading {
+    min-height: 300px;
   }
 
   .screening-resume-text-viewer {
