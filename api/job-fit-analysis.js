@@ -140,34 +140,46 @@ function compactResume(resume) {
   };
 }
 
+function gradeFromScore(score) {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 60) return "C";
+  if (score >= 40) return "D";
+  return "E";
+}
+
 function normalizeResults(results, resumeIds) {
   if (!Array.isArray(results)) {
     return [];
   }
 
   return results
-    .map((item) => ({
-      resumeId: String(item.resumeId || "").trim(),
-      score: Math.max(0, Math.min(100, Math.round(Number(item.score || 0)))),
-      grade: ["A", "B", "C", "D", "E"].includes(item.grade) ? item.grade : "E",
-      comment: sanitizeJobFitComment(String(item.comment || "").trim()),
-      fulfilledDetails: Array.isArray(item.fulfilledDetails)
-        ? item.fulfilledDetails.map((detail) => ({
-          title: String(detail.title || "").trim(),
-          basis: String(detail.basis || "").trim()
-        })).filter((detail) => detail.title).slice(0, 8)
-        : [],
-      missingDetails: Array.isArray(item.missingDetails)
-        ? item.missingDetails.map((detail) => ({
-          title: String(detail.title || "").trim(),
-          note: String(detail.note || "").trim()
-        })).filter((detail) => detail.title).slice(0, 8)
-        : [],
-      evidence: Array.isArray(item.evidence)
-        ? item.evidence.map((text) => String(text || "").trim()).filter(Boolean).slice(0, 5)
-        : [],
-      recommendation: ""
-    }))
+    .map((item) => {
+      const score = Math.max(0, Math.min(100, Math.round(Number(item.score || 0))));
+
+      return {
+        resumeId: String(item.resumeId || "").trim(),
+        score,
+        grade: gradeFromScore(score),
+        comment: sanitizeJobFitComment(String(item.comment || "").trim()),
+        fulfilledDetails: Array.isArray(item.fulfilledDetails)
+          ? item.fulfilledDetails.map((detail) => ({
+            title: String(detail.title || "").trim(),
+            basis: String(detail.basis || "").trim()
+          })).filter((detail) => detail.title).slice(0, 8)
+          : [],
+        missingDetails: Array.isArray(item.missingDetails)
+          ? item.missingDetails.map((detail) => ({
+            title: String(detail.title || "").trim(),
+            note: String(detail.note || "").trim()
+          })).filter((detail) => detail.title).slice(0, 8)
+          : [],
+        evidence: Array.isArray(item.evidence)
+          ? item.evidence.map((text) => String(text || "").trim()).filter(Boolean).slice(0, 5)
+          : [],
+        recommendation: ""
+      };
+    })
     .filter((item) => resumeIds.has(item.resumeId));
 }
 
@@ -201,7 +213,7 @@ async function callOpenAI(jdText, resumes) {
     "comment에는 후보자명, 핵심 충족 근거, 부족하거나 불확실한 부분, 포지션과의 종합 적합성 판단을 자연스럽게 포함한다.",
     "comment와 recommendation에는 다음 단계를 진행하라, 합격시키라, 인터뷰를 하라, 추가 자료를 받아라 같은 직접적인 채용 액션 지시를 쓰지 않는다.",
     "recommendation은 빈 문자열로 반환한다.",
-    "점수는 0~100, 등급은 A/B/C/D/E로 차등 부여한다. 결과는 적합도 높은 순서로 반환한다.",
+    "점수는 0~100으로 산정하고 등급은 A 90점 이상, B 80점 이상, C 60점 이상, D 40점 이상, E 40점 미만 기준으로 부여한다. 결과는 적합도 높은 순서로 반환한다.",
     "",
     "직무기술서:",
     jdText,

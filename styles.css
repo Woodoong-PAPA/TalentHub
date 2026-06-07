@@ -365,6 +365,13 @@ body.is-authenticated .app-shell {
   font-size: 24px;
 }
 
+.section-heading > .status-chip {
+  max-width: 100%;
+  flex-wrap: wrap;
+  line-height: 1.35;
+  text-align: left;
+}
+
 .date-pill,
 .status-chip,
 .tag,
@@ -2069,6 +2076,24 @@ tr:last-child td {
   line-height: 1.5;
 }
 
+.job-fit-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.job-fit-title-line .status-chip {
+  display: inline-grid;
+  min-height: 24px;
+  place-items: center;
+  padding: 0 9px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-weight: 800;
+  line-height: 1;
+}
+
 .job-fit-upload-card .control-textarea {
   min-height: 240px;
   resize: vertical;
@@ -2087,6 +2112,12 @@ tr:last-child td {
   min-width: 0;
 }
 
+.job-fit-upload-card .job-fit-file-list {
+  max-height: 176px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .job-fit-file-row,
 .job-fit-saved-card {
   display: grid;
@@ -2097,6 +2128,10 @@ tr:last-child td {
   border-radius: var(--radius);
   padding: 10px 12px;
   background: var(--surface-soft);
+}
+
+.job-fit-file-row.is-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .job-fit-file-row span,
@@ -2117,6 +2152,19 @@ tr:last-child td {
 .job-fit-saved-card span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.job-fit-file-link {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.job-fit-file-link:hover {
+  color: var(--blue-700);
+  text-decoration: underline;
 }
 
 .job-fit-upload-status,
@@ -2183,9 +2231,13 @@ tr:last-child td {
 
 .job-fit-result-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+  white-space: nowrap;
 }
 
 .job-fit-header-actions {

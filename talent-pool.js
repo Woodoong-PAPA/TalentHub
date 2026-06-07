@@ -5198,6 +5198,7 @@ function normalizeJobFitResume(resume = {}) {
     fileName,
     size: Number(resume.size || 0),
     type: String(resume.type || "").trim(),
+    dataUrl: String(resume.dataUrl || resume.downloadUrl || "").trim(),
     text,
     candidateName: getBestJobFitCandidateName(existingName, parsedProfile.name, inferCandidateNameFromResume(text, fileName)),
     education,
@@ -5310,13 +5311,20 @@ function sanitizeJobFitComment(value) {
 function normalizeJobFitResult(result = {}) {
   const fulfilledDetails = normalizeJobFitReportItems(result.fulfilledDetails || result.fulfilled, "basis");
   const missingDetails = normalizeJobFitReportItems(result.missingDetails || result.missing, "note");
+  const score = Math.max(0, Math.min(100, Number(result.score || 0)));
+  const candidateName = getBestJobFitCandidateName(
+    result.candidateName,
+    result.name,
+    extractLikelyPersonNameFromResumeText(result.comment || result.fitSummary || ""),
+    result.fileName
+  );
 
   return {
     resumeId: String(result.resumeId || "").trim(),
-    candidateName: normalizeInferredCandidateName(result.candidateName) || "이름 미확인",
+    candidateName,
     fileName: String(result.fileName || "").trim(),
-    score: Math.max(0, Math.min(100, Number(result.score || 0))),
-    grade: FIT_GRADE_ORDER.includes(result.grade) ? result.grade : "E",
+    score,
+    grade: gradeFromJobFitScore(score),
     fulfilled: fulfilledDetails.map((item) => item.title),
     missing: missingDetails.map((item) => item.title),
     fulfilledDetails,
@@ -5352,6 +5360,7 @@ function normalizeJobFitState(value = {}) {
           name: String(value.jdFile.name || "").trim(),
           size: Number(value.jdFile.size || 0),
           type: String(value.jdFile.type || "").trim(),
+          dataUrl: String(value.jdFile.dataUrl || value.jdFile.downloadUrl || "").trim(),
           uploadedAt: value.jdFile.uploadedAt || ""
         }
       : null,
@@ -5480,7 +5489,7 @@ function extractLikelyPersonNameFromResumeText(text) {
   }
 
   for (const pattern of [
-    /([가-힣]{2,5})\s*(?:후보자?|님|씨)\b/,
+    /([가-힣]{2,5})\s*(?:후보자?|지원자|님|씨)(?:는|은|가|이|의|\s|$)/,
     /(?:candidate|applicant|name)\s*[:：-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i
   ]) {
     const matched = normalizeInferredCandidateName(firstMatch(text, [pattern]));
@@ -5627,10 +5636,10 @@ function buildJobFitMissingDetail(check) {
 }
 
 function gradeFromJobFitScore(score) {
-  if (score >= 82) return "A";
-  if (score >= 68) return "B";
-  if (score >= 52) return "C";
-  if (score >= 36) return "D";
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 60) return "C";
+  if (score >= 40) return "D";
   return "E";
 }
 
@@ -5751,7 +5760,7 @@ async function analyzeJobFitWithServer(jdText, resumes) {
 
       return normalizeJobFitResult({
         ...result,
-        candidateName: resume.candidateName,
+        candidateName: getBestJobFitCandidateName(result.candidateName, resume.candidateName, result.comment, resume.fileName),
         fileName: resume.fileName,
         education: resume.education,
         career: resume.career
@@ -5840,6 +5849,33 @@ function renderJobFitReportItems(items, detailKey, emptyText) {
   `;
 }
 
+function renderJobFitFileLink(file) {
+  const fileName = String(file?.fileName || file?.name || "").trim() || "업로드 파일";
+  const dataUrl = String(file?.dataUrl || "").trim();
+
+  if (!dataUrl) {
+    return `<strong>${escapeHtml(fileName)}</strong>`;
+  }
+
+  return `<a class="job-fit-file-link" href="${escapeHtml(dataUrl)}" download="${escapeHtml(fileName)}">${escapeHtml(fileName)}</a>`;
+}
+
+function renderJobFitJdFileList() {
+  const jdFile = getJobFitState().jdFile;
+
+  if (!jdFile) {
+    return "";
+  }
+
+  return `
+    <div class="job-fit-file-list">
+      <div class="job-fit-file-row is-single">
+        <span>${renderJobFitFileLink(jdFile)}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderJobFitResultCard(result, index) {
   return `
     <article class="job-fit-result-card">
@@ -5854,8 +5890,8 @@ function renderJobFitResultCard(result, index) {
             <strong>${escapeHtml(String(result.score))}%</strong>
           </div>
         </div>
-        ${result.comment ? `<p class="job-fit-comment">${escapeHtml(result.comment)}</p>` : ""}
         ${renderJobFitProfileSummary(result)}
+        ${result.comment ? `<p class="job-fit-comment">${escapeHtml(result.comment)}</p>` : ""}
         <div class="job-fit-match-grid">
           <section class="job-fit-report-section is-fulfilled">
             <strong>충족된 직무 요건</strong>
@@ -5920,7 +5956,7 @@ function renderJobFitResumeList() {
       ${resumes.map((resume) => `
         <div class="job-fit-file-row">
           <span>
-            <strong>${escapeHtml(resume.fileName)}</strong>
+            ${renderJobFitFileLink(resume)}
           </span>
           <button class="ghost-button danger-button compact-button" type="button" data-remove-job-fit-resume="${escapeHtml(resume.id)}">삭제</button>
         </div>
@@ -5962,9 +5998,6 @@ function renderJobFitAnalysis() {
   }
 
   const jobFit = getJobFitState();
-  const jdFileLabel = jobFit.jdFile
-    ? `${jobFit.jdFile.name} · ${formatFileSize(jobFit.jdFile.size)}`
-    : "파일을 업로드하면 텍스트를 읽어 JD 입력란에 자동 반영합니다.";
 
   container.innerHTML = `
     <div class="job-fit-workspace">
@@ -5980,22 +6013,25 @@ function renderJobFitAnalysis() {
             </div>
             <button class="ghost-button compact-button" type="button" data-clear-job-fit-jd ${jobFit.jdText || jobFit.jdFile ? "" : "disabled"}>초기화</button>
           </div>
-          <textarea class="control-textarea" id="job-fit-jd-text" rows="10" placeholder="직무의 역할, 필수 경험, 우대 요건, 수행 업무를 입력하세요.">${escapeHtml(jobFit.jdText)}</textarea>
           <div class="dropzone compact-upload">
             <input id="job-fit-jd-file" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
-            <span class="form-help">${escapeHtml(jdFileLabel)}</span>
+            <span class="form-help">JD 파일을 선택하거나 끌어놓으세요. 파일을 읽으면 아래 입력란에 자동 반영됩니다.</span>
             ${jobFit.jdStatus ? `<strong class="job-fit-upload-status ${jobFit.jdLoading ? "is-loading" : ""}">${escapeHtml(jobFit.jdStatus)}</strong>` : ""}
           </div>
+          ${renderJobFitJdFileList()}
+          <textarea class="control-textarea" id="job-fit-jd-text" rows="10" placeholder="직무의 역할, 필수 경험, 우대 요건, 수행 업무를 입력하세요.">${escapeHtml(jobFit.jdText)}</textarea>
         </section>
 
         <section class="form-panel job-fit-upload-card">
           <div class="job-fit-panel-header">
             <div>
-              <strong>이력서 풀</strong>
+              <div class="job-fit-title-line">
+                <strong>이력서 풀</strong>
+                <span class="status-chip chip-blue">${jobFit.resumes.length}개</span>
+              </div>
               <span>여러 이력서를 한 번에 업로드할 수 있습니다.</span>
             </div>
             <div class="job-fit-header-actions">
-              <span class="status-chip chip-blue">${jobFit.resumes.length}개</span>
               <button class="ghost-button compact-button" type="button" data-clear-job-fit-resumes ${jobFit.resumes.length ? "" : "disabled"}>초기화</button>
             </div>
           </div>
@@ -6064,12 +6100,16 @@ async function handleJobFitJdFileUpload(file) {
   renderJobFitAnalysis();
 
   try {
-    const result = await readResumeText(file);
+    const [result, dataUrl] = await Promise.all([
+      readResumeText(file),
+      readFileAsDataUrl(file)
+    ]);
     jobFit.jdText = result.text;
     jobFit.jdFile = {
       name: file.name,
       size: file.size,
       type: file.type,
+      dataUrl,
       uploadedAt: getTimestampText()
     };
     jobFit.results = [];
@@ -6104,11 +6144,15 @@ async function handleJobFitResumeUpload(files) {
 
   for (const file of uploadFiles) {
     try {
-      const result = await readResumeText(file);
+      const [result, dataUrl] = await Promise.all([
+        readResumeText(file),
+        readFileAsDataUrl(file)
+      ]);
       loadedResumes.push(normalizeJobFitResume({
         fileName: file.name,
         size: file.size,
         type: file.type,
+        dataUrl,
         text: result.text,
         uploadedAt: getTimestampText()
       }));
