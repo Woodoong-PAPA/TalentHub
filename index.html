@@ -36,6 +36,10 @@
             <span class="nav-icon">S</span>
             <span>Screening</span>
           </button>
+          <button class="nav-item" type="button" data-view="interview">
+            <span class="nav-icon">I</span>
+            <span>Interview</span>
+          </button>
           <button class="nav-item" type="button" data-view="ai-search">
             <span class="nav-icon">A</span>
             <span>AI Search</span>
@@ -100,6 +104,17 @@
               <span class="status-chip chip-blue">포지션 리스트 기반</span>
             </div>
             <div id="screening-content"></div>
+          </section>
+
+          <section id="interview-view" class="view" aria-labelledby="interview-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Interview Operations</p>
+                <h3 id="interview-title">Interview</h3>
+              </div>
+              <span class="status-chip chip-blue">스케줄 자동화</span>
+            </div>
+            <div id="interview-content"></div>
           </section>
 
           <section id="register-view" class="view" aria-labelledby="register-title">

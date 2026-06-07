@@ -154,6 +154,117 @@ function buildPhoneInterviewMail(body) {
   };
 }
 
+function buildInterviewStepRequestMail(body) {
+  const interviewCase = body.interviewCase || {};
+  const stage = body.stage || {};
+  const stageData = body.stageData || {};
+  const documents = Array.isArray(stage.documents) ? stage.documents : [];
+  const scheduleText = body.scheduleText || "";
+  const panel = Array.isArray(stageData.panel) ? stageData.panel : [];
+
+  return {
+    to: normalizeEmailList(body.recipients),
+    subject: `[TalentHub Interview] ${interviewCase.candidateName || "지원자"} ${stage.label || "인터뷰"} 입력 요청`,
+    text: [
+      `${interviewCase.candidateName || "지원자"} 인터뷰 진행을 위해 아래 정보 확인이 필요합니다.`,
+      "",
+      `포지션: ${interviewCase.positionName || "-"}`,
+      `채용 부서: ${interviewCase.department || "-"}`,
+      `인터뷰 단계: ${stage.label || "-"}`,
+      `참석 기준: ${stage.requirement || "-"}`,
+      "",
+      documents.length ? "요청 제출자료:" : "",
+      ...documents.map((item) => `- ${item.owner || "대상자"}: ${item.label || "-"}`),
+      "",
+      panel.length ? "면접위원 정보:" : "",
+      ...panel.map((member) => `- ${[member.role, member.level, member.name, member.email].filter(Boolean).join(" / ")}`),
+      "",
+      scheduleText ? `일정 참고:\n${scheduleText}` : "가능 시간대를 TalentHub Interview 메뉴에 입력 또는 회신해주세요."
+    ].filter((line) => line !== "").join("\n"),
+    html: `
+      <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.6">
+        <h2 style="margin:0 0 12px">인터뷰 입력 요청</h2>
+        <p>${escapeHtml(interviewCase.candidateName || "지원자")} 인터뷰 진행을 위해 아래 정보 확인이 필요합니다.</p>
+        <table style="border-collapse:collapse;width:100%;max-width:680px">
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">포지션</th><td style="padding:8px;border:1px solid #e5e8eb">${escapeHtml(interviewCase.positionName || "-")}</td></tr>
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">채용 부서</th><td style="padding:8px;border:1px solid #e5e8eb">${escapeHtml(interviewCase.department || "-")}</td></tr>
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">인터뷰 단계</th><td style="padding:8px;border:1px solid #e5e8eb">${escapeHtml(stage.label || "-")}</td></tr>
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">참석 기준</th><td style="padding:8px;border:1px solid #e5e8eb">${escapeHtml(stage.requirement || "-")}</td></tr>
+        </table>
+        ${documents.length ? `
+          <h3 style="margin:18px 0 8px;font-size:15px">요청 제출자료</h3>
+          <ul style="margin:0;padding-left:18px">${documents.map((item) => `<li>${escapeHtml(item.owner || "대상자")}: ${escapeHtml(item.label || "-")}</li>`).join("")}</ul>
+        ` : ""}
+        ${panel.length ? `
+          <h3 style="margin:18px 0 8px;font-size:15px">면접위원 정보</h3>
+          <ul style="margin:0;padding-left:18px">${panel.map((member) => `<li>${escapeHtml([member.role, member.level, member.name, member.email].filter(Boolean).join(" / ") || "-")}</li>`).join("")}</ul>
+        ` : ""}
+        ${scheduleText ? `<p style="margin-top:16px;white-space:pre-line">${escapeHtml(scheduleText)}</p>` : `<p style="margin-top:16px">가능 시간대를 TalentHub Interview 메뉴에 입력 또는 회신해주세요.</p>`}
+      </div>
+    `
+  };
+}
+
+function buildInterviewScheduleConfirmedMail(body) {
+  const interviewCase = body.interviewCase || {};
+  const stage = body.stage || {};
+  const stageData = body.stageData || {};
+  const scheduleText = body.scheduleText || "";
+
+  return {
+    to: normalizeEmailList(body.recipients),
+    subject: `[TalentHub Interview] ${interviewCase.candidateName || "지원자"} ${stage.label || "인터뷰"} 일정 확정`,
+    text: [
+      `${interviewCase.candidateName || "지원자"} ${stage.label || "인터뷰"} 일정이 확정되었습니다.`,
+      "",
+      `포지션: ${interviewCase.positionName || "-"}`,
+      `채용 부서: ${interviewCase.department || "-"}`,
+      `확정 일정: ${scheduleText || stageData.confirmedAt || "-"}`,
+      "",
+      "일정 변경이 필요한 경우 TalentHub Interview 메뉴에서 변경 요청 내용을 기록한 뒤 재안내해주세요."
+    ].join("\n"),
+    html: `
+      <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.6">
+        <h2 style="margin:0 0 12px">인터뷰 일정 확정</h2>
+        <p>${escapeHtml(interviewCase.candidateName || "지원자")} ${escapeHtml(stage.label || "인터뷰")} 일정이 확정되었습니다.</p>
+        <table style="border-collapse:collapse;width:100%;max-width:680px">
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">포지션</th><td style="padding:8px;border:1px solid #e5e8eb">${escapeHtml(interviewCase.positionName || "-")}</td></tr>
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">채용 부서</th><td style="padding:8px;border:1px solid #e5e8eb">${escapeHtml(interviewCase.department || "-")}</td></tr>
+          <tr><th align="left" style="padding:8px;border:1px solid #e5e8eb;background:#f8f9fa">확정 일정</th><td style="padding:8px;border:1px solid #e5e8eb;white-space:pre-line">${escapeHtml(scheduleText || stageData.confirmedAt || "-")}</td></tr>
+        </table>
+        <p style="margin-top:16px">일정 변경이 필요한 경우 TalentHub Interview 메뉴에서 변경 요청 내용을 기록한 뒤 재안내해주세요.</p>
+      </div>
+    `
+  };
+}
+
+function buildInterviewRejectNoticeMail(body) {
+  const interviewCase = body.interviewCase || {};
+  const stage = body.stage || {};
+
+  return {
+    to: normalizeEmailList(body.recipients),
+    subject: `[TalentHub Interview] ${interviewCase.candidateName || "지원자"} 전형 결과 안내`,
+    text: [
+      `${interviewCase.candidateName || "지원자"}님,`,
+      "",
+      `${interviewCase.positionName || "지원 포지션"} 전형 결과를 안내드립니다.`,
+      `${stage.label || "인터뷰"} 단계 검토 결과, 이번 전형은 더 진행하지 않는 것으로 결정되었습니다.`,
+      "",
+      "지원해주셔서 감사합니다."
+    ].join("\n"),
+    html: `
+      <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.6">
+        <h2 style="margin:0 0 12px">전형 결과 안내</h2>
+        <p>${escapeHtml(interviewCase.candidateName || "지원자")}님,</p>
+        <p>${escapeHtml(interviewCase.positionName || "지원 포지션")} 전형 결과를 안내드립니다.</p>
+        <p>${escapeHtml(stage.label || "인터뷰")} 단계 검토 결과, 이번 전형은 더 진행하지 않는 것으로 결정되었습니다.</p>
+        <p style="margin-top:16px">지원해주셔서 감사합니다.</p>
+      </div>
+    `
+  };
+}
+
 function buildMailPayload(body) {
   if (body.action === "contact_request") {
     return buildContactRequestMail(body);
@@ -161,6 +272,18 @@ function buildMailPayload(body) {
 
   if (body.action === "phone_interview") {
     return buildPhoneInterviewMail(body);
+  }
+
+  if (body.action === "interview_step_request") {
+    return buildInterviewStepRequestMail(body);
+  }
+
+  if (body.action === "interview_schedule_confirmed") {
+    return buildInterviewScheduleConfirmedMail(body);
+  }
+
+  if (body.action === "interview_reject_notice") {
+    return buildInterviewRejectNoticeMail(body);
   }
 
   throw new Error("지원하지 않는 Screening 메일 액션입니다.");

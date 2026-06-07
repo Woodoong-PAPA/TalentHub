@@ -22,6 +22,7 @@ const MENU_CONFIG = [
   { view: "dashboard", label: "Dashboard", description: "운영 현황과 KPI 조회" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
+  { view: "interview", label: "Interview", description: "면접 일정 조율, 제출자료, 결과 관리" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
   { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
   { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
@@ -59,12 +60,12 @@ const CANDIDATE_REGISTER_ROLES = new Set(["search_firm", "business_recruiter", "
 const MEMBER_ROLES_WITHOUT_BUSINESS_UNIT = new Set(["applicant", "search_firm", "hiring_manager"]);
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  applicant: ["screening"],
+  applicant: ["screening", "interview"],
   general: ["dashboard", "pool", "policy-chat", "trending"],
   search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
-  hiring_manager: ["dashboard", "pool", "screening", "ai-search", "job-fit", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "ai-search", "job-fit", "policy-chat", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "ai-search", "job-fit", "policy-chat", "trending", "members"],
+  hiring_manager: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "policy-chat", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "policy-chat", "trending", "members"],
+  division_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "policy-chat", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -128,6 +129,40 @@ const SCREENING_STAGE_ORDER = [
   "interview_mail_sent"
 ];
 const FIT_GRADE_ORDER = ["A", "B", "C", "D", "E"];
+const INTERVIEW_STAGE_CONFIG = [
+  {
+    id: "phone",
+    label: "전화면접",
+    requirement: "CL3 1명 이상 참석",
+    documents: [{ id: "privacyConsent", label: "개인정보 수집이용 동의서", owner: "지원자" }]
+  },
+  {
+    id: "technical",
+    label: "기술면접",
+    requirement: "전문성 면접위원 CL3 이상 2명, 부서장 면접위원 임원 2명 참석",
+    documents: [
+      { id: "selfIntroPpt", label: "자기소개 PPT 자료", owner: "지원자" },
+      { id: "assignmentPpt", label: "직무수행과제 PPT 자료", owner: "지원자" }
+    ]
+  },
+  {
+    id: "hr",
+    label: "HR면접",
+    requirement: "HR담당자 CL3 이상 1명, CL4 이상 1명 참석",
+    documents: [
+      { id: "utilizationPlan", label: "후보자 활용계획서", owner: "현업 담당자" },
+      { id: "productEssay", label: "자사 제품 사용 경험 에세이", owner: "지원자" }
+    ]
+  }
+];
+const INTERVIEW_STAGE_IDS = INTERVIEW_STAGE_CONFIG.map((stage) => stage.id);
+const INTERVIEW_STATUS_LABELS = {
+  waiting: "입력 대기",
+  scheduling: "일정 조율",
+  scheduled: "일정 확정",
+  passed: "합격",
+  failed: "불합격"
+};
 const SCREENING_DETAIL_STEPS = [
   { id: "reception", label: "지원자 접수" },
   { id: "first", label: "1차 스크리닝" },
@@ -552,6 +587,9 @@ const state = {
     businessUnit: "all",
     mineOnly: false
   },
+  interviewCases: [],
+  selectedInterviewCaseId: "",
+  selectedInterviewStage: "phone",
   screeningPositionModalOpen: false,
   screeningApplicantModalOpen: false,
   screeningJdModalOpen: false,
@@ -623,6 +661,7 @@ const viewTitles = {
   dashboard: "Dashboard",
   pool: "Talent Pool",
   screening: "Screening",
+  interview: "Interview",
   register: "Add Talent",
   "ai-search": "AI Search",
   "job-fit": "직무적합도 분석",
@@ -920,6 +959,9 @@ function normalizeCandidate(candidate) {
     interviews: [],
     memos: [],
     visibility: "all",
+    recommended: false,
+    recommendedAt: "",
+    recommendedBy: "",
     ...candidate
   });
 
@@ -1198,6 +1240,102 @@ function normalizeScreeningFolder(folder = {}) {
   };
 }
 
+function getInterviewStageConfig(stageId) {
+  return INTERVIEW_STAGE_CONFIG.find((stage) => stage.id === stageId) || INTERVIEW_STAGE_CONFIG[0];
+}
+
+function defaultInterviewPanel(stageId) {
+  if (stageId === "phone") {
+    return [{ role: "CL3 참석자", level: "CL3", name: "", email: "" }];
+  }
+
+  if (stageId === "technical") {
+    return [
+      { role: "전문성 면접위원", level: "CL3 이상", name: "", email: "" },
+      { role: "전문성 면접위원", level: "CL3 이상", name: "", email: "" },
+      { role: "부서장 면접위원", level: "임원", name: "", email: "" },
+      { role: "부서장 면접위원", level: "임원", name: "", email: "" }
+    ];
+  }
+
+  return [
+    { role: "HR담당자", level: "CL3 이상", name: "", email: "" },
+    { role: "HR담당자", level: "CL4 이상", name: "", email: "" }
+  ];
+}
+
+function normalizeInterviewAttachment(attachment = null) {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+
+  return {
+    name: String(attachment.name || "").trim(),
+    size: Number(attachment.size || 0),
+    type: String(attachment.type || "").trim(),
+    dataUrl: String(attachment.dataUrl || "").trim(),
+    uploadedAt: attachment.uploadedAt || getTimestampText(),
+    uploadedBy: String(attachment.uploadedBy || "").trim()
+  };
+}
+
+function normalizeInterviewStage(stageId, stage = {}) {
+  const config = getInterviewStageConfig(stageId);
+  const status = INTERVIEW_STATUS_LABELS[stage.status] ? stage.status : "waiting";
+  const documents = {};
+
+  config.documents.forEach((document) => {
+    documents[document.id] = normalizeInterviewAttachment(stage.documents?.[document.id]);
+  });
+
+  return {
+    status,
+    candidateSlots: Array.isArray(stage.candidateSlots) ? stage.candidateSlots.map(String).filter(Boolean) : [],
+    interviewerSlots: Array.isArray(stage.interviewerSlots) ? stage.interviewerSlots.map(String).filter(Boolean) : [],
+    confirmedAt: String(stage.confirmedAt || "").trim(),
+    panel: (Array.isArray(stage.panel) && stage.panel.length ? stage.panel : defaultInterviewPanel(stageId)).map((member) => ({
+      role: String(member.role || "").trim(),
+      level: String(member.level || "").trim(),
+      name: String(member.name || "").trim(),
+      email: String(member.email || "").trim().toLowerCase()
+    })),
+    documents,
+    note: String(stage.note || "").trim(),
+    mailHistory: Array.isArray(stage.mailHistory) ? stage.mailHistory : []
+  };
+}
+
+function normalizeInterviewCase(interviewCase = {}) {
+  const stages = {};
+
+  INTERVIEW_STAGE_IDS.forEach((stageId) => {
+    stages[stageId] = normalizeInterviewStage(stageId, interviewCase.stages?.[stageId] || interviewCase[stageId] || {});
+  });
+
+  const currentStage = INTERVIEW_STAGE_IDS.includes(interviewCase.currentStage) ? interviewCase.currentStage : "phone";
+  const status = ["in_progress", "passed", "failed"].includes(interviewCase.status) ? interviewCase.status : "in_progress";
+
+  return {
+    id: interviewCase.id || createId("interview"),
+    sourceFolderId: String(interviewCase.sourceFolderId || "").trim(),
+    sourceApplicantId: String(interviewCase.sourceApplicantId || "").trim(),
+    candidateName: String(interviewCase.candidateName || interviewCase.name || "").trim(),
+    company: String(interviewCase.company || "").trim(),
+    currentRole: String(interviewCase.currentRole || "").trim(),
+    email: String(interviewCase.email || "").trim().toLowerCase(),
+    phone: String(interviewCase.phone || "").trim(),
+    businessUnit: normalizeBusinessUnit(interviewCase.businessUnit) || "",
+    department: String(interviewCase.department || "").trim(),
+    positionName: String(interviewCase.positionName || "").trim(),
+    currentStage,
+    status,
+    stages,
+    finalDecision: String(interviewCase.finalDecision || "").trim(),
+    createdAt: interviewCase.createdAt || getTodayDate(),
+    updatedAt: interviewCase.updatedAt || interviewCase.createdAt || getTodayDate()
+  };
+}
+
 function normalizePolicyText(value) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -1261,6 +1399,125 @@ function ensureScreeningDefaults() {
   const folders = getAccessibleScreeningFolders(getCurrentMember(), { applyFilters: false });
   if (!folders.some((folder) => folder.id === state.selectedScreeningFolderId)) {
     state.selectedScreeningFolderId = folders[0]?.id || state.screeningFolders[0]?.id || "";
+  }
+}
+
+function createInterviewCaseFromScreening(folder, applicant) {
+  return normalizeInterviewCase({
+    id: `interview-${folder.id}-${applicant.id}`,
+    sourceFolderId: folder.id,
+    sourceApplicantId: applicant.id,
+    candidateName: applicant.name,
+    company: applicant.company,
+    currentRole: applicant.currentRole,
+    email: applicant.email,
+    phone: applicant.phone,
+    businessUnit: folder.businessUnit,
+    department: folder.department,
+    positionName: folder.positionName || folder.title,
+    currentStage: "phone",
+    status: "in_progress",
+    createdAt: getTodayDate(),
+    updatedAt: getTodayDate()
+  });
+}
+
+function syncInterviewCasesFromScreening() {
+  const existingKeys = new Set(state.interviewCases.map((item) => `${item.sourceFolderId}:${item.sourceApplicantId}`));
+  let changed = false;
+
+  state.screeningFolders.forEach((folder) => {
+    folder.applicants
+      .filter((applicant) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage))
+      .forEach((applicant) => {
+        const key = `${folder.id}:${applicant.id}`;
+        const existingCase = state.interviewCases.find((item) => `${item.sourceFolderId}:${item.sourceApplicantId}` === key);
+
+        if (existingCase) {
+          const nextEmail = String(applicant.email || "").trim().toLowerCase();
+          const nextPhone = String(applicant.phone || "").trim();
+          const nextCompany = String(applicant.company || "").trim();
+          const nextRole = String(applicant.currentRole || "").trim();
+
+          if (
+            (nextEmail && existingCase.email !== nextEmail) ||
+            (nextPhone && existingCase.phone !== nextPhone) ||
+            (nextCompany && existingCase.company !== nextCompany) ||
+            (nextRole && existingCase.currentRole !== nextRole) ||
+            existingCase.businessUnit !== folder.businessUnit ||
+            existingCase.department !== folder.department ||
+            existingCase.positionName !== (folder.positionName || folder.title)
+          ) {
+            existingCase.email = nextEmail || existingCase.email;
+            existingCase.phone = nextPhone || existingCase.phone;
+            existingCase.company = nextCompany || existingCase.company;
+            existingCase.currentRole = nextRole || existingCase.currentRole;
+            existingCase.businessUnit = folder.businessUnit;
+            existingCase.department = folder.department;
+            existingCase.positionName = folder.positionName || folder.title;
+            existingCase.updatedAt = getTodayDate();
+            changed = true;
+          }
+        } else if (!existingKeys.has(key)) {
+          state.interviewCases.unshift(createInterviewCaseFromScreening(folder, applicant));
+          existingKeys.add(key);
+          changed = true;
+        }
+      });
+  });
+
+  return changed;
+}
+
+function canViewInterviewCase(interviewCase, member = getCurrentMember()) {
+  if (!member || member.status !== "active") {
+    return false;
+  }
+
+  if (isAdmin(member) || member.role === "division_recruiter") {
+    return true;
+  }
+
+  if (member.role === "business_recruiter") {
+    return !interviewCase.businessUnit || getMemberBusinessUnit(member) === interviewCase.businessUnit;
+  }
+
+  if (member.role === "hiring_manager") {
+    const email = String(member.email || "").toLowerCase();
+    return INTERVIEW_STAGE_IDS.some((stageId) =>
+      (interviewCase.stages?.[stageId]?.panel || []).some((panelMember) => panelMember.email === email || panelMember.name === member.name)
+    ) || true;
+  }
+
+  if (member.role === "applicant") {
+    return String(member.email || "").toLowerCase() === String(interviewCase.email || "").toLowerCase();
+  }
+
+  return canAccessView("interview", member);
+}
+
+function getVisibleInterviewCases() {
+  return state.interviewCases
+    .map(normalizeInterviewCase)
+    .filter((item) => canViewInterviewCase(item))
+    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || a.candidateName.localeCompare(b.candidateName, "ko"));
+}
+
+function ensureInterviewDefaults() {
+  state.interviewCases = state.interviewCases.map(normalizeInterviewCase);
+  const changed = syncInterviewCasesFromScreening();
+  const visibleCases = getVisibleInterviewCases();
+
+  if (!visibleCases.some((item) => item.id === state.selectedInterviewCaseId)) {
+    state.selectedInterviewCaseId = visibleCases[0]?.id || "";
+  }
+
+  if (!INTERVIEW_STAGE_IDS.includes(state.selectedInterviewStage)) {
+    state.selectedInterviewStage = "phone";
+  }
+
+  if (changed) {
+    persistState();
   }
 }
 
@@ -1768,6 +2025,9 @@ function persistState(options = {}) {
         version: STORAGE_VERSION,
         candidates: state.candidates,
         screeningFolders: state.screeningFolders,
+        interviewCases: state.interviewCases,
+        selectedInterviewCaseId: state.selectedInterviewCaseId,
+        selectedInterviewStage: state.selectedInterviewStage,
         auditLogs: state.auditLogs,
         selectedCandidateId: state.selectedCandidateId,
         selectedScreeningFolderId: state.selectedScreeningFolderId,
@@ -1811,6 +2071,10 @@ function restorePersistedState() {
 
   if (Array.isArray(persisted.screeningFolders) && persisted.screeningFolders.length) {
     state.screeningFolders = persisted.screeningFolders.map(normalizeScreeningFolder);
+  }
+
+  if (Array.isArray(persisted.interviewCases)) {
+    state.interviewCases = persisted.interviewCases.map(normalizeInterviewCase);
   }
 
   if (Array.isArray(persisted.auditLogs)) {
@@ -1901,6 +2165,14 @@ function restorePersistedState() {
     state.selectedScreeningFolderId = persisted.selectedScreeningFolderId;
   } else {
     state.selectedScreeningFolderId = state.screeningFolders[0]?.id || "";
+  }
+
+  if (state.interviewCases.some((item) => item.id === persisted.selectedInterviewCaseId)) {
+    state.selectedInterviewCaseId = persisted.selectedInterviewCaseId;
+  }
+
+  if (INTERVIEW_STAGE_IDS.includes(persisted.selectedInterviewStage)) {
+    state.selectedInterviewStage = persisted.selectedInterviewStage;
   }
 
   ensureAuditLogIds();
@@ -3310,6 +3582,7 @@ function render() {
 
   ensureCandidateDefaults();
   ensureScreeningDefaults();
+  ensureInterviewDefaults();
   ensurePolicySourceDefaults();
   ensureActiveViewAllowed();
   syncActiveViewState();
@@ -3317,6 +3590,7 @@ function render() {
   renderDashboard();
   renderPool();
   renderScreening();
+  renderInterviewView();
   renderRegister();
   renderAiSearch();
   renderJobFitAnalysis();
@@ -3358,6 +3632,7 @@ function renderDashboard() {
   const monthlySeries = getMonthlyRegistrationSeries(filteredCandidates, 6);
   const businessUnitCounts = getBusinessUnitRegistrationCounts();
   const topViewedProfiles = getTopViewedProfiles(90, 5);
+  const recommendedProfiles = getRecommendedProfiles(5);
 
   $("#dashboard-content").innerHTML = `
     <div class="dashboard-grid">
@@ -3376,7 +3651,7 @@ function renderDashboard() {
         ${metricCard("이번 달 신규 등록", currentMonthNew, `${formatMonthLabel(currentMonthKey)} · 전월 대비 ${formatSignedCount(currentMonthNew - previousMonthNew)}명`)}
       </div>
 
-      <section class="content-panel span-12">
+      <section class="content-panel span-6">
         <div class="panel-header">
           <h4>사업부별 누적 인재 Pool 등록 수</h4>
           <span class="small-pill">누적 기준</span>
@@ -3384,20 +3659,28 @@ function renderDashboard() {
         ${renderBusinessUnitRegistrationChart(businessUnitCounts)}
       </section>
 
-      <section class="content-panel span-5">
+      <section class="content-panel span-6">
         <div class="panel-header">
-          <h4>월별 신규 등록 추이</h4>
+          <h4>월별 신규 Pool 등록 수</h4>
           <span class="small-pill">${escapeHtml(selectedLabel)} 기준</span>
         </div>
         ${renderMonthlyRegistrationChart(monthlySeries)}
       </section>
 
-      <section class="content-panel span-7">
+      <section class="content-panel span-6">
         <div class="panel-header">
           <h4>최근 3개월 조회 수 TOP5 프로필</h4>
           <span class="small-pill">상세 조회 로그 기준</span>
         </div>
         ${renderTopViewedProfiles(topViewedProfiles)}
+      </section>
+
+      <section class="content-panel span-6">
+        <div class="panel-header">
+          <h4>채용담당자 추천 프로필</h4>
+          <span class="small-pill">추천 ${recommendedProfiles.length}명</span>
+        </div>
+        ${renderRecommendedProfiles(recommendedProfiles)}
       </section>
     </div>
   `;
@@ -3473,14 +3756,14 @@ function renderBusinessUnitRegistrationChart(rows) {
   const maxCount = Math.max(...rows.map((row) => row.count), 1);
 
   return `
-    <div class="bar-list dashboard-bar-list">
+    <div class="column-chart dashboard-column-chart">
       ${rows.map((row, index) => `
-        <div class="bar-row dashboard-bar-row">
-          <span class="truncate">${escapeHtml(row.unit)}</span>
-          <div class="bar-track">
-            <div class="bar-fill ${["", "green", "amber", "violet"][index % 4]}" style="width:${(row.count / maxCount) * 100}%"></div>
+        <div class="column-chart-item">
+          <div class="column-track">
+            <div class="column-fill ${["", "green", "amber", "violet"][index % 4]}" style="height:${(row.count / maxCount) * 100}%"></div>
           </div>
           <strong>${row.count}명</strong>
+          <span>${escapeHtml(row.unit)}</span>
         </div>
       `).join("")}
     </div>
@@ -3521,14 +3804,14 @@ function renderMonthlyRegistrationChart(series) {
   const maxCount = Math.max(...series.map((item) => item.count), 1);
 
   return `
-    <div class="bar-list">
+    <div class="column-chart monthly-column-chart">
       ${series.map((item, index) => `
-        <div class="bar-row month-bar-row">
-          <span>${escapeHtml(item.label)}</span>
-          <div class="bar-track">
-            <div class="bar-fill ${index === series.length - 1 ? "" : "green"}" style="width:${(item.count / maxCount) * 100}%"></div>
+        <div class="column-chart-item">
+          <div class="column-track">
+            <div class="column-fill ${index === series.length - 1 ? "" : "green"}" style="height:${(item.count / maxCount) * 100}%"></div>
           </div>
           <strong>${item.count}명</strong>
+          <span>${escapeHtml(item.label)}</span>
         </div>
       `).join("")}
     </div>
@@ -3589,9 +3872,42 @@ function renderTopViewedProfiles(items) {
   `;
 }
 
+function getRecommendedProfiles(limit = 5) {
+  return getVisibleCandidates()
+    .filter((candidate) => candidate.recommended)
+    .sort((a, b) =>
+      dateSortValue(b.recommendedAt || b.updatedAt) - dateSortValue(a.recommendedAt || a.updatedAt) ||
+      String(a.name).localeCompare(String(b.name), "ko")
+    )
+    .slice(0, limit);
+}
+
+function renderRecommendedProfiles(candidates) {
+  if (!candidates.length) {
+    return `<div class="empty-state">추천 버튼을 누른 프로필이 아직 없습니다.</div>`;
+  }
+
+  return `
+    <div class="top-profile-list">
+      ${candidates.map((candidate, index) => `
+        <article class="top-profile-card recommended-profile-card">
+          <span class="top-rank">${index + 1}</span>
+          ${candidateVisual(candidate, "pool")}
+          <div class="top-profile-main">
+            <button class="link-button strong" type="button" data-select-candidate="${escapeHtml(candidate.id)}">${escapeHtml(candidate.name)}</button>
+            <span>${escapeHtml(candidate.organization || "사업부 미입력")} · ${escapeHtml(candidate.role || "핵심역량 미입력")}</span>
+            <span>${escapeHtml(candidate.recommendedBy || "추천자 미입력")} · ${escapeHtml(candidate.recommendedAt || "-")}</span>
+          </div>
+          <strong class="top-profile-count">추천</strong>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderCandidateSummaryScroll(lines, emptyText) {
   return `
-    <div class="summary-scroll" tabindex="0">
+    <div class="summary-lines">
       ${lines.length
         ? lines.map((line) => `<span class="summary-line">${escapeHtml(line)}</span>`).join("")
         : `<span class="muted-text">${escapeHtml(emptyText)}</span>`}
@@ -5327,6 +5643,395 @@ function renderScreening() {
       </section>
     </div>
     ${renderPositionCreateModal()}
+  `;
+}
+
+function getInterviewCaseStatusLabel(interviewCase) {
+  if (interviewCase.status === "passed") {
+    return "면접 합격";
+  }
+
+  if (interviewCase.status === "failed") {
+    return "면접 불합격";
+  }
+
+  return `${getInterviewStageConfig(interviewCase.currentStage).label} 진행`;
+}
+
+function interviewStatusChip(status) {
+  const chipClass = {
+    waiting: "chip-amber",
+    scheduling: "chip-blue",
+    scheduled: "chip-violet",
+    passed: "chip-green",
+    failed: "chip-red"
+  }[status] || "chip-amber";
+
+  return `<span class="status-chip ${chipClass}">${escapeHtml(INTERVIEW_STATUS_LABELS[status] || status || "대기")}</span>`;
+}
+
+function interviewCaseStatusChip(interviewCase) {
+  const chipClass = {
+    in_progress: "chip-blue",
+    passed: "chip-green",
+    failed: "chip-red"
+  }[interviewCase.status] || "chip-blue";
+
+  return `<span class="status-chip ${chipClass}">${escapeHtml(getInterviewCaseStatusLabel(interviewCase))}</span>`;
+}
+
+function findInterviewCase(interviewCaseId) {
+  return state.interviewCases.find((item) => item.id === interviewCaseId) || null;
+}
+
+function getSelectedInterviewCase() {
+  const visibleCases = getVisibleInterviewCases();
+  return visibleCases.find((item) => item.id === state.selectedInterviewCaseId) || visibleCases[0] || null;
+}
+
+function replaceInterviewCase(interviewCase) {
+  const normalized = normalizeInterviewCase(interviewCase);
+  const index = state.interviewCases.findIndex((item) => item.id === normalized.id);
+
+  if (index >= 0) {
+    state.interviewCases[index] = normalized;
+  } else {
+    state.interviewCases.unshift(normalized);
+  }
+
+  return normalized;
+}
+
+function mutateInterviewCase(interviewCaseId, updater, options = {}) {
+  const current = findInterviewCase(interviewCaseId);
+
+  if (!current || !canViewInterviewCase(current)) {
+    showToast("인터뷰 정보를 찾을 수 없습니다.");
+    return null;
+  }
+
+  const next = normalizeInterviewCase(structuredClone(current));
+  updater(next);
+  next.updatedAt = getTodayDate();
+  const saved = replaceInterviewCase(next);
+
+  if (options.persist !== false) {
+    persistState();
+  }
+
+  return saved;
+}
+
+function getInterviewStage(interviewCase, stageId = state.selectedInterviewStage) {
+  const normalizedStageId = INTERVIEW_STAGE_IDS.includes(stageId) ? stageId : "phone";
+  return interviewCase?.stages?.[normalizedStageId] || normalizeInterviewStage(normalizedStageId);
+}
+
+function renderInterviewCaseList(cases) {
+  if (!cases.length) {
+    return `
+      <div class="empty-state compact-empty">
+        Screening에서 2차 합격이 확정된 지원자가 생기면 Interview 메뉴에 자동으로 표시됩니다.
+      </div>
+    `;
+  }
+
+  return `
+    <div class="interview-case-list">
+      ${cases.map((interviewCase) => `
+        <button class="interview-case-card ${interviewCase.id === state.selectedInterviewCaseId ? "is-active" : ""}" type="button" data-select-interview-case="${escapeHtml(interviewCase.id)}">
+          <span>
+            <strong>${escapeHtml(interviewCase.candidateName || "-")}</strong>
+            <small>${escapeHtml([interviewCase.company, interviewCase.currentRole].filter(Boolean).join(" · ") || "지원자 정보 미입력")}</small>
+          </span>
+          <em>${escapeHtml([interviewCase.businessUnit, interviewCase.positionName].filter(Boolean).join(" · ") || "포지션 미입력")}</em>
+          ${interviewCaseStatusChip(interviewCase)}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderInterviewStageNav(interviewCase) {
+  return `
+    <nav class="interview-stage-nav" aria-label="인터뷰 단계">
+      ${INTERVIEW_STAGE_CONFIG.map((stage) => {
+        const stageData = getInterviewStage(interviewCase, stage.id);
+        return `
+          <button class="${stage.id === state.selectedInterviewStage ? "is-active" : ""}" type="button" data-select-interview-stage="${escapeHtml(stage.id)}">
+            <span>${escapeHtml(stage.label)}</span>
+            <strong>${escapeHtml(stage.requirement)}</strong>
+            ${interviewStatusChip(stageData.status)}
+          </button>
+        `;
+      }).join("")}
+    </nav>
+  `;
+}
+
+function renderInterviewSlotRows(interviewCase, stageId, slotType, title, helpText) {
+  const stage = getInterviewStage(interviewCase, stageId);
+  const savedSlots = Array.isArray(stage[slotType]) ? stage[slotType] : [];
+  const rows = savedSlots.length ? savedSlots : [""];
+
+  return `
+    <section class="interview-slot-box">
+      <div class="panel-header compact-panel-header">
+        <div>
+          <h5>${escapeHtml(title)}</h5>
+          <span>${escapeHtml(helpText)}</span>
+        </div>
+        <button class="ghost-button compact-button" type="button" data-add-interview-slot="${escapeHtml(slotType)}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">시간 추가</button>
+      </div>
+      <div class="interview-slot-list">
+        ${rows.map((slot, index) => `
+          <div class="interview-slot-row">
+            <input
+              class="control-input"
+              type="datetime-local"
+              value="${inputValue(slot)}"
+              data-interview-slot-input
+              data-interview-case-id="${escapeHtml(interviewCase.id)}"
+              data-interview-stage="${escapeHtml(stageId)}"
+              data-interview-slot-type="${escapeHtml(slotType)}"
+              data-interview-slot-index="${index}"
+            />
+            <button class="ghost-button compact-button" type="button" data-remove-interview-slot="${index}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" data-interview-slot-type="${escapeHtml(slotType)}" ${savedSlots.length ? "" : "disabled"}>삭제</button>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderInterviewPanelRows(interviewCase, stageId) {
+  const stage = getInterviewStage(interviewCase, stageId);
+
+  return `
+    <section class="interview-stage-card">
+      <div class="panel-header compact-panel-header">
+        <div>
+          <h5>면접위원</h5>
+          <span>${escapeHtml(getInterviewStageConfig(stageId).requirement)}</span>
+        </div>
+        <button class="ghost-button compact-button" type="button" data-add-interview-panel-member data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">위원 추가</button>
+      </div>
+      <div class="interview-panel-list">
+        ${stage.panel.map((member, index) => `
+          <div class="interview-panel-row">
+            <input class="control-input" value="${inputValue(member.role)}" placeholder="역할" data-interview-panel-field="role" data-interview-panel-index="${index}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" />
+            <input class="control-input" value="${inputValue(member.level)}" placeholder="CL/직급" data-interview-panel-field="level" data-interview-panel-index="${index}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" />
+            <input class="control-input" value="${inputValue(member.name)}" placeholder="이름" data-interview-panel-field="name" data-interview-panel-index="${index}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" />
+            <input class="control-input" type="email" value="${inputValue(member.email)}" placeholder="메일" data-interview-panel-field="email" data-interview-panel-index="${index}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" />
+            <button class="ghost-button compact-button" type="button" data-remove-interview-panel-member="${index}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" ${stage.panel.length <= 1 ? "disabled" : ""}>삭제</button>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderInterviewDocumentRows(interviewCase, stageId) {
+  const stage = getInterviewStage(interviewCase, stageId);
+  const config = getInterviewStageConfig(stageId);
+
+  if (!config.documents.length) {
+    return "";
+  }
+
+  return `
+    <section class="interview-stage-card">
+      <div class="panel-header compact-panel-header">
+        <div>
+          <h5>제출자료</h5>
+          <span>단계별 필수 자료를 수신 후 이곳에 보관합니다.</span>
+        </div>
+      </div>
+      <div class="interview-document-list">
+        ${config.documents.map((document) => {
+          const attachment = stage.documents?.[document.id];
+          return `
+            <article class="interview-document-card">
+              <div>
+                <strong>${escapeHtml(document.label)}</strong>
+                <span>${escapeHtml(document.owner)} 제출</span>
+                ${attachment ? `<small>${escapeHtml(attachment.name)} · ${formatFileSize(attachment.size)} · ${escapeHtml(attachment.uploadedBy || "등록자 미입력")}</small>` : `<small>등록된 파일 없음</small>`}
+              </div>
+              <div class="member-actions">
+                ${attachment?.dataUrl ? `<a class="ghost-button compact-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || document.label)}">다운로드</a>` : ""}
+                <label class="ghost-button compact-button">
+                  업로드
+                  <input class="visually-hidden" type="file" data-interview-document-upload="${escapeHtml(document.id)}" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" />
+                </label>
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderInterviewMailHistory(stage) {
+  const history = (stage.mailHistory || []).slice(0, 4);
+
+  if (!history.length) {
+    return `<span class="muted-text">아직 발송된 메일이 없습니다.</span>`;
+  }
+
+  return `
+    <div class="interview-mail-history">
+      ${history.map((mail) => `
+        <span>${escapeHtml(mail.sentAt || "-")} · ${escapeHtml(mail.label || mail.type || "메일")} · ${escapeHtml((mail.recipients || []).join(", "))}</span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderInterviewStagePanel(interviewCase, stageId) {
+  const config = getInterviewStageConfig(stageId);
+  const stage = getInterviewStage(interviewCase, stageId);
+  const confirmedText = formatScreeningAvailabilitySlot(stage.confirmedAt);
+
+  return `
+    <section class="profile-panel interview-stage-panel">
+      <div class="panel-header">
+        <div>
+          <h4>${escapeHtml(config.label)}</h4>
+          <span>${escapeHtml(config.requirement)}</span>
+        </div>
+        ${interviewStatusChip(stage.status)}
+      </div>
+      <div class="interview-stage-grid">
+        <section class="interview-stage-card">
+          <div class="panel-header compact-panel-header">
+            <div>
+              <h5>캘린더 일정 조율</h5>
+              <span>지원자와 면접위원의 가능 시간대를 모은 뒤 확정 일정을 입력합니다.</span>
+            </div>
+          </div>
+          <div class="interview-schedule-grid">
+            ${renderInterviewSlotRows(interviewCase, stageId, "candidateSlots", "지원자 가능 시간", "지원자가 회신한 가능 시간대")}
+            ${renderInterviewSlotRows(interviewCase, stageId, "interviewerSlots", "면접위원 가능 시간", "면접위원이 회신한 가능 시간대")}
+          </div>
+          <div class="interview-confirm-row">
+            <label>
+              <span>확정 일정</span>
+              <input class="control-input" type="datetime-local" value="${inputValue(stage.confirmedAt)}" data-interview-confirmed data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" />
+            </label>
+            <strong>${escapeHtml(confirmedText || "확정 일정 미입력")}</strong>
+          </div>
+        </section>
+        ${renderInterviewPanelRows(interviewCase, stageId)}
+        ${renderInterviewDocumentRows(interviewCase, stageId)}
+        <section class="interview-stage-card">
+          <div class="panel-header compact-panel-header">
+            <div>
+              <h5>운영 메모</h5>
+              <span>일정 변경 사유, 후보자/면접위원 요청사항을 기록합니다.</span>
+            </div>
+          </div>
+          <textarea class="control-textarea" rows="4" data-interview-note data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">${escapeHtml(stage.note)}</textarea>
+          <div class="interview-mail-history-wrap">
+            <strong>메일 발송 이력</strong>
+            ${renderInterviewMailHistory(stage)}
+          </div>
+        </section>
+      </div>
+      <div class="interview-action-row">
+        <button class="ghost-button" type="button" data-send-interview-mail="request" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">입력 요청 메일</button>
+        <button class="ghost-button" type="button" data-send-interview-mail="schedule" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" ${stage.confirmedAt ? "" : "disabled"}>확정 일정 안내</button>
+        <button class="soft-button" type="button" data-interview-pass-stage data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">${escapeHtml(config.label)} 합격</button>
+        <button class="ghost-button danger-button" type="button" data-interview-fail-stage data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">${escapeHtml(config.label)} 불합격</button>
+        <button class="ghost-button danger-button" type="button" data-send-interview-mail="reject" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">탈락 안내 메일</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderInterviewFinalPanel(interviewCase) {
+  const statusText = interviewCase.status === "passed"
+    ? "HR면접까지 통과하여 면접 합격자로 확정되었습니다."
+    : interviewCase.status === "failed"
+      ? "인터뷰 프로세스가 불합격으로 종료되었습니다."
+      : "HR면접 종료 후 최종 면접 합격 여부를 확정할 수 있습니다.";
+
+  return `
+    <section class="profile-panel interview-final-panel">
+      <div>
+        <strong>최종 결과</strong>
+        <span>${escapeHtml(statusText)}</span>
+      </div>
+      <div class="member-actions">
+        <button class="primary-button compact-button" type="button" data-finalize-interview-case="passed" data-interview-case-id="${escapeHtml(interviewCase.id)}">면접 합격 확정</button>
+        <button class="ghost-button danger-button compact-button" type="button" data-finalize-interview-case="failed" data-interview-case-id="${escapeHtml(interviewCase.id)}">면접 불합격 확정</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderInterviewDetail(interviewCase) {
+  if (!interviewCase) {
+    return `
+      <section class="content-panel">
+        <div class="empty-state">인터뷰 대상자를 선택해주세요.</div>
+      </section>
+    `;
+  }
+
+  const selectedStage = INTERVIEW_STAGE_IDS.includes(state.selectedInterviewStage)
+    ? state.selectedInterviewStage
+    : interviewCase.currentStage || "phone";
+
+  state.selectedInterviewStage = selectedStage;
+
+  return `
+    <div class="interview-detail">
+      <section class="profile-panel interview-hero">
+        <div>
+          <p class="eyebrow">${escapeHtml(interviewCase.businessUnit || "사업부 미입력")}</p>
+          <h4>${escapeHtml(interviewCase.candidateName || "-")}</h4>
+          <p>${escapeHtml([interviewCase.company, interviewCase.currentRole].filter(Boolean).join(" · ") || "지원자 정보 미입력")}</p>
+          <span>${escapeHtml([interviewCase.department, interviewCase.positionName].filter(Boolean).join(" · ") || "포지션 정보 미입력")}</span>
+        </div>
+        <div class="interview-hero-meta">
+          ${interviewCaseStatusChip(interviewCase)}
+          <span>이메일 ${escapeHtml(interviewCase.email || "-")}</span>
+          <span>휴대폰 ${escapeHtml(interviewCase.phone || "-")}</span>
+        </div>
+      </section>
+      ${renderInterviewStageNav(interviewCase)}
+      ${renderInterviewStagePanel(interviewCase, selectedStage)}
+      ${renderInterviewFinalPanel(interviewCase)}
+    </div>
+  `;
+}
+
+function renderInterviewView() {
+  const container = $("#interview-content");
+
+  if (!container) {
+    return;
+  }
+
+  ensureInterviewDefaults();
+  const cases = getVisibleInterviewCases();
+  const selectedCase = getSelectedInterviewCase();
+
+  container.innerHTML = `
+    <div class="interview-layout">
+      <aside class="interview-sidebar">
+        <div class="panel-header">
+          <div>
+            <h4>인터뷰 대상자</h4>
+            <span>Screening 2차 합격 확정자 기반</span>
+          </div>
+          <span class="small-pill">${cases.length}명</span>
+        </div>
+        ${renderInterviewCaseList(cases)}
+      </aside>
+      ${renderInterviewDetail(selectedCase)}
+    </div>
   `;
 }
 
@@ -8737,6 +9442,7 @@ function renderDetail() {
     ? `<button class="ghost-button" type="button" data-cancel-edit>수정 취소</button>`
     : `
       <button class="ghost-button" type="button" data-back-to-pool>목록으로</button>
+      <button class="${candidate.recommended ? "primary-button" : "ghost-button"}" type="button" data-toggle-recommend-candidate="${escapeHtml(candidate.id)}">${candidate.recommended ? "추천됨" : "추천"}</button>
       ${canManageProfile ? `
         <button class="ghost-button" type="button" data-start-edit>정보 수정</button>
         <button class="ghost-button danger-button" type="button" data-delete-candidate="${candidate.id}">프로필 삭제</button>
@@ -12823,6 +13529,7 @@ function finalPassSecondScreening(form) {
   replaceScreeningFolder(folder);
   state.screeningDetailStep = "mail";
   state.screeningResultPanelOpen = false;
+  syncInterviewCasesFromScreening();
   addAuditLog("Screening 결과 발송 정보 저장", folder.title, draftApplicants.length ? `${draftApplicants.length}명 2차 합격 확정` : "결과 발송 정보 저장");
   persistState();
   showToast(draftApplicants.length ? `${draftApplicants.length}명을 2차 합격 확정 처리했습니다.` : "결과 발송 정보를 저장했습니다.");
@@ -12983,6 +13690,313 @@ async function sendPhoneInterviewMail(applicantId) {
   renderScreening();
 }
 
+function selectInterviewCase(interviewCaseId) {
+  const interviewCase = getVisibleInterviewCases().find((item) => item.id === interviewCaseId);
+
+  if (!interviewCase) {
+    showToast("인터뷰 대상자 조회 권한이 없거나 정보를 찾을 수 없습니다.");
+    return;
+  }
+
+  state.selectedInterviewCaseId = interviewCase.id;
+  state.selectedInterviewStage = interviewCase.currentStage || "phone";
+  persistState();
+  renderInterviewView();
+}
+
+function selectInterviewStage(stageId) {
+  if (!INTERVIEW_STAGE_IDS.includes(stageId)) {
+    return;
+  }
+
+  state.selectedInterviewStage = stageId;
+  persistState();
+  renderInterviewView();
+}
+
+function markInterviewStageActive(interviewCase, stageId, status = "scheduling") {
+  const stage = getInterviewStage(interviewCase, stageId);
+
+  if (!["passed", "failed"].includes(stage.status)) {
+    stage.status = status;
+  }
+}
+
+function addInterviewSlot(interviewCaseId, stageId, slotType) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage[slotType] = Array.isArray(stage[slotType]) ? stage[slotType] : [];
+    stage[slotType].push("");
+    markInterviewStageActive(interviewCase, stageId);
+  });
+  renderInterviewView();
+}
+
+function removeInterviewSlot(interviewCaseId, stageId, slotType, index) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage[slotType] = (stage[slotType] || []).filter((_, itemIndex) => itemIndex !== index);
+    markInterviewStageActive(interviewCase, stageId);
+  });
+  renderInterviewView();
+}
+
+function updateInterviewSlot(input, options = {}) {
+  const index = Number(input.dataset.interviewSlotIndex);
+  const slotType = input.dataset.interviewSlotType;
+
+  if (!slotType || !Number.isInteger(index)) {
+    return;
+  }
+
+  mutateInterviewCase(input.dataset.interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, input.dataset.interviewStage);
+    const slots = Array.isArray(stage[slotType]) ? [...stage[slotType]] : [];
+    slots[index] = String(input.value || "").trim();
+    stage[slotType] = slots.filter(Boolean);
+    markInterviewStageActive(interviewCase, input.dataset.interviewStage);
+  }, { persist: options.persist !== false });
+
+  if (options.rerender) {
+    renderInterviewView();
+  }
+}
+
+function updateInterviewConfirmed(input) {
+  mutateInterviewCase(input.dataset.interviewCaseId, (interviewCase) => {
+    const stageId = input.dataset.interviewStage;
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage.confirmedAt = String(input.value || "").trim();
+    stage.status = stage.confirmedAt ? "scheduled" : "scheduling";
+    interviewCase.currentStage = stageId;
+  });
+  renderInterviewView();
+}
+
+function addInterviewPanelMember(interviewCaseId, stageId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage.panel.push({ role: "", level: "", name: "", email: "" });
+    markInterviewStageActive(interviewCase, stageId);
+  });
+  renderInterviewView();
+}
+
+function removeInterviewPanelMember(interviewCaseId, stageId, index) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage.panel = stage.panel.filter((_, itemIndex) => itemIndex !== index);
+    if (!stage.panel.length) {
+      stage.panel = defaultInterviewPanel(stageId);
+    }
+    markInterviewStageActive(interviewCase, stageId);
+  });
+  renderInterviewView();
+}
+
+function updateInterviewPanelField(input, options = {}) {
+  const index = Number(input.dataset.interviewPanelIndex);
+  const field = input.dataset.interviewPanelField;
+
+  if (!["role", "level", "name", "email"].includes(field) || !Number.isInteger(index)) {
+    return;
+  }
+
+  mutateInterviewCase(input.dataset.interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, input.dataset.interviewStage);
+    stage.panel[index] = {
+      ...(stage.panel[index] || { role: "", level: "", name: "", email: "" }),
+      [field]: field === "email" ? String(input.value || "").trim().toLowerCase() : String(input.value || "").trim()
+    };
+    markInterviewStageActive(interviewCase, input.dataset.interviewStage);
+  }, { persist: options.persist !== false });
+}
+
+function updateInterviewNote(textarea, options = {}) {
+  mutateInterviewCase(textarea.dataset.interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, textarea.dataset.interviewStage);
+    stage.note = String(textarea.value || "").trim();
+    markInterviewStageActive(interviewCase, textarea.dataset.interviewStage);
+  }, { persist: options.persist !== false });
+}
+
+async function uploadInterviewDocument(input) {
+  const file = input.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  const documentId = input.dataset.interviewDocumentUpload;
+  const attachment = await attachmentFromFile(file);
+
+  if (!attachment) {
+    showToast("첨부 파일을 읽지 못했습니다.");
+    return;
+  }
+
+  mutateInterviewCase(input.dataset.interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, input.dataset.interviewStage);
+    stage.documents[documentId] = {
+      ...attachment,
+      uploadedAt: getTimestampText(),
+      uploadedBy: getCurrentActorName()
+    };
+    markInterviewStageActive(interviewCase, input.dataset.interviewStage);
+  });
+  input.value = "";
+  showToast("인터뷰 제출자료를 등록했습니다.");
+  renderInterviewView();
+}
+
+function passInterviewStage(interviewCaseId, stageId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    const stageIndex = INTERVIEW_STAGE_IDS.indexOf(stageId);
+    const nextStageId = INTERVIEW_STAGE_IDS[stageIndex + 1];
+
+    stage.status = "passed";
+
+    if (nextStageId) {
+      interviewCase.currentStage = nextStageId;
+      const nextStage = getInterviewStage(interviewCase, nextStageId);
+      if (nextStage.status === "waiting") {
+        nextStage.status = "scheduling";
+      }
+      state.selectedInterviewStage = nextStageId;
+    } else {
+      interviewCase.status = "passed";
+      interviewCase.finalDecision = "passed";
+      state.selectedInterviewStage = stageId;
+    }
+  });
+  addAuditLog("Interview 단계 합격", findInterviewCase(interviewCaseId)?.candidateName || "-", getInterviewStageConfig(stageId).label);
+  showToast(`${getInterviewStageConfig(stageId).label} 합격 처리했습니다.`);
+  renderInterviewView();
+}
+
+function failInterviewStage(interviewCaseId, stageId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage.status = "failed";
+    interviewCase.currentStage = stageId;
+    interviewCase.status = "failed";
+    interviewCase.finalDecision = "failed";
+    state.selectedInterviewStage = stageId;
+  });
+  addAuditLog("Interview 단계 불합격", findInterviewCase(interviewCaseId)?.candidateName || "-", getInterviewStageConfig(stageId).label);
+  showToast(`${getInterviewStageConfig(stageId).label} 불합격 처리했습니다.`);
+  renderInterviewView();
+}
+
+function finalizeInterviewCase(interviewCaseId, decision) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    interviewCase.status = decision === "passed" ? "passed" : "failed";
+    interviewCase.finalDecision = decision === "passed" ? "passed" : "failed";
+    if (decision === "passed") {
+      INTERVIEW_STAGE_IDS.forEach((stageId) => {
+        const stage = getInterviewStage(interviewCase, stageId);
+        if (stage.status !== "failed") {
+          stage.status = "passed";
+        }
+      });
+      interviewCase.currentStage = "hr";
+      state.selectedInterviewStage = "hr";
+    }
+  });
+  addAuditLog("Interview 최종 결과", findInterviewCase(interviewCaseId)?.candidateName || "-", decision === "passed" ? "합격" : "불합격");
+  showToast(decision === "passed" ? "면접 합격자로 확정했습니다." : "면접 불합격으로 확정했습니다.");
+  renderInterviewView();
+}
+
+function getInterviewMailRecipients(interviewCase, stageId, mailType) {
+  const stage = getInterviewStage(interviewCase, stageId);
+  const panelEmails = (stage.panel || []).map((member) => member.email).filter(Boolean);
+  const candidateEmail = interviewCase.email ? [interviewCase.email] : [];
+
+  if (mailType === "reject") {
+    return normalizeEmailList(candidateEmail);
+  }
+
+  return normalizeEmailList([...candidateEmail, ...panelEmails]);
+}
+
+function buildInterviewScheduleText(stage) {
+  const confirmed = formatScreeningAvailabilitySlot(stage.confirmedAt);
+  const candidateSlots = (stage.candidateSlots || []).map(formatScreeningAvailabilitySlot).filter(Boolean);
+  const interviewerSlots = (stage.interviewerSlots || []).map(formatScreeningAvailabilitySlot).filter(Boolean);
+  const lines = [];
+
+  if (confirmed) {
+    lines.push(`확정 일정: ${confirmed}`);
+  }
+
+  if (candidateSlots.length) {
+    lines.push("지원자 가능 시간", ...candidateSlots.map((slot) => `- ${slot}`));
+  }
+
+  if (interviewerSlots.length) {
+    lines.push("면접위원 가능 시간", ...interviewerSlots.map((slot) => `- ${slot}`));
+  }
+
+  return lines.join("\n");
+}
+
+async function sendInterviewOperationMail(interviewCaseId, stageId, mailType) {
+  const interviewCase = findInterviewCase(interviewCaseId);
+
+  if (!interviewCase || !canViewInterviewCase(interviewCase)) {
+    showToast("인터뷰 정보를 찾을 수 없습니다.");
+    return;
+  }
+
+  const stage = getInterviewStage(interviewCase, stageId);
+  const recipients = getInterviewMailRecipients(interviewCase, stageId, mailType);
+
+  if (!recipients.length) {
+    showToast("발송 가능한 수신처가 없습니다. 지원자 또는 면접위원 메일을 입력해주세요.");
+    return;
+  }
+
+  const action = {
+    request: "interview_step_request",
+    schedule: "interview_schedule_confirmed",
+    reject: "interview_reject_notice"
+  }[mailType];
+  const label = {
+    request: "입력 요청",
+    schedule: "확정 일정 안내",
+    reject: "탈락 안내"
+  }[mailType] || "인터뷰 메일";
+
+  await sendScreeningMail({
+    action,
+    recipients,
+    interviewCase,
+    stage: getInterviewStageConfig(stageId),
+    stageData: stage,
+    scheduleText: buildInterviewScheduleText(stage)
+  });
+
+  mutateInterviewCase(interviewCaseId, (nextCase) => {
+    const nextStage = getInterviewStage(nextCase, stageId);
+    nextStage.mailHistory = [
+      {
+        type: mailType,
+        label,
+        sentAt: getTimestampText(),
+        recipients,
+        by: getCurrentActorName()
+      },
+      ...(nextStage.mailHistory || [])
+    ];
+    markInterviewStageActive(nextCase, stageId, mailType === "schedule" ? "scheduled" : "scheduling");
+  });
+  addAuditLog("Interview 메일 발송", interviewCase.candidateName, `${getInterviewStageConfig(stageId).label} · ${label}`);
+  showToast(`${label} 메일을 발송했습니다.`);
+  renderInterviewView();
+}
+
 async function deleteCandidateProfile(candidateId) {
   const candidate = findCandidate(candidateId);
 
@@ -13020,6 +14034,25 @@ async function deleteCandidateProfile(candidateId) {
     console.warn("Candidate remote delete failed.", error);
     showToast("프로필은 화면에서 삭제됐지만 원격 DB 삭제 확인에 실패했습니다.");
   }
+}
+
+function toggleCandidateRecommendation(candidateId) {
+  const candidate = findCandidate(candidateId);
+
+  if (!candidate || !canViewCandidate(candidate)) {
+    return;
+  }
+
+  candidate.recommended = !candidate.recommended;
+  candidate.recommendedAt = candidate.recommended ? getTodayDate() : "";
+  candidate.recommendedBy = candidate.recommended ? getCurrentActorName() : "";
+  candidate.updatedAt = getTodayDate();
+  addAuditLog(candidate.recommended ? "후보자 추천 등록" : "후보자 추천 해제", candidate.name, "Dashboard 추천 프로필");
+  persistState();
+  renderDashboard();
+  renderDetail();
+  renderPoolTable();
+  showToast(candidate.recommended ? `${candidate.name} 후보자를 추천 프로필에 추가했습니다.` : `${candidate.name} 후보자 추천을 해제했습니다.`);
 }
 
 function changeCandidateStatus(status) {
@@ -14333,6 +15366,86 @@ function bindEvents() {
       return;
     }
 
+    const selectInterviewCaseButton = event.target.closest("[data-select-interview-case]");
+    if (selectInterviewCaseButton) {
+      selectInterviewCase(selectInterviewCaseButton.dataset.selectInterviewCase);
+      return;
+    }
+
+    const selectInterviewStageButton = event.target.closest("[data-select-interview-stage]");
+    if (selectInterviewStageButton) {
+      selectInterviewStage(selectInterviewStageButton.dataset.selectInterviewStage);
+      return;
+    }
+
+    const addInterviewSlotButton = event.target.closest("[data-add-interview-slot]");
+    if (addInterviewSlotButton) {
+      addInterviewSlot(
+        addInterviewSlotButton.dataset.interviewCaseId,
+        addInterviewSlotButton.dataset.interviewStage,
+        addInterviewSlotButton.dataset.addInterviewSlot
+      );
+      return;
+    }
+
+    const removeInterviewSlotButton = event.target.closest("[data-remove-interview-slot]");
+    if (removeInterviewSlotButton) {
+      removeInterviewSlot(
+        removeInterviewSlotButton.dataset.interviewCaseId,
+        removeInterviewSlotButton.dataset.interviewStage,
+        removeInterviewSlotButton.dataset.interviewSlotType,
+        Number(removeInterviewSlotButton.dataset.removeInterviewSlot)
+      );
+      return;
+    }
+
+    const addInterviewPanelButton = event.target.closest("[data-add-interview-panel-member]");
+    if (addInterviewPanelButton) {
+      addInterviewPanelMember(addInterviewPanelButton.dataset.interviewCaseId, addInterviewPanelButton.dataset.interviewStage);
+      return;
+    }
+
+    const removeInterviewPanelButton = event.target.closest("[data-remove-interview-panel-member]");
+    if (removeInterviewPanelButton) {
+      removeInterviewPanelMember(
+        removeInterviewPanelButton.dataset.interviewCaseId,
+        removeInterviewPanelButton.dataset.interviewStage,
+        Number(removeInterviewPanelButton.dataset.removeInterviewPanelMember)
+      );
+      return;
+    }
+
+    const passInterviewStageButton = event.target.closest("[data-interview-pass-stage]");
+    if (passInterviewStageButton) {
+      passInterviewStage(passInterviewStageButton.dataset.interviewCaseId, passInterviewStageButton.dataset.interviewStage);
+      return;
+    }
+
+    const failInterviewStageButton = event.target.closest("[data-interview-fail-stage]");
+    if (failInterviewStageButton) {
+      failInterviewStage(failInterviewStageButton.dataset.interviewCaseId, failInterviewStageButton.dataset.interviewStage);
+      return;
+    }
+
+    const finalizeInterviewButton = event.target.closest("[data-finalize-interview-case]");
+    if (finalizeInterviewButton) {
+      finalizeInterviewCase(finalizeInterviewButton.dataset.interviewCaseId, finalizeInterviewButton.dataset.finalizeInterviewCase);
+      return;
+    }
+
+    const sendInterviewOperationMailButton = event.target.closest("[data-send-interview-mail]");
+    if (sendInterviewOperationMailButton) {
+      sendInterviewOperationMail(
+        sendInterviewOperationMailButton.dataset.interviewCaseId,
+        sendInterviewOperationMailButton.dataset.interviewStage,
+        sendInterviewOperationMailButton.dataset.sendInterviewMail
+      ).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "인터뷰 메일 발송 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
     const policyCitationButton = event.target.closest("[data-policy-citation]");
     if (policyCitationButton) {
       openPolicyCitation(policyCitationButton.dataset.policyCitation);
@@ -14456,6 +15569,12 @@ function bindEvents() {
         console.warn(error);
         showToast("후보자 프로필 삭제 중 오류가 발생했습니다.");
       });
+      return;
+    }
+
+    const recommendCandidateButton = event.target.closest("[data-toggle-recommend-candidate]");
+    if (recommendCandidateButton) {
+      toggleCandidateRecommendation(recommendCandidateButton.dataset.toggleRecommendCandidate);
       return;
     }
 
@@ -14829,6 +15948,14 @@ function bindEvents() {
       updateScreeningOpinion(event.target);
     }
 
+    if (event.target.matches("[data-interview-panel-field]")) {
+      updateInterviewPanelField(event.target, { persist: false });
+    }
+
+    if (event.target.matches("[data-interview-note]")) {
+      updateInterviewNote(event.target, { persist: false });
+    }
+
     if (event.target.id === "policy-chat-question") {
       state.policyChatQuestion = event.target.value;
     }
@@ -14901,6 +16028,34 @@ function bindEvents() {
 
     if (event.target.matches("[data-screening-slot-input]")) {
       syncScreeningAvailabilityPreview(event.target.closest("#screening-final-pass-form"));
+      return;
+    }
+
+    if (event.target.matches("[data-interview-slot-input]")) {
+      updateInterviewSlot(event.target, { rerender: true });
+      return;
+    }
+
+    if (event.target.matches("[data-interview-confirmed]")) {
+      updateInterviewConfirmed(event.target);
+      return;
+    }
+
+    if (event.target.matches("[data-interview-panel-field]")) {
+      updateInterviewPanelField(event.target);
+      return;
+    }
+
+    if (event.target.matches("[data-interview-note]")) {
+      updateInterviewNote(event.target);
+      return;
+    }
+
+    if (event.target.matches("[data-interview-document-upload]")) {
+      uploadInterviewDocument(event.target).catch((error) => {
+        console.warn(error);
+        showToast("인터뷰 제출자료 업로드 중 오류가 발생했습니다.");
+      });
       return;
     }
 
