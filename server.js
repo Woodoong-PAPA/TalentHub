@@ -37,6 +37,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/job-fit-analysis") {
+    const jobFitAnalysis = require("./api/job-fit-analysis.js");
+    jobFitAnalysis(request, response);
+    return;
+  }
+
   if (request.url.split("?")[0] === "/api/trending-people") {
     const trendingPeople = require("./api/trending-people.js");
     trendingPeople(request, response);

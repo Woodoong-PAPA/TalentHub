@@ -53,6 +53,10 @@
       "dest": "/api/policy-chat.js"
     },
     {
+      "src": "/api/job-fit-analysis",
+      "dest": "/api/job-fit-analysis.js"
+    },
+    {
       "src": "/api/trending-people-cron",
       "dest": "/api/trending-people.js"
     },

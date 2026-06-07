@@ -43,7 +43,7 @@ create table if not exists public.app_members (
   name text not null,
   password_hash text,
   role text not null default 'general'
-    check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
+    check (role in ('applicant', 'general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
   status text not null default 'pending'
     check (status in ('pending', 'active', 'suspended', 'rejected')),
   business_unit text,
@@ -64,12 +64,30 @@ create index if not exists app_members_status_idx on public.app_members (status)
 create index if not exists app_members_business_unit_idx on public.app_members (business_unit);
 
 create table if not exists public.app_role_permissions (
-  role text not null check (role in ('general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
-  view text not null check (view in ('dashboard', 'pool', 'screening', 'register', 'ai-search', 'policy-chat', 'trending', 'audit', 'members')),
+  role text not null check (role in ('applicant', 'general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
+  view text not null check (view in ('dashboard', 'pool', 'screening', 'register', 'ai-search', 'job-fit', 'policy-chat', 'trending', 'audit', 'members')),
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   primary key (role, view)
 );
+
+create table if not exists public.job_fit_analyses (
+  id text primary key,
+  owner_id text,
+  owner_email text,
+  title text not null,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  payload jsonb not null default '{}'::jsonb
+);
+
+create index if not exists job_fit_analyses_owner_id_idx
+on public.job_fit_analyses (owner_id, created_at desc);
+create index if not exists job_fit_analyses_owner_email_idx
+on public.job_fit_analyses (owner_email, created_at desc);
+create index if not exists job_fit_analyses_payload_gin_idx
+on public.job_fit_analyses using gin (payload);
 
 create table if not exists public.recruiting_policy_sources (
   id text primary key,
@@ -149,6 +167,7 @@ alter table public.candidates enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.app_members enable row level security;
 alter table public.app_role_permissions enable row level security;
+alter table public.job_fit_analyses enable row level security;
 alter table public.recruiting_policy_sources enable row level security;
 alter table public.trending_people_reports enable row level security;
 alter table public.trending_search_settings enable row level security;
@@ -163,6 +182,8 @@ drop policy if exists "demo app members read" on public.app_members;
 drop policy if exists "demo app members write" on public.app_members;
 drop policy if exists "demo role permissions read" on public.app_role_permissions;
 drop policy if exists "demo role permissions write" on public.app_role_permissions;
+drop policy if exists "demo job fit analyses read" on public.job_fit_analyses;
+drop policy if exists "demo job fit analyses write" on public.job_fit_analyses;
 drop policy if exists "demo recruiting policy sources read" on public.recruiting_policy_sources;
 drop policy if exists "demo recruiting policy sources write" on public.recruiting_policy_sources;
 drop policy if exists "demo trending people read" on public.trending_people_reports;
@@ -221,6 +242,19 @@ using (true);
 
 create policy "demo role permissions write"
 on public.app_role_permissions
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
+create policy "demo job fit analyses read"
+on public.job_fit_analyses
+for select
+to anon, authenticated
+using (true);
+
+create policy "demo job fit analyses write"
+on public.job_fit_analyses
 for all
 to anon, authenticated
 using (true)
@@ -293,6 +327,7 @@ with check (true);
 
 insert into public.app_role_permissions (role, view, enabled)
 values
+  ('applicant', 'screening', true),
   ('general', 'dashboard', true),
   ('general', 'pool', true),
   ('general', 'policy-chat', true),
@@ -307,6 +342,7 @@ values
   ('hiring_manager', 'pool', true),
   ('hiring_manager', 'screening', true),
   ('hiring_manager', 'ai-search', true),
+  ('hiring_manager', 'job-fit', true),
   ('hiring_manager', 'policy-chat', true),
   ('hiring_manager', 'trending', true),
   ('business_recruiter', 'dashboard', true),
@@ -314,6 +350,7 @@ values
   ('business_recruiter', 'screening', true),
   ('business_recruiter', 'register', true),
   ('business_recruiter', 'ai-search', true),
+  ('business_recruiter', 'job-fit', true),
   ('business_recruiter', 'policy-chat', true),
   ('business_recruiter', 'trending', true),
   ('division_recruiter', 'dashboard', true),
@@ -321,6 +358,7 @@ values
   ('division_recruiter', 'screening', true),
   ('division_recruiter', 'register', true),
   ('division_recruiter', 'ai-search', true),
+  ('division_recruiter', 'job-fit', true),
   ('division_recruiter', 'policy-chat', true),
   ('division_recruiter', 'trending', true),
   ('division_recruiter', 'audit', true),
@@ -329,6 +367,7 @@ values
   ('admin', 'screening', true),
   ('admin', 'register', true),
   ('admin', 'ai-search', true),
+  ('admin', 'job-fit', true),
   ('admin', 'policy-chat', true),
   ('admin', 'trending', true),
   ('admin', 'audit', true),

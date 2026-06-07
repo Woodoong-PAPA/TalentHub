@@ -1998,6 +1998,123 @@ function policySourceFromSupabaseRow(row) {
   });
 }
 
+function getJobFitAnalysisOwner() {
+  const member = getCurrentMember();
+
+  return {
+    ownerId: member?.id || state.currentUserId || "",
+    ownerEmail: member?.email || ""
+  };
+}
+
+function jobFitAnalysisToSupabaseRow(analysis) {
+  const normalized = normalizeSavedJobFitAnalysis(analysis);
+  const owner = getJobFitAnalysisOwner();
+
+  return {
+    id: normalized.id,
+    owner_id: owner.ownerId || null,
+    owner_email: owner.ownerEmail || null,
+    title: normalized.title,
+    created_by: normalized.createdBy || null,
+    created_at: toSupabaseTimestamp(normalized.createdAt) || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    payload: normalized
+  };
+}
+
+function jobFitAnalysisFromSupabaseRow(row) {
+  return normalizeSavedJobFitAnalysis({
+    ...(row.payload || {}),
+    id: row.id,
+    title: row.title,
+    createdBy: row.created_by || row.payload?.createdBy || "",
+    createdAt: row.payload?.createdAt || row.created_at || ""
+  });
+}
+
+function mergeJobFitSavedAnalyses(localAnalyses = [], remoteAnalyses = []) {
+  const byId = new Map();
+
+  remoteAnalyses.forEach((analysis) => {
+    if (analysis?.id) {
+      byId.set(analysis.id, normalizeSavedJobFitAnalysis(analysis));
+    }
+  });
+
+  localAnalyses.forEach((analysis) => {
+    const normalized = normalizeSavedJobFitAnalysis(analysis);
+
+    if (normalized?.id && !byId.has(normalized.id)) {
+      byId.set(normalized.id, normalized);
+    }
+  });
+
+  return [...byId.values()]
+    .filter(Boolean)
+    .sort((a, b) => dateSortValue(b.createdAt) - dateSortValue(a.createdAt))
+    .slice(0, 30);
+}
+
+async function loadJobFitAnalysesFromSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return [];
+  }
+
+  const owner = getJobFitAnalysisOwner();
+
+  if (!owner.ownerId && !owner.ownerEmail) {
+    return [];
+  }
+
+  const filter = owner.ownerId
+    ? `owner_id=eq.${encodeURIComponent(owner.ownerId)}`
+    : `owner_email=eq.${encodeURIComponent(owner.ownerEmail)}`;
+  const rows = await supabaseRequest(`job_fit_analyses?select=*&${filter}&order=created_at.desc&limit=50`);
+
+  return Array.isArray(rows)
+    ? rows.map(jobFitAnalysisFromSupabaseRow).filter(Boolean)
+    : [];
+}
+
+async function mergeCurrentUserJobFitAnalysesFromSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  try {
+    const remoteAnalyses = await loadJobFitAnalysesFromSupabase();
+
+    if (!remoteAnalyses.length) {
+      return false;
+    }
+
+    const jobFit = getJobFitState();
+    jobFit.savedAnalyses = mergeJobFitSavedAnalyses(jobFit.savedAnalyses, remoteAnalyses);
+    persistState({ skipRemoteSync: true });
+    return true;
+  } catch (error) {
+    console.warn("Saved job fit analyses could not be loaded from Supabase.", error);
+    return false;
+  }
+}
+
+async function upsertJobFitAnalysisToSupabase(analysis) {
+  if (!REMOTE_SYNC_ENABLED) {
+    return;
+  }
+
+  await supabaseRequest("job_fit_analyses?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([jobFitAnalysisToSupabaseRow(analysis)])
+  });
+}
+
+async function deleteJobFitAnalysisFromSupabase(analysisId) {
+  await deleteSupabaseRecord("job_fit_analyses", analysisId);
+}
+
 function mergeMembers(localMembers, remoteMembers) {
   const membersByEmail = new Map();
 
@@ -2171,6 +2288,8 @@ async function loadStateFromSupabase() {
     if (Array.isArray(policySourceRows) && policySourceRows.length) {
       state.policySources = policySourceRows.map(policySourceFromSupabaseRow).filter((source) => source.content);
     }
+
+    await mergeCurrentUserJobFitAnalysesFromSupabase();
 
     ensureMemberDefaults();
     ensureScreeningDefaults();
@@ -5058,6 +5177,20 @@ function renderAiSearch() {
 function normalizeJobFitResume(resume = {}) {
   const text = normalizeResumeText(resume.text || "");
   const fileName = String(resume.fileName || resume.name || "이력서").trim();
+  const hasResumeEducation = Array.isArray(resume.education) && resume.education.some(hasAnyRecordValue);
+  const hasResumeCareer = Array.isArray(resume.career) && resume.career.some(hasAnyRecordValue);
+  const needsProfileExtraction = text && (!resume.candidateName || !hasResumeEducation || !hasResumeCareer);
+  const parsedProfile = needsProfileExtraction ? extractJobFitProfileFromResume(text, fileName) : {};
+  const education = normalizeJobFitEducationRecords(
+    hasResumeEducation
+      ? resume.education
+      : parsedProfile.education
+  );
+  const career = normalizeJobFitCareerRecords(
+    hasResumeCareer
+      ? resume.career
+      : parsedProfile.career
+  );
 
   return {
     id: resume.id || createId("job-fit-resume"),
@@ -5065,26 +5198,127 @@ function normalizeJobFitResume(resume = {}) {
     size: Number(resume.size || 0),
     type: String(resume.type || "").trim(),
     text,
-    candidateName: String(resume.candidateName || inferCandidateNameFromResume(text, fileName)).trim(),
+    candidateName: String(resume.candidateName || parsedProfile.name || inferCandidateNameFromResume(text, fileName)).trim(),
+    education,
+    career,
     uploadedAt: resume.uploadedAt || getTimestampText()
   };
 }
 
+function normalizeJobFitDegree(value) {
+  const text = String(value || "").trim();
+
+  if (/박사|ph\.?d|doctor/i.test(text)) return "박사";
+  if (/석사|master|m\.?s\.?|m\.?a\.?/i.test(text)) return "석사";
+  if (/학사|bachelor|b\.?s\.?|b\.?a\.?/i.test(text)) return "학사";
+  return text;
+}
+
+function normalizeJobFitEducationRecords(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .map((item) => ({
+      degree: normalizeJobFitDegree(item?.degree),
+      school: cleanParsedValue(item?.school),
+      major: cleanParsedValue(item?.major),
+      start: normalizeParsedDate(item?.start),
+      end: normalizeParsedDate(item?.end),
+      affiliation: cleanParsedValue(item?.affiliation || item?.organization || item?.department || "")
+    }))
+    .filter(hasAnyRecordValue)
+    .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
+    .slice(0, 5);
+}
+
+function normalizeJobFitCareerRecords(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .map((item) => ({
+      country: cleanParsedValue(item?.country),
+      company: cleanParsedValue(item?.company),
+      rank: cleanParsedValue(item?.rank),
+      position: cleanParsedValue(item?.position || item?.title || item?.department || ""),
+      start: normalizeParsedDate(item?.start),
+      end: normalizeParsedDate(item?.end),
+      achievements: normalizeResumeText(item?.achievements || "")
+    }))
+    .filter(hasAnyRecordValue)
+    .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
+    .slice(0, 8);
+}
+
+function extractJobFitProfileFromResume(text, fileName = "") {
+  try {
+    const parsed = normalizeParsedResumeForForm(parseResumeText(text, fileName));
+    return {
+      name: parsed.name,
+      education: parsed.education || [],
+      career: parsed.career || []
+    };
+  } catch (error) {
+    console.warn("Job fit resume profile extraction failed.", error);
+    return {
+      name: inferCandidateNameFromResume(text, fileName),
+      education: [],
+      career: []
+    };
+  }
+}
+
+function normalizeJobFitReportItems(items, detailKey) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          title: item.trim(),
+          [detailKey]: ""
+        };
+      }
+
+      return {
+        title: String(item?.title || item?.requirement || item?.name || "").trim(),
+        [detailKey]: String(item?.[detailKey] || item?.basis || item?.note || item?.detail || "").trim()
+      };
+    })
+    .filter((item) => item.title)
+    .slice(0, 8);
+}
+
 function normalizeJobFitResult(result = {}) {
+  const fulfilledDetails = normalizeJobFitReportItems(result.fulfilledDetails || result.fulfilled, "basis");
+  const missingDetails = normalizeJobFitReportItems(result.missingDetails || result.missing, "note");
+
   return {
     resumeId: String(result.resumeId || "").trim(),
     candidateName: String(result.candidateName || "").trim(),
     fileName: String(result.fileName || "").trim(),
     score: Math.max(0, Math.min(100, Number(result.score || 0))),
     grade: FIT_GRADE_ORDER.includes(result.grade) ? result.grade : "E",
-    fulfilled: Array.isArray(result.fulfilled) ? result.fulfilled.filter(Boolean) : [],
-    missing: Array.isArray(result.missing) ? result.missing.filter(Boolean) : [],
+    fulfilled: fulfilledDetails.map((item) => item.title),
+    missing: missingDetails.map((item) => item.title),
+    fulfilledDetails,
+    missingDetails,
     evidence: Array.isArray(result.evidence) ? result.evidence.filter(Boolean) : [],
-    comment: String(result.comment || "").trim()
+    education: normalizeJobFitEducationRecords(result.education || []),
+    career: normalizeJobFitCareerRecords(result.career || []),
+    comment: String(result.comment || result.fitSummary || "").trim(),
+    recommendation: String(result.recommendation || "").trim()
   };
 }
 
 function normalizeJobFitState(value = {}) {
+  const resumes = Array.isArray(value.resumes) ? value.resumes.map(normalizeJobFitResume).filter((resume) => resume.text) : [];
+  const resumeMap = new Map(resumes.map((resume) => [resume.id, resume]));
+  const results = Array.isArray(value.results)
+    ? value.results.map((result) => {
+      const resume = resumeMap.get(result.resumeId);
+
+      return normalizeJobFitResult({
+        ...result,
+        education: result.education || resume?.education || [],
+        career: result.career || resume?.career || []
+      });
+    })
+    : [];
+
   return {
     jdText: normalizeResumeText(value.jdText || ""),
     jdFile: value.jdFile && typeof value.jdFile === "object"
@@ -5095,8 +5329,8 @@ function normalizeJobFitState(value = {}) {
           uploadedAt: value.jdFile.uploadedAt || ""
         }
       : null,
-    resumes: Array.isArray(value.resumes) ? value.resumes.map(normalizeJobFitResume).filter((resume) => resume.text) : [],
-    results: Array.isArray(value.results) ? value.results.map(normalizeJobFitResult) : [],
+    resumes,
+    results,
     savedAnalyses: Array.isArray(value.savedAnalyses)
       ? value.savedAnalyses.map(normalizeSavedJobFitAnalysis).filter(Boolean).slice(0, 20)
       : [],
@@ -5115,6 +5349,20 @@ function normalizeSavedJobFitAnalysis(analysis = {}) {
     return null;
   }
 
+  const resumes = Array.isArray(analysis.resumes) ? analysis.resumes.map(normalizeJobFitResume) : [];
+  const resumeMap = new Map(resumes.map((resume) => [resume.id, resume]));
+  const results = Array.isArray(analysis.results)
+    ? analysis.results.map((result) => {
+      const resume = resumeMap.get(result.resumeId);
+
+      return normalizeJobFitResult({
+        ...result,
+        education: result.education || resume?.education || [],
+        career: result.career || resume?.career || []
+      });
+    })
+    : [];
+
   return {
     id: analysis.id || createId("job-fit-saved"),
     title: String(analysis.title || "저장된 직무적합도 분석").trim(),
@@ -5122,8 +5370,8 @@ function normalizeSavedJobFitAnalysis(analysis = {}) {
     createdBy: analysis.createdBy || getCurrentActorName(),
     jdText: normalizeResumeText(analysis.jdText || ""),
     jdFile: analysis.jdFile || null,
-    resumes: Array.isArray(analysis.resumes) ? analysis.resumes.map(normalizeJobFitResume) : [],
-    results: Array.isArray(analysis.results) ? analysis.results.map(normalizeJobFitResult) : []
+    resumes,
+    results
   };
 }
 
@@ -5208,6 +5456,69 @@ function scoreRequirementAgainstResume(requirement, resumeText) {
   };
 }
 
+function findJobFitEvidenceSentence(requirement, resumeText, matchedTokens = []) {
+  const requirementTokens = tokenizeSearchText(requirement)
+    .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token));
+  const tokens = [...new Set([...requirementTokens, ...matchedTokens])];
+  const sentences = splitJobFitSentences(resumeText)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 12 && sentence.length <= 260)
+    .slice(0, 160);
+
+  if (!sentences.length || !tokens.length) {
+    return "";
+  }
+
+  const ranked = sentences
+    .map((sentence, index) => {
+      const searchText = normalizeSearchText(sentence);
+      const tokenHits = tokens.filter((token) => searchText.includes(token));
+      const score = tokenHits.reduce((sum, token) => sum + Math.min(5, token.length), 0) +
+        (matchedTokens.some((token) => searchText.includes(token)) ? 8 : 0);
+
+      return {
+        sentence,
+        index,
+        score,
+        tokenHits
+      };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+
+  return ranked[0]?.sentence || "";
+}
+
+function summarizeJobFitRequirement(requirement) {
+  return String(requirement || "")
+    .replace(/\s+/g, " ")
+    .replace(/[.。!?！？]+$/, "")
+    .trim()
+    .slice(0, 90);
+}
+
+function buildJobFitFulfilledDetail(check, resumeText) {
+  const title = summarizeJobFitRequirement(check.requirement);
+  const evidenceSentence = findJobFitEvidenceSentence(check.requirement, resumeText, check.matchedTokens);
+  const keywordText = check.matchedTokens.slice(0, 5).join(", ");
+  const basis = evidenceSentence
+    ? `이력서의 "${evidenceSentence}" 내용을 근거로 해당 요구와 직접 연결되는 경험이 확인됩니다.`
+    : keywordText
+      ? `${keywordText} 관련 경험/역량 표현이 이력서에서 확인되어 충족 가능성이 있습니다.`
+      : "이력서의 수행 경험과 JD 요구 맥락이 연결되어 충족 가능성이 있습니다.";
+
+  return { title, basis };
+}
+
+function buildJobFitMissingDetail(check) {
+  const title = summarizeJobFitRequirement(check.requirement);
+
+  return {
+    title,
+    note: "이력서에서 해당 요구를 직접 입증할 수행 기간, 역할, 성과 근거가 명확히 확인되지 않습니다. 면접 또는 추가 자료로 확인 필요합니다."
+  };
+}
+
 function gradeFromJobFitScore(score) {
   if (score >= 82) return "A";
   if (score >= 68) return "B";
@@ -5218,26 +5529,26 @@ function gradeFromJobFitScore(score) {
 
 function buildJobFitComment(result, totalRequirements) {
   if (!totalRequirements) {
-    return "JD 요구사항을 충분히 추출하지 못했습니다. 직무기술서를 더 구체적으로 입력하면 평가 정밀도가 높아집니다.";
+    return "JD에서 평가 기준을 충분히 구조화하지 못했습니다. 역할, 필수 경험, 우대 요건을 더 구체적으로 입력하면 판단 정밀도가 높아집니다.";
   }
 
   if (result.grade === "A") {
-    return "JD 핵심 요구사항 대부분을 충족합니다. 우선 검토 대상입니다.";
+    return "JD 핵심 역할과 이력서의 경력 맥락이 강하게 맞습니다. 주요 요구사항을 실제 수행 경험과 성과로 설명할 수 있어 우선 검토 대상입니다.";
   }
 
   if (result.grade === "B") {
-    return "핵심 요구사항과의 직접 연관성이 높습니다. 미충족 항목은 인터뷰에서 보완 확인이 필요합니다.";
+    return "핵심 요구사항과의 연관성이 높습니다. 다만 일부 요구는 이력서상 직접 근거가 부족해 인터뷰에서 보완 확인이 필요합니다.";
   }
 
   if (result.grade === "C") {
-    return "일부 요구사항은 충족하나 핵심 경험의 직접 증거가 부족합니다. 세부 경력 검증이 필요합니다.";
+    return "일부 요구사항은 충족 가능성이 있으나 직무 핵심 경험이 충분히 드러나지 않습니다. 세부 프로젝트와 역할 검증이 필요합니다.";
   }
 
   if (result.grade === "D") {
-    return "JD와 일치하는 항목이 제한적입니다. 유관 경험 여부를 별도 확인해야 합니다.";
+    return "JD와 직접 연결되는 경험이 제한적으로 확인됩니다. 유관 경력 여부와 전환 가능성을 별도 확인해야 합니다.";
   }
 
-  return "JD 요구사항과의 직접 일치도가 낮습니다. 현재 이력서 기준 우선순위는 낮습니다.";
+  return "현재 이력서만으로는 JD 요구사항과의 직접 적합도를 설명하기 어렵습니다. 우선순위는 낮으며 추가 정보 확보가 필요합니다.";
 }
 
 function evaluateJobFitResume(jdText, resume) {
@@ -5245,12 +5556,11 @@ function evaluateJobFitResume(jdText, resume) {
   const normalizedResumeText = normalizeResumeText(resume.text).slice(0, JOB_FIT_MAX_RESUME_CHARS);
   const requirements = extractJobFitRequirements(normalizedJdText);
   const checks = requirements.map((requirement) => scoreRequirementAgainstResume(requirement, normalizedResumeText));
-  const fulfilled = checks.filter((item) => item.fulfilled).map((item) => item.requirement);
-  const missing = checks.filter((item) => !item.fulfilled).map((item) => item.requirement);
-  const evidence = checks
-    .filter((item) => item.fulfilled && item.matchedTokens.length)
-    .map((item) => `${item.requirement} · 근거 키워드: ${item.matchedTokens.slice(0, 6).join(", ")}`)
-    .slice(0, 5);
+  const fulfilledDetails = checks.filter((item) => item.fulfilled).map((item) => buildJobFitFulfilledDetail(item, normalizedResumeText));
+  const missingDetails = checks.filter((item) => !item.fulfilled).map(buildJobFitMissingDetail);
+  const fulfilled = fulfilledDetails.map((item) => item.title);
+  const missing = missingDetails.map((item) => item.title);
+  const evidence = fulfilledDetails.map((item) => item.basis).filter(Boolean).slice(0, 5);
   const requirementScore = requirements.length ? (fulfilled.length / requirements.length) * 74 : 0;
   const jdTokens = tokenizeSearchText(normalizedJdText)
     .filter((token) => token.length >= 3 && !SEARCH_STOPWORDS.has(token))
@@ -5269,12 +5579,69 @@ function evaluateJobFitResume(jdText, resume) {
     grade,
     fulfilled,
     missing,
+    fulfilledDetails,
+    missingDetails,
     evidence,
+    education: resume.education || [],
+    career: resume.career || [],
     comment: ""
   };
 
   result.comment = buildJobFitComment(result, requirements.length);
+  result.recommendation = grade === "A" || grade === "B"
+    ? "우선 검토 후보로 분류하고 미확인 항목 중심으로 인터뷰 질문을 구성하는 것이 적절합니다."
+    : grade === "C"
+      ? "직무 전환 가능성은 있으나 핵심 요구사항별 추가 증빙을 먼저 확인하는 것이 좋습니다."
+      : "현재 이력서 기준으로는 우선순위가 낮아 추가 자료 확보 후 재검토가 필요합니다.";
   return result;
+}
+
+async function analyzeJobFitWithServer(jdText, resumes) {
+  const response = await fetch("/api/job-fit-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jdText,
+      resumes: resumes.map((resume) => ({
+        id: resume.id,
+        candidateName: resume.candidateName,
+        fileName: resume.fileName,
+        text: resume.text,
+        education: resume.education,
+        career: resume.career
+      }))
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Job fit API failed: ${response.status}`);
+  }
+
+  const payload = await response.json();
+
+  if (!payload.ok || !Array.isArray(payload.results)) {
+    throw new Error(payload.error || "Job fit API did not return results.");
+  }
+
+  const resumeMap = new Map(resumes.map((resume) => [resume.id, resume]));
+  return payload.results
+    .map((result) => {
+      const resume = resumeMap.get(result.resumeId);
+
+      if (!resume) {
+        return null;
+      }
+
+      return normalizeJobFitResult({
+        ...result,
+        candidateName: resume.candidateName,
+        fileName: resume.fileName,
+        education: resume.education,
+        career: resume.career
+      });
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || FIT_GRADE_ORDER.indexOf(a.grade) - FIT_GRADE_ORDER.indexOf(b.grade));
 }
 
 function refreshJobFitResults() {
@@ -5305,12 +5672,55 @@ function jobFitGradeChip(grade) {
   return `<span class="status-chip ${chipClass}">적합도 ${escapeHtml(grade)}</span>`;
 }
 
+function renderJobFitProfileSummary(result) {
+  const educationLines = formatEducationSummary({ education: result.education || [] });
+  const careerLines = formatCareerSummary({ career: result.career || [] });
+
+  if (!educationLines.length && !careerLines.length) {
+    return "";
+  }
+
+  return `
+    <div class="job-fit-profile-summary">
+      ${educationLines.length ? `
+        <section>
+          <strong>학력</strong>
+          ${educationLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+        </section>
+      ` : ""}
+      ${careerLines.length ? `
+        <section>
+          <strong>경력</strong>
+          ${careerLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+        </section>
+      ` : ""}
+    </div>
+  `;
+}
+
 function renderJobFitRequirementList(items, emptyText) {
   if (!items.length) {
     return `<span class="muted-text">${escapeHtml(emptyText)}</span>`;
   }
 
   return `<ul class="job-fit-requirement-list">${items.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderJobFitReportItems(items, detailKey, emptyText) {
+  if (!items.length) {
+    return `<span class="muted-text">${escapeHtml(emptyText)}</span>`;
+  }
+
+  return `
+    <ul class="job-fit-report-list">
+      ${items.slice(0, 8).map((item) => `
+        <li>
+          <strong>${escapeHtml(item.title)}</strong>
+          ${item[detailKey] ? `<span>${escapeHtml(item[detailKey])}</span>` : ""}
+        </li>
+      `).join("")}
+    </ul>
+  `;
 }
 
 function renderJobFitResultCard(result, index) {
@@ -5321,28 +5731,28 @@ function renderJobFitResultCard(result, index) {
         <div class="job-fit-result-header">
           <div>
             <strong>${escapeHtml(result.candidateName || "이름 미확인")}</strong>
-            <span>${escapeHtml(result.fileName || "이력서")}</span>
           </div>
           <div class="job-fit-score-box">
             ${jobFitGradeChip(result.grade)}
             <strong>${escapeHtml(String(result.score))}%</strong>
           </div>
         </div>
+        ${renderJobFitProfileSummary(result)}
         <p class="job-fit-comment">${escapeHtml(result.comment)}</p>
         <div class="job-fit-match-grid">
           <section>
             <strong>충족 항목</strong>
-            ${renderJobFitRequirementList(result.fulfilled, "충족으로 판단된 항목이 없습니다.")}
+            ${renderJobFitReportItems(result.fulfilledDetails || [], "basis", "충족으로 판단된 항목이 없습니다.")}
           </section>
           <section>
-            <strong>미충족/확인 필요 항목</strong>
-            ${renderJobFitRequirementList(result.missing, "미충족 항목이 없습니다.")}
+            <strong>추가 확인 필요 항목</strong>
+            ${renderJobFitReportItems(result.missingDetails || [], "note", "추가 확인이 필요한 항목이 없습니다.")}
           </section>
         </div>
-        ${result.evidence.length ? `
+        ${result.recommendation ? `
           <div class="job-fit-evidence">
-            <strong>매칭 근거</strong>
-            ${result.evidence.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+            <strong>검토 의견</strong>
+            <span>${escapeHtml(result.recommendation)}</span>
           </div>
         ` : ""}
       </div>
@@ -5355,7 +5765,6 @@ function renderJobFitResultsPanel() {
   const hasJd = Boolean(normalizeResumeText(jobFit.jdText));
   const hasResumes = jobFit.resumes.length > 0;
   const canAnalyze = hasJd && hasResumes && !jobFit.jdLoading && !jobFit.resumeLoading && !jobFit.analysisLoading;
-  const requirements = hasJd ? extractJobFitRequirements(jobFit.jdText) : [];
   const resultBody = jobFit.analysisLoading
     ? `<div class="empty-state">직무기술서와 이력서 풀을 기준으로 적합도를 분석하는 중입니다.</div>`
     : jobFit.hasAnalyzed
@@ -5371,7 +5780,7 @@ function renderJobFitResultsPanel() {
       <div class="job-fit-panel-header">
         <div>
           <strong>직무기술서 기반 평가 결과</strong>
-          <span>${hasJd ? `추출 요구사항 ${requirements.length}개` : "JD 미입력"} · 이력서 ${jobFit.resumes.length}개 · 결과 ${jobFit.results.length}개</span>
+          <span>${hasJd ? "JD 입력 완료" : "JD 미입력"} · 이력서 ${jobFit.resumes.length}개 · 결과 ${jobFit.results.length}개</span>
         </div>
         <div class="job-fit-result-actions">
           <button class="primary-button compact-button" type="button" data-run-job-fit-analysis ${canAnalyze ? "" : "disabled"}>${jobFit.analysisLoading ? "분석 중" : "평가 분석 시작"}</button>
@@ -5379,12 +5788,6 @@ function renderJobFitResultsPanel() {
         </div>
       </div>
       ${jobFit.analysisStatus ? `<div class="job-fit-inline-status">${escapeHtml(jobFit.analysisStatus)}</div>` : ""}
-      ${requirements.length ? `
-        <div class="job-fit-requirement-summary">
-          <strong>JD 요구사항</strong>
-          <div>${requirements.slice(0, 8).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
-        </div>
-      ` : ""}
       <div class="job-fit-result-list">
         ${resultBody}
       </div>
@@ -5665,12 +6068,21 @@ async function runJobFitAnalysis() {
   renderJobFitAnalysis();
 
   try {
-    await new Promise((resolve) => window.setTimeout(resolve, 20));
-    refreshJobFitResults();
+    try {
+      jobFit.results = await analyzeJobFitWithServer(jdText, jobFit.resumes);
+      jobFit.analysisStatus = jobFit.results.length
+        ? `${jobFit.results.length}개 이력서의 직무적합도 AI 분석을 완료했습니다.`
+        : "AI 분석 결과를 생성하지 못했습니다. JD와 이력서 텍스트를 확인해 주세요.";
+    } catch (serverError) {
+      console.warn("Server job fit analysis failed. Using local report analysis.", serverError);
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+      refreshJobFitResults();
+      jobFit.analysisStatus = jobFit.results.length
+        ? `${jobFit.results.length}개 이력서의 직무적합도 분석을 완료했습니다. AI 서버 연결 문제로 브라우저 기준 보고서형 분석을 사용했습니다.`
+        : "분석 결과를 생성하지 못했습니다. 업로드한 파일의 텍스트를 확인해 주세요.";
+    }
+
     jobFit.hasAnalyzed = true;
-    jobFit.analysisStatus = jobFit.results.length
-      ? `${jobFit.results.length}개 이력서의 직무적합도 분석을 완료했습니다.`
-      : "분석 결과를 생성하지 못했습니다. 업로드한 파일의 텍스트를 확인해 주세요.";
     addAuditLog("직무적합도 분석 실행", `${jobFit.resumes.length}개 이력서`, `결과 ${jobFit.results.length}개`);
   } catch (error) {
     console.warn("Job fit analysis failed.", error);
@@ -5689,9 +6101,8 @@ function inferJobFitAnalysisTitle(jdText, results) {
   return `${firstLine.slice(0, 42)}${firstLine.length > 42 ? "..." : ""}${topName}`;
 }
 
-function saveJobFitAnalysis() {
+async function saveJobFitAnalysis() {
   const jobFit = getJobFitState();
-  refreshJobFitResults();
 
   if (!jobFit.results.length) {
     showToast("저장할 분석 결과가 없습니다.");
@@ -5712,6 +6123,17 @@ function saveJobFitAnalysis() {
   jobFit.savedAnalyses = [saved, ...jobFit.savedAnalyses.filter((item) => item.id !== saved.id)].slice(0, 20);
   jobFit.analysisStatus = "분석 결과를 저장했습니다.";
   addAuditLog("직무적합도 분석 저장", saved.title, `${saved.results.length}개 이력서 평가`);
+
+  try {
+    await upsertJobFitAnalysisToSupabase(saved);
+    jobFit.analysisStatus = REMOTE_SYNC_ENABLED
+      ? "분석 결과를 계정 기반 저장소에 저장했습니다."
+      : "분석 결과를 저장했습니다.";
+  } catch (error) {
+    console.warn("Saved job fit analysis could not be synced.", error);
+    jobFit.analysisStatus = "분석 결과를 로컬에 저장했습니다. Supabase 저장소 동기화는 실패했습니다.";
+  }
+
   rerenderJobFitWorkspace();
   showToast("분석 결과가 저장되었습니다.");
 }
@@ -5737,10 +6159,18 @@ function loadSavedJobFitAnalysis(analysisId) {
   rerenderJobFitWorkspace();
 }
 
-function deleteSavedJobFitAnalysis(analysisId) {
+async function deleteSavedJobFitAnalysis(analysisId) {
   const jobFit = getJobFitState();
   jobFit.savedAnalyses = jobFit.savedAnalyses.filter((analysis) => analysis.id !== analysisId);
   jobFit.analysisStatus = "저장된 분석 결과를 삭제했습니다.";
+
+  try {
+    await deleteJobFitAnalysisFromSupabase(analysisId);
+  } catch (error) {
+    console.warn("Saved job fit analysis could not be deleted from Supabase.", error);
+    jobFit.analysisStatus = "저장된 분석 결과를 로컬에서 삭제했습니다. Supabase 삭제 동기화는 실패했습니다.";
+  }
+
   rerenderJobFitWorkspace();
 }
 
@@ -11918,6 +12348,7 @@ async function handleLoginSubmit(form) {
   state.authMessage = "";
   state.memberProfileModalOpen = false;
   state.view = canAccessView(state.view, member) ? state.view : getDefaultView(member);
+  await mergeCurrentUserJobFitAnalysesFromSupabase();
   addAuditLog("로그인", member.name, "시스템 접속", member.name);
   persistState();
   render();
@@ -12706,7 +13137,10 @@ function bindEvents() {
     }
 
     if (event.target.closest("[data-save-job-fit-analysis]")) {
-      saveJobFitAnalysis();
+      saveJobFitAnalysis().catch((error) => {
+        console.warn("Job fit analysis save failed.", error);
+        showToast("분석 결과 저장 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -12718,7 +13152,10 @@ function bindEvents() {
 
     const deleteJobFitButton = event.target.closest("[data-delete-job-fit-analysis]");
     if (deleteJobFitButton) {
-      deleteSavedJobFitAnalysis(deleteJobFitButton.dataset.deleteJobFitAnalysis);
+      deleteSavedJobFitAnalysis(deleteJobFitButton.dataset.deleteJobFitAnalysis).catch((error) => {
+        console.warn("Job fit analysis delete failed.", error);
+        showToast("저장된 분석 결과 삭제 중 오류가 발생했습니다.");
+      });
       return;
     }
 
