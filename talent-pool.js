@@ -5177,9 +5177,10 @@ function renderAiSearch() {
 function normalizeJobFitResume(resume = {}) {
   const text = normalizeResumeText(resume.text || "");
   const fileName = String(resume.fileName || resume.name || "이력서").trim();
+  const existingName = normalizeInferredCandidateName(resume.candidateName);
   const hasResumeEducation = Array.isArray(resume.education) && resume.education.some(hasAnyRecordValue);
   const hasResumeCareer = Array.isArray(resume.career) && resume.career.some(hasAnyRecordValue);
-  const needsProfileExtraction = text && (!resume.candidateName || !hasResumeEducation || !hasResumeCareer);
+  const needsProfileExtraction = text && (!existingName || !hasResumeEducation || !hasResumeCareer);
   const parsedProfile = needsProfileExtraction ? extractJobFitProfileFromResume(text, fileName) : {};
   const education = normalizeJobFitEducationRecords(
     hasResumeEducation
@@ -5198,7 +5199,7 @@ function normalizeJobFitResume(resume = {}) {
     size: Number(resume.size || 0),
     type: String(resume.type || "").trim(),
     text,
-    candidateName: String(resume.candidateName || parsedProfile.name || inferCandidateNameFromResume(text, fileName)).trim(),
+    candidateName: getBestJobFitCandidateName(existingName, parsedProfile.name, inferCandidateNameFromResume(text, fileName)),
     education,
     career,
     uploadedAt: resume.uploadedAt || getTimestampText()
@@ -5282,13 +5283,37 @@ function normalizeJobFitReportItems(items, detailKey) {
     .slice(0, 8);
 }
 
+function sanitizeJobFitComment(value) {
+  const text = normalizeResumeText(value);
+
+  if (!text) {
+    return "";
+  }
+
+  const sentences = text
+    .split(/(?<=[.!?。！？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9])/g)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const filtered = sentences.filter((sentence) =>
+    !/(합격|불합격|다음 단계|진행하|진행해야|면접|인터뷰|질문 구성|추가 자료|우선 검토|검토 대상|채용 액션)/.test(sentence)
+  );
+
+  if (filtered.length) {
+    return filtered.join(" ").trim();
+  }
+
+  return text
+    .replace(/[^.!?。！？]*(?:합격|불합격|다음 단계|진행하|진행해야|면접|인터뷰|질문 구성|추가 자료|우선 검토|검토 대상|채용 액션)[^.!?。！？]*(?:[.!?。！？]|$)/g, "")
+    .trim();
+}
+
 function normalizeJobFitResult(result = {}) {
   const fulfilledDetails = normalizeJobFitReportItems(result.fulfilledDetails || result.fulfilled, "basis");
   const missingDetails = normalizeJobFitReportItems(result.missingDetails || result.missing, "note");
 
   return {
     resumeId: String(result.resumeId || "").trim(),
-    candidateName: String(result.candidateName || "").trim(),
+    candidateName: normalizeInferredCandidateName(result.candidateName) || "이름 미확인",
     fileName: String(result.fileName || "").trim(),
     score: Math.max(0, Math.min(100, Number(result.score || 0))),
     grade: FIT_GRADE_ORDER.includes(result.grade) ? result.grade : "E",
@@ -5299,7 +5324,7 @@ function normalizeJobFitResult(result = {}) {
     evidence: Array.isArray(result.evidence) ? result.evidence.filter(Boolean) : [],
     education: normalizeJobFitEducationRecords(result.education || []),
     career: normalizeJobFitCareerRecords(result.career || []),
-    comment: String(result.comment || result.fitSummary || "").trim(),
+    comment: sanitizeJobFitComment(result.comment || result.fitSummary || ""),
     recommendation: String(result.recommendation || "").trim()
   };
 }
@@ -5313,6 +5338,7 @@ function normalizeJobFitState(value = {}) {
 
       return normalizeJobFitResult({
         ...result,
+        candidateName: getBestJobFitCandidateName(result.candidateName, resume?.candidateName, result.fileName || resume?.fileName),
         education: result.education || resume?.education || [],
         career: result.career || resume?.career || []
       });
@@ -5357,6 +5383,7 @@ function normalizeSavedJobFitAnalysis(analysis = {}) {
 
       return normalizeJobFitResult({
         ...result,
+        candidateName: getBestJobFitCandidateName(result.candidateName, resume?.candidateName, result.fileName || resume?.fileName),
         education: result.education || resume?.education || [],
         career: result.career || resume?.career || []
       });
@@ -5386,13 +5413,18 @@ function getJobFitState() {
 
 function inferCandidateNameFromResume(text, fileName = "") {
   const normalized = normalizeResumeText(text);
-  const explicitName = firstMatch(normalized, [
-    /(?:이름|성명|Name)\s*[:：]\s*([^\n\r]{2,40})/i,
-    /^([가-힣]{2,5})\s*(?:\n|$)/m
-  ]);
+  const explicitName = normalizeInferredCandidateName(firstMatch(normalized, [
+    /(?:이름|성명|Name)\s*[:：]\s*([^\n\r]{2,40})/i
+  ]));
 
   if (explicitName) {
-    return cleanParsedValue(explicitName).split(/\s{2,}|[|,]/)[0].trim();
+    return explicitName;
+  }
+
+  const textName = extractLikelyPersonNameFromResumeText(normalized);
+
+  if (textName) {
+    return textName;
   }
 
   const baseName = String(fileName || "")
@@ -5403,7 +5435,82 @@ function inferCandidateNameFromResume(text, fileName = "") {
     .replace(/\s+/g, " ")
     .trim();
 
-  return baseName || "이름 미확인";
+  return normalizeInferredCandidateName(baseName) || "이름 미확인";
+}
+
+function isGenericCandidateName(value) {
+  const text = cleanParsedValue(value).replace(/\s+/g, "");
+
+  if (!text) {
+    return true;
+  }
+
+  return /^(프로필|이력서|지원서|경력기술서|자기소개서|소개서|resume|cv|profile|curriculumvitae)$/i.test(text) ||
+    /(대학교|대학원|연구소|회사|팀|그룹|센터|부문|사업부|프로젝트|포트폴리오|경력|학력|요약|직무|기술|사항|첨부|파일)/.test(text);
+}
+
+function normalizeInferredCandidateName(value) {
+  const cleaned = cleanParsedValue(value)
+    .split(/\s{2,}|[|,;:：/]/)[0]
+    .replace(/(?:후보자?|님|씨|프로필|이력서|지원서|resume|cv|profile)$/gi, "")
+    .trim();
+
+  if (isGenericCandidateName(cleaned)) {
+    return "";
+  }
+
+  if (/^[가-힣]{2,5}$/.test(cleaned) || /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  const koreanName = cleaned.match(/\b([가-힣]{2,5})\b/)?.[1] || "";
+  return koreanName && !isGenericCandidateName(koreanName) ? koreanName : "";
+}
+
+function extractLikelyPersonNameFromResumeText(text) {
+  const lines = normalizeResumeText(text)
+    .split("\n")
+    .map((line) => cleanParsedValue(line))
+    .filter(Boolean)
+    .slice(0, 80);
+  const labeledName = normalizeInferredCandidateName(findLabeledValue(lines, ["이름", "성명", "한글이름", "Name", "Full Name"]));
+
+  if (labeledName) {
+    return labeledName;
+  }
+
+  for (const pattern of [
+    /([가-힣]{2,5})\s*(?:후보자?|님|씨)\b/,
+    /(?:candidate|applicant|name)\s*[:：-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i
+  ]) {
+    const matched = normalizeInferredCandidateName(firstMatch(text, [pattern]));
+
+    if (matched) {
+      return matched;
+    }
+  }
+
+  for (const line of lines) {
+    const candidate = normalizeInferredCandidateName(line);
+
+    if (candidate && line.length <= 28) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function getBestJobFitCandidateName(...values) {
+  for (const value of values) {
+    const name = normalizeInferredCandidateName(value);
+
+    if (name) {
+      return name;
+    }
+  }
+
+  return "이름 미확인";
 }
 
 function splitJobFitSentences(text) {
@@ -5528,27 +5635,41 @@ function gradeFromJobFitScore(score) {
 }
 
 function buildJobFitComment(result, totalRequirements) {
+  const fulfilledCount = result.fulfilledDetails?.length || result.fulfilled?.length || 0;
+  const missingCount = result.missingDetails?.length || result.missing?.length || 0;
+  const candidateName = normalizeInferredCandidateName(result.candidateName) || "해당 후보자";
+  const matchedTitles = (result.fulfilledDetails || [])
+    .map((item) => item.title)
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(", ");
+  const missingTitles = (result.missingDetails || [])
+    .map((item) => item.title)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(", ");
+
   if (!totalRequirements) {
-    return "JD에서 평가 기준을 충분히 구조화하지 못했습니다. 역할, 필수 경험, 우대 요건을 더 구체적으로 입력하면 판단 정밀도가 높아집니다.";
+    return `${candidateName}의 이력서는 현재 입력된 직무기술서 기준을 충분히 구조화하기 어려운 상태에서 평가되었습니다. 이력서에 드러난 경력과 역량만으로는 포지션과의 직접 연결성을 안정적으로 판단하기 어렵고, 요구 역할과 수행 경험 사이의 대응 관계도 제한적으로 확인됩니다. 따라서 현재 결과는 참고용 적합도 해석으로 보아야 하며, 직무 요구가 더 명확해질수록 판단의 신뢰도가 높아질 수 있습니다.`;
   }
 
   if (result.grade === "A") {
-    return "JD 핵심 역할과 이력서의 경력 맥락이 강하게 맞습니다. 주요 요구사항을 실제 수행 경험과 성과로 설명할 수 있어 우선 검토 대상입니다.";
+    return `${candidateName}의 이력서는 직무기술서의 핵심 요구와 매우 높은 연관성을 보입니다. ${matchedTitles || "주요 수행 경험"}이 포지션에서 기대하는 역할과 직접 맞닿아 있고, 관련 기술과 경력의 지속성도 충분히 확인됩니다. 충족 항목 ${fulfilledCount}개가 이력서의 구체적인 경험으로 설명되는 반면, 추가 확인 필요 항목은 ${missingCount}개로 제한적입니다. 전반적으로 해당 인물은 포지션에서 요구하는 전문성과 수행 맥락에 잘 부합하는 것으로 판단됩니다.`;
   }
 
   if (result.grade === "B") {
-    return "핵심 요구사항과의 연관성이 높습니다. 다만 일부 요구는 이력서상 직접 근거가 부족해 인터뷰에서 보완 확인이 필요합니다.";
+    return `${candidateName}의 이력서는 직무기술서의 핵심 요구와 상당한 접점이 있습니다. ${matchedTitles || "주요 경력과 기술 역량"}이 포지션의 주요 업무와 연결되며, 직무 수행에 필요한 기반 역량도 비교적 명확하게 드러납니다. 다만 ${missingTitles || "일부 세부 요건"}은 이력서에서 직접적인 근거가 충분히 확인되지 않아 적합도 판단에 약간의 불확실성이 남습니다. 전체적으로는 포지션과의 실질적 관련성이 높은 후보로 해석됩니다.`;
   }
 
   if (result.grade === "C") {
-    return "일부 요구사항은 충족 가능성이 있으나 직무 핵심 경험이 충분히 드러나지 않습니다. 세부 프로젝트와 역할 검증이 필요합니다.";
+    return `${candidateName}의 이력서는 직무기술서의 일부 요구와 연결되지만, 핵심 역할 전체를 충분히 뒷받침한다고 보기는 어렵습니다. ${matchedTitles || "일부 경험"}은 포지션과 관련성이 있으나, ${missingTitles || "핵심 세부 요건"}에 대해서는 이력서 내 직접 근거가 제한적입니다. 충족 항목과 추가 확인 필요 항목이 함께 나타나므로, 적합도는 중간 수준으로 해석됩니다. 직무 전환 가능성은 있으나 현재 이력서만으로는 강한 적합성을 단정하기 어렵습니다.`;
   }
 
   if (result.grade === "D") {
-    return "JD와 직접 연결되는 경험이 제한적으로 확인됩니다. 유관 경력 여부와 전환 가능성을 별도 확인해야 합니다.";
+    return `${candidateName}의 이력서는 직무기술서와 연결되는 경험이 일부 확인되지만, 포지션 핵심 요구와의 직접성은 낮은 편입니다. ${matchedTitles || "일부 기술 또는 경력"}은 참고할 수 있으나, ${missingTitles || "주요 요구 요건"}에 대한 근거가 부족해 직무 적합성을 높게 보기 어렵습니다. 요구 직무의 핵심 수행 범위와 이력서상 경험 사이에 간극이 있어, 현재 정보 기준으로는 제한적 적합도로 해석됩니다.`;
   }
 
-  return "현재 이력서만으로는 JD 요구사항과의 직접 적합도를 설명하기 어렵습니다. 우선순위는 낮으며 추가 정보 확보가 필요합니다.";
+  return `${candidateName}의 이력서는 현재 직무기술서의 핵심 요구와 직접적으로 맞닿는 근거가 매우 제한적입니다. 이력서에 나타난 경력과 기술은 일부 참고 가능하지만, 포지션에서 요구하는 주요 역할과 성과 맥락을 충분히 설명하지 못합니다. 충족 항목보다 추가 확인 필요 항목의 비중이 높아, 현재 이력서만으로는 해당 포지션과의 적합성을 낮게 해석하는 것이 자연스럽습니다.`;
 }
 
 function evaluateJobFitResume(jdText, resume) {
@@ -5588,11 +5709,7 @@ function evaluateJobFitResume(jdText, resume) {
   };
 
   result.comment = buildJobFitComment(result, requirements.length);
-  result.recommendation = grade === "A" || grade === "B"
-    ? "우선 검토 후보로 분류하고 미확인 항목 중심으로 인터뷰 질문을 구성하는 것이 적절합니다."
-    : grade === "C"
-      ? "직무 전환 가능성은 있으나 핵심 요구사항별 추가 증빙을 먼저 확인하는 것이 좋습니다."
-      : "현재 이력서 기준으로는 우선순위가 낮아 추가 자료 확보 후 재검토가 필요합니다.";
+  result.recommendation = "";
   return result;
 }
 
@@ -5737,24 +5854,18 @@ function renderJobFitResultCard(result, index) {
             <strong>${escapeHtml(String(result.score))}%</strong>
           </div>
         </div>
+        ${result.comment ? `<p class="job-fit-comment">${escapeHtml(result.comment)}</p>` : ""}
         ${renderJobFitProfileSummary(result)}
-        <p class="job-fit-comment">${escapeHtml(result.comment)}</p>
         <div class="job-fit-match-grid">
-          <section>
-            <strong>충족 항목</strong>
+          <section class="job-fit-report-section is-fulfilled">
+            <strong>충족된 직무 요건</strong>
             ${renderJobFitReportItems(result.fulfilledDetails || [], "basis", "충족으로 판단된 항목이 없습니다.")}
           </section>
-          <section>
-            <strong>추가 확인 필요 항목</strong>
+          <section class="job-fit-report-section is-missing">
+            <strong>추가 확인이 필요한 요건</strong>
             ${renderJobFitReportItems(result.missingDetails || [], "note", "추가 확인이 필요한 항목이 없습니다.")}
           </section>
         </div>
-        ${result.recommendation ? `
-          <div class="job-fit-evidence">
-            <strong>검토 의견</strong>
-            <span>${escapeHtml(result.recommendation)}</span>
-          </div>
-        ` : ""}
       </div>
     </article>
   `;
@@ -5765,6 +5876,7 @@ function renderJobFitResultsPanel() {
   const hasJd = Boolean(normalizeResumeText(jobFit.jdText));
   const hasResumes = jobFit.resumes.length > 0;
   const canAnalyze = hasJd && hasResumes && !jobFit.jdLoading && !jobFit.resumeLoading && !jobFit.analysisLoading;
+  const hasResults = Boolean(jobFit.results.length || jobFit.hasAnalyzed || jobFit.analysisStatus);
   const resultBody = jobFit.analysisLoading
     ? `<div class="empty-state">직무기술서와 이력서 풀을 기준으로 적합도를 분석하는 중입니다.</div>`
     : jobFit.hasAnalyzed
@@ -5779,12 +5891,13 @@ function renderJobFitResultsPanel() {
     <section class="form-panel job-fit-results-panel" id="job-fit-results-section">
       <div class="job-fit-panel-header">
         <div>
-          <strong>직무기술서 기반 평가 결과</strong>
+          <strong>직무적합도 분석 결과</strong>
           <span>${hasJd ? "JD 입력 완료" : "JD 미입력"} · 이력서 ${jobFit.resumes.length}개 · 결과 ${jobFit.results.length}개</span>
         </div>
         <div class="job-fit-result-actions">
           <button class="primary-button compact-button" type="button" data-run-job-fit-analysis ${canAnalyze ? "" : "disabled"}>${jobFit.analysisLoading ? "분석 중" : "평가 분석 시작"}</button>
           <button class="ghost-button compact-button" type="button" data-save-job-fit-analysis ${jobFit.results.length && !jobFit.analysisLoading ? "" : "disabled"}>분석 결과 저장</button>
+          <button class="ghost-button compact-button" type="button" data-clear-job-fit-results ${hasResults && !jobFit.analysisLoading ? "" : "disabled"}>초기화</button>
         </div>
       </div>
       ${jobFit.analysisStatus ? `<div class="job-fit-inline-status">${escapeHtml(jobFit.analysisStatus)}</div>` : ""}
@@ -5807,8 +5920,7 @@ function renderJobFitResumeList() {
       ${resumes.map((resume) => `
         <div class="job-fit-file-row">
           <span>
-            <strong>${escapeHtml(resume.candidateName || "이름 미확인")}</strong>
-            <small>${escapeHtml(resume.fileName)} · ${escapeHtml(formatFileSize(resume.size))}</small>
+            <strong>${escapeHtml(resume.fileName)}</strong>
           </span>
           <button class="ghost-button danger-button compact-button" type="button" data-remove-job-fit-resume="${escapeHtml(resume.id)}">삭제</button>
         </div>
@@ -5856,6 +5968,9 @@ function renderJobFitAnalysis() {
 
   container.innerHTML = `
     <div class="job-fit-workspace">
+      <div class="job-fit-top-actions">
+        <button class="ghost-button compact-button" type="button" data-clear-job-fit-all ${jobFit.jdText || jobFit.jdFile || jobFit.resumes.length || jobFit.results.length || jobFit.hasAnalyzed ? "" : "disabled"}>전체 초기화</button>
+      </div>
       <div class="job-fit-upload-grid">
         <section class="form-panel job-fit-upload-card">
           <div class="job-fit-panel-header">
@@ -5879,7 +5994,10 @@ function renderJobFitAnalysis() {
               <strong>이력서 풀</strong>
               <span>여러 이력서를 한 번에 업로드할 수 있습니다.</span>
             </div>
-            <span class="status-chip chip-blue">${jobFit.resumes.length}개</span>
+            <div class="job-fit-header-actions">
+              <span class="status-chip chip-blue">${jobFit.resumes.length}개</span>
+              <button class="ghost-button compact-button" type="button" data-clear-job-fit-resumes ${jobFit.resumes.length ? "" : "disabled"}>초기화</button>
+            </div>
           </div>
           <div class="dropzone job-fit-resume-dropzone">
             <input id="job-fit-resume-files" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
@@ -6004,10 +6122,7 @@ async function handleJobFitResumeUpload(files) {
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
   jobFit.resumeLoading = false;
-  jobFit.resumeStatus = [
-    loadedResumes.length ? `${loadedResumes.length}개 이력서를 분석 풀에 추가했습니다.` : "",
-    failedNames.length ? `읽지 못한 파일: ${failedNames.join(", ")}` : ""
-  ].filter(Boolean).join(" ");
+  jobFit.resumeStatus = failedNames.length ? `읽지 못한 파일: ${failedNames.join(", ")}` : "";
   jobFit.analysisStatus = loadedResumes.length
     ? "이력서 풀이 변경되었습니다. 평가 분석 시작 버튼을 눌러 결과를 생성해 주세요."
     : "분석 가능한 이력서가 추가되지 않았습니다.";
@@ -6034,6 +6149,43 @@ function clearJobFitJd() {
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
   jobFit.jdStatus = "직무기술서 입력을 초기화했습니다.";
+  jobFit.analysisStatus = "";
+  rerenderJobFitWorkspace();
+}
+
+function clearJobFitResumes() {
+  const jobFit = getJobFitState();
+  jobFit.analysisLoading = false;
+  jobFit.resumes = [];
+  jobFit.results = [];
+  jobFit.hasAnalyzed = false;
+  jobFit.resumeLoading = false;
+  jobFit.resumeStatus = "";
+  jobFit.analysisStatus = "";
+  rerenderJobFitWorkspace();
+}
+
+function clearJobFitResults() {
+  const jobFit = getJobFitState();
+  jobFit.analysisLoading = false;
+  jobFit.results = [];
+  jobFit.hasAnalyzed = false;
+  jobFit.analysisStatus = "";
+  rerenderJobFitWorkspace();
+}
+
+function clearJobFitAll() {
+  const jobFit = getJobFitState();
+  jobFit.jdText = "";
+  jobFit.jdFile = null;
+  jobFit.resumes = [];
+  jobFit.results = [];
+  jobFit.hasAnalyzed = false;
+  jobFit.jdLoading = false;
+  jobFit.resumeLoading = false;
+  jobFit.analysisLoading = false;
+  jobFit.jdStatus = "";
+  jobFit.resumeStatus = "";
   jobFit.analysisStatus = "";
   rerenderJobFitWorkspace();
 }
@@ -10398,8 +10550,8 @@ function parseResumeText(text, filename = "") {
   const education = educationLines.map(parseEducationLine).filter(hasAnyRecordValue).slice(0, 5);
   const career = careerLines.map(parseCareerLine).filter(hasAnyRecordValue).slice(0, 6);
   const skills = inferSkills(compact);
-  const name = findLabeledValue(lines, ["이름", "성명", "Name"]) ||
-    cleanParsedValue(lines.find((line) => (/^[가-힣]{2,5}$|^[A-Z][a-z]+ [A-Z][a-z]+$/.test(line)) && !/(이력서|자기소개|경력)/.test(line)) || "");
+  const name = extractLikelyPersonNameFromResumeText(compact) ||
+    normalizeInferredCandidateName(lines.find((line) => (/^[가-힣]{2,5}$|^[A-Z][a-z]+ [A-Z][a-z]+$/.test(line)) && !/(이력서|자기소개|경력)/.test(line)) || "");
   const role = cleanParsedValue(findLabeledValue(lines, ["희망직무", "지원분야", "지원 직무", "직무", "포지션", "Position"]) || firstMatch(compact, [
     /([가-힣A-Za-z0-9 /·&+-]+(?:엔지니어|개발자|리서처|아키텍트|분석가|Engineer|Developer|Researcher|Architect))/
   ]));
@@ -12210,6 +12362,56 @@ async function handleAiSearchFileUpload(file) {
   }
 }
 
+function findFileInputForDrop(target) {
+  const element = target instanceof Element ? target : null;
+
+  if (!element) {
+    return null;
+  }
+
+  if (element.matches("input[type='file']")) {
+    return element;
+  }
+
+  const container = element.closest(".dropzone, .field");
+
+  if (!container) {
+    return null;
+  }
+
+  return container.querySelector("input[type='file']");
+}
+
+function getFileDropVisualTarget(target) {
+  const element = target instanceof Element ? target : null;
+
+  if (!element) {
+    return null;
+  }
+
+  if (element.matches("input[type='file']")) {
+    return element.closest(".dropzone, .field") || element;
+  }
+
+  return element.closest(".dropzone, .field");
+}
+
+function applyDroppedFilesToInput(input, fileList) {
+  const files = [...(fileList || [])];
+
+  if (!input || !files.length) {
+    return false;
+  }
+
+  const dataTransfer = new DataTransfer();
+  const acceptedFiles = input.multiple ? files : files.slice(0, 1);
+
+  acceptedFiles.forEach((file) => dataTransfer.items.add(file));
+  input.files = dataTransfer.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
 function setAuthMessage(message) {
   state.authMessage = message;
   render();
@@ -13125,6 +13327,21 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-clear-job-fit-resumes]")) {
+      clearJobFitResumes();
+      return;
+    }
+
+    if (event.target.closest("[data-clear-job-fit-results]")) {
+      clearJobFitResults();
+      return;
+    }
+
+    if (event.target.closest("[data-clear-job-fit-all]")) {
+      clearJobFitAll();
+      return;
+    }
+
     if (event.target.closest("[data-run-job-fit-analysis]")) {
       runJobFitAnalysis().catch((error) => {
         console.warn("Job fit analysis failed.", error);
@@ -13604,6 +13821,41 @@ function bindEvents() {
     fallback.textContent = "사진";
     event.target.replaceWith(fallback);
   }, true);
+
+  document.addEventListener("dragover", (event) => {
+    const input = findFileInputForDrop(event.target);
+
+    if (!input) {
+      return;
+    }
+
+    event.preventDefault();
+    getFileDropVisualTarget(event.target)?.classList.add("is-dragover");
+  });
+
+  document.addEventListener("dragleave", (event) => {
+    const visualTarget = getFileDropVisualTarget(event.target);
+
+    if (visualTarget && !visualTarget.contains(event.relatedTarget)) {
+      visualTarget.classList.remove("is-dragover");
+    }
+  });
+
+  document.addEventListener("drop", (event) => {
+    const input = findFileInputForDrop(event.target);
+    const visualTarget = getFileDropVisualTarget(event.target);
+
+    if (!input) {
+      return;
+    }
+
+    event.preventDefault();
+    visualTarget?.classList.remove("is-dragover");
+
+    if (applyDroppedFilesToInput(input, event.dataTransfer?.files)) {
+      showToast("파일을 업로드 영역에 추가했습니다.");
+    }
+  });
 
   document.addEventListener("change", (event) => {
     if (event.target.id === "dashboard-organization-filter") {

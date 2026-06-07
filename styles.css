@@ -2026,6 +2026,11 @@ tr:last-child td {
   min-width: 0;
 }
 
+.job-fit-top-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .job-fit-upload-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2183,6 +2188,13 @@ tr:last-child td {
   gap: 8px;
 }
 
+.job-fit-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .job-fit-result-card {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
@@ -2290,6 +2302,7 @@ tr:last-child td {
 .job-fit-match-grid section,
 .job-fit-evidence {
   display: grid;
+  align-content: start;
   gap: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2297,9 +2310,25 @@ tr:last-child td {
   background: var(--surface-soft);
 }
 
-.job-fit-match-grid strong,
+.job-fit-match-grid section > strong,
 .job-fit-evidence strong {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
   font-size: 13px;
+  font-weight: 900;
+}
+
+.job-fit-report-section.is-fulfilled > strong {
+  color: #047857;
+  background: var(--green-soft);
+}
+
+.job-fit-report-section.is-missing > strong {
+  color: #b45309;
+  background: var(--amber-soft);
 }
 
 .job-fit-requirement-list {
@@ -2317,7 +2346,7 @@ tr:last-child td {
 
 .job-fit-report-list {
   display: grid;
-  gap: 10px;
+  gap: 9px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2325,7 +2354,7 @@ tr:last-child td {
 
 .job-fit-report-list li {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -2499,6 +2528,13 @@ tr:last-child td {
   padding: 18px;
   background: var(--surface-soft);
   text-align: center;
+}
+
+.dropzone.is-dragover,
+.field.is-dragover .control-input[type="file"] {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.12);
 }
 
 .register-form-panel .compact-upload {

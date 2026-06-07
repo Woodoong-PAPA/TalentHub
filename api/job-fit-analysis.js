@@ -150,7 +150,7 @@ function normalizeResults(results, resumeIds) {
       resumeId: String(item.resumeId || "").trim(),
       score: Math.max(0, Math.min(100, Math.round(Number(item.score || 0)))),
       grade: ["A", "B", "C", "D", "E"].includes(item.grade) ? item.grade : "E",
-      comment: String(item.comment || "").trim(),
+      comment: sanitizeJobFitComment(String(item.comment || "").trim()),
       fulfilledDetails: Array.isArray(item.fulfilledDetails)
         ? item.fulfilledDetails.map((detail) => ({
           title: String(detail.title || "").trim(),
@@ -166,9 +166,21 @@ function normalizeResults(results, resumeIds) {
       evidence: Array.isArray(item.evidence)
         ? item.evidence.map((text) => String(text || "").trim()).filter(Boolean).slice(0, 5)
         : [],
-      recommendation: String(item.recommendation || "").trim()
+      recommendation: ""
     }))
     .filter((item) => resumeIds.has(item.resumeId));
+}
+
+function sanitizeJobFitComment(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  return text
+    .replace(/[^.!?。！？]*(?:합격|불합격|다음 단계|진행하|진행해야|면접|인터뷰|질문 구성|추가 자료|우선 검토|검토 대상|채용 액션)[^.!?。！？]*(?:[.!?。！？]|$)/g, "")
+    .trim();
 }
 
 async function callOpenAI(jdText, resumes) {
@@ -185,8 +197,10 @@ async function callOpenAI(jdText, resumes) {
     "후보자 이력서에 없는 사실은 만들지 않는다. 불확실한 항목은 missingDetails에 추가 확인 필요로 정리한다.",
     "fulfilledDetails는 JD 요구 중 충족되는 항목과, 이력서의 어떤 경력/성과/학력 맥락을 근거로 충족 판단했는지 작성한다.",
     "missingDetails는 JD 요구 중 이력서에서 직접 입증되지 않는 항목과 추가 확인이 필요한 이유를 작성한다.",
-    "comment는 보고서 첫 문단처럼 종합 판단을 1~2문장으로 작성한다.",
-    "recommendation은 채용담당자의 다음 검토 액션을 1문장으로 작성한다.",
+    "comment는 후보자가 해당 포지션에 적합한지 여부만 설명하는 종합 검토 의견으로 450~550자 분량 작성한다.",
+    "comment에는 후보자명, 핵심 충족 근거, 부족하거나 불확실한 부분, 포지션과의 종합 적합성 판단을 자연스럽게 포함한다.",
+    "comment와 recommendation에는 다음 단계를 진행하라, 합격시키라, 인터뷰를 하라, 추가 자료를 받아라 같은 직접적인 채용 액션 지시를 쓰지 않는다.",
+    "recommendation은 빈 문자열로 반환한다.",
     "점수는 0~100, 등급은 A/B/C/D/E로 차등 부여한다. 결과는 적합도 높은 순서로 반환한다.",
     "",
     "직무기술서:",
