@@ -1266,7 +1266,7 @@ tr:last-child td {
 }
 
 .pool-filter-strip {
-  grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(150px, 190px));
+  grid-template-columns: minmax(240px, 1fr) repeat(4, minmax(140px, 190px));
 }
 
 .form-grid {

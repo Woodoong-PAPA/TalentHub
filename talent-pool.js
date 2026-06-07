@@ -601,7 +601,8 @@ const state = {
     query: "",
     status: "all",
     businessUnit: "all",
-    owner: "all"
+    owner: "all",
+    sortBy: "createdAt"
   },
   dashboardFilters: {
     organization: "all"
@@ -896,6 +897,24 @@ function sortCandidatesByCreatedAt(candidates) {
     dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) ||
     String(b.id).localeCompare(String(a.id))
   );
+}
+
+function normalizePoolSortBy(value) {
+  return ["createdAt", "updatedAt"].includes(value) ? value : "createdAt";
+}
+
+function sortPoolCandidates(candidates) {
+  const sortBy = normalizePoolSortBy(state.poolFilters.sortBy);
+
+  if (sortBy === "updatedAt") {
+    return [...candidates].sort((a, b) =>
+      dateSortValue(b.updatedAt || b.createdAt) - dateSortValue(a.updatedAt || a.createdAt) ||
+      dateSortValue(b.createdAt) - dateSortValue(a.createdAt) ||
+      String(b.id).localeCompare(String(a.id))
+    );
+  }
+
+  return sortCandidatesByCreatedAt(candidates);
 }
 
 function ensureAuditLogIds() {
@@ -3985,7 +4004,8 @@ function candidateTable(candidates) {
 
 function renderPool() {
   const owners = [...new Set(getVisibleCandidates().map((candidate) => candidate.owner))];
-  const candidates = sortCandidatesByCreatedAt(getFilteredCandidates());
+  const candidates = sortPoolCandidates(getFilteredCandidates());
+  const sortBy = normalizePoolSortBy(state.poolFilters.sortBy);
   const businessUnits = [...new Set(getVisibleCandidates().map(getCandidateBusinessUnit))]
     .filter(Boolean)
     .sort((a, b) => {
@@ -4009,6 +4029,10 @@ function renderPool() {
         <option value="all">전체 담당자</option>
         ${owners.map((owner) => `<option value="${owner}" ${state.poolFilters.owner === owner ? "selected" : ""}>${owner}</option>`).join("")}
       </select>
+      <select class="control-select" id="pool-sort">
+        <option value="createdAt" ${sortBy === "createdAt" ? "selected" : ""}>등록일 순</option>
+        <option value="updatedAt" ${sortBy === "updatedAt" ? "selected" : ""}>수정일 순</option>
+      </select>
     </div>
     <div id="pool-table-content">
       ${candidateTable(candidates)}
@@ -4018,7 +4042,7 @@ function renderPool() {
 
 function renderPoolTable() {
   const tableContent = $("#pool-table-content");
-  const candidates = sortCandidatesByCreatedAt(getFilteredCandidates());
+  const candidates = sortPoolCandidates(getFilteredCandidates());
 
   if (!tableContent) {
     renderPool();
@@ -12964,6 +12988,7 @@ function updatePoolFilters() {
   state.poolFilters.status = $("#pool-status")?.value || "all";
   state.poolFilters.businessUnit = $("#pool-business-unit")?.value || "all";
   state.poolFilters.owner = $("#pool-owner")?.value || "all";
+  state.poolFilters.sortBy = normalizePoolSortBy($("#pool-sort")?.value || state.poolFilters.sortBy);
   persistState();
   renderPoolTable();
 }
@@ -15924,7 +15949,7 @@ function bindEvents() {
   });
 
   document.addEventListener("input", (event) => {
-    if (["pool-query", "pool-status", "pool-business-unit", "pool-owner"].includes(event.target.id)) {
+    if (["pool-query", "pool-status", "pool-business-unit", "pool-owner", "pool-sort"].includes(event.target.id)) {
       updatePoolFilters();
     }
 
@@ -16059,7 +16084,7 @@ function bindEvents() {
       return;
     }
 
-    if (["pool-status", "pool-business-unit", "pool-owner"].includes(event.target.id)) {
+    if (["pool-status", "pool-business-unit", "pool-owner", "pool-sort"].includes(event.target.id)) {
       updatePoolFilters();
     }
 
