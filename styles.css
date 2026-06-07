@@ -850,6 +850,14 @@ tr:last-child td {
   display: block;
 }
 
+.candidate-birth-line {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .role-cell {
   color: var(--text);
   line-height: 1.45;
@@ -863,7 +871,8 @@ tr:last-child td {
 }
 
 .summary-cell strong,
-.summary-cell span {
+.summary-cell span,
+.summary-cell .summary-line {
   display: block;
 }
 
@@ -875,11 +884,16 @@ tr:last-child td {
   white-space: nowrap;
 }
 
-.summary-cell span {
+.summary-cell span,
+.summary-cell .summary-line {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.summary-cell .summary-line:first-child {
+  margin-top: 0;
 }
 
 .member-identity {
@@ -1144,6 +1158,10 @@ tr:last-child td {
 .filter-strip {
   grid-template-columns: minmax(240px, 1fr) repeat(2, minmax(150px, 190px));
   margin-bottom: 16px;
+}
+
+.pool-filter-strip {
+  grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(150px, 190px));
 }
 
 .form-grid {
@@ -2152,6 +2170,11 @@ tr:last-child td {
   text-align: center;
 }
 
+.register-form-panel .compact-upload {
+  min-height: 118px;
+  padding: 12px;
+}
+
 .dropzone input {
   width: 100%;
   max-width: 320px;
@@ -2179,6 +2202,12 @@ tr:last-child td {
   background: var(--surface);
   font-size: 12px;
   text-align: center;
+}
+
+.register-form-panel .photo-preview {
+  width: 58px;
+  height: 58px;
+  font-size: 11px;
 }
 
 .photo-preview img {
@@ -3545,7 +3574,7 @@ tr:last-child td {
 .record-mainline {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -3553,12 +3582,7 @@ tr:last-child td {
   color: var(--text);
   font-size: 15px;
   line-height: 1.45;
-}
-
-.record-mainline span {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 12px;
+  white-space: normal;
 }
 
 .record-subline {

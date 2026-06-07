@@ -98,7 +98,6 @@ const POLICY_CHAT_MAX_CONTEXTS = 4;
 const POLICY_CHAT_MAX_MESSAGES = 20;
 const POLICY_CHAT_MAX_CONTEXT_CHARS = 1800;
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
-const VISIT_SESSION_KEY = "samsung-talent-pool-visit-counted";
 const REMEMBERED_LOGIN_EMAIL_KEY = "samsung-talent-pool-remembered-email-v1";
 const SCREENING_STAGE_LABELS = {
   reception: "지원자 접수",
@@ -558,6 +557,7 @@ const state = {
   poolFilters: {
     query: "",
     status: "all",
+    businessUnit: "all",
     owner: "all"
   },
   dashboardFilters: {
@@ -759,12 +759,6 @@ function saveVisitStats(stats) {
 function recordPageVisit() {
   try {
     const today = getTodayDate();
-    const sessionKey = `${VISIT_SESSION_KEY}:${today}`;
-
-    if (window.sessionStorage.getItem(sessionKey)) {
-      return;
-    }
-
     const stats = loadVisitStats();
     stats[today] = Number(stats[today] || 0) + 1;
 
@@ -775,7 +769,6 @@ function recordPageVisit() {
     });
 
     saveVisitStats(stats);
-    window.sessionStorage.setItem(sessionKey, "1");
   } catch (error) {
     console.warn("Visit could not be recorded.", error);
   }
@@ -786,14 +779,32 @@ function getVisitStatsSummary() {
   const today = getTodayDate();
   const lastSevenDays = Array.from({ length: 7 }, (_, index) => dateDaysAgo(index));
   const previousSevenDays = Array.from({ length: 7 }, (_, index) => dateDaysAgo(index + 7));
-  const weekTotal = lastSevenDays.reduce((sum, date) => sum + Number(stats[date] || 0), 0);
-  const previousWeekTotal = previousSevenDays.reduce((sum, date) => sum + Number(stats[date] || 0), 0);
+  const auditVisitCounts = getLoginAuditVisitCounts();
+  const getDateCount = (date) => Math.max(Number(stats[date] || 0), Number(auditVisitCounts[date] || 0));
+  const weekTotal = lastSevenDays.reduce((sum, date) => sum + getDateCount(date), 0);
+  const previousWeekTotal = previousSevenDays.reduce((sum, date) => sum + getDateCount(date), 0);
 
   return {
-    today: Number(stats[today] || 0),
+    today: getDateCount(today),
     weekTotal,
     weekDelta: weekTotal - previousWeekTotal
   };
+}
+
+function getLoginAuditVisitCounts() {
+  return state.auditLogs.reduce((counts, log) => {
+    if (String(log.action || "") !== "로그인") {
+      return counts;
+    }
+
+    const date = String(log.time || "").slice(0, 10);
+
+    if (date) {
+      counts[date] = Number(counts[date] || 0) + 1;
+    }
+
+    return counts;
+  }, {});
 }
 
 function dateSortValue(value) {
@@ -2538,41 +2549,96 @@ function formatYearMonth(value) {
   return [yearText, monthText].filter(Boolean).join(" ");
 }
 
-function formatPeriod(start, end) {
-  const startText = formatYearMonth(start);
-  const endText = end === "현재" ? "현재" : formatYearMonth(end);
+function formatDisplayPeriodPart(value) {
+  const normalized = String(value || "").trim();
 
-  if (!startText && !endText) {
-    return "-";
+  if (!normalized || normalized === "0" || normalized === "00" || normalized === "0000-00") {
+    return "";
   }
 
-  return `${startText || "-"} ~ ${endText || "-"}`;
+  if (normalized === "현재") {
+    return "현재";
+  }
+
+  const match = normalized.match(/^(\d{2,4})(?:[-./년\s]*(\d{1,2}))?/);
+
+  if (!match) {
+    return "";
+  }
+
+  const year = match[1];
+  const month = match[2] && match[2] !== "0" && match[2] !== "00"
+    ? match[2].padStart(2, "0")
+    : "";
+  const yearText = `'${year.slice(-2)}`;
+
+  return month ? `${yearText}.${month}` : yearText;
+}
+
+function formatDisplayPeriod(start, end) {
+  const startText = formatDisplayPeriodPart(start);
+  const endText = String(end || "").trim() === "현재" ? "현재" : formatDisplayPeriodPart(end);
+
+  if (!startText || !endText) {
+    return "";
+  }
+
+  return `(${startText}~${endText})`;
+}
+
+function formatSingleDisplayPeriod(value) {
+  const text = formatDisplayPeriodPart(value);
+  return text && text !== "현재" ? `(${text})` : "";
+}
+
+function formatPeriod(start, end) {
+  return formatDisplayPeriod(start, end);
+}
+
+function formatEducationDegreeShort(degree) {
+  const normalized = String(degree || "").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.includes("박")) return "박";
+  if (normalized.includes("석")) return "석";
+  if (normalized.includes("학")) return "학";
+  return normalized;
+}
+
+function formatEducationMainLine(item, options = {}) {
+  const degree = formatEducationDegreeShort(item?.degree);
+  const title = [
+    degree ? `${degree}) ${item.school || ""}`.trim() : item?.school,
+    item?.major
+  ].filter(Boolean).join(", ");
+  const period = options.useGraduationOnly
+    ? formatSingleDisplayPeriod(item?.end)
+    : formatDisplayPeriod(item?.start, item?.end);
+
+  return [title, period].filter(Boolean).join(" ");
+}
+
+function formatCareerMainLine(item) {
+  const title = uniqueTextParts([item?.company, item?.rank, item?.position]).join(", ");
+  const period = formatDisplayPeriod(item?.start, item?.end);
+  return [title, period].filter(Boolean).join(" ");
 }
 
 function formatEducationSummary(candidate) {
-  const education = getPrimaryEducation(candidate);
-
-  if (!education) {
-    return { title: "-", meta: "학력 정보 없음" };
-  }
-
-  return {
-    title: `${education.degree} · ${education.school}`,
-    meta: `${education.major} · ${formatPeriod(education.start, education.end)}`
-  };
+  return (candidate.education || [])
+    .map((item) => formatEducationMainLine(item, { useGraduationOnly: true }))
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function formatCareerSummary(candidate) {
-  const career = getPrimaryCareer(candidate);
-
-  if (!career) {
-    return { title: "-", meta: "경력 정보 없음" };
-  }
-
-  return {
-    title: `${career.company} · ${career.rank}`,
-    meta: `${career.position} · ${formatPeriod(career.start, career.end)}`
-  };
+  return (candidate.career || [])
+    .map(formatCareerMainLine)
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function showToast(message) {
@@ -2996,9 +3062,10 @@ function getFilteredCandidates() {
 
     const queryMatch = !query || text.includes(query);
     const statusMatch = state.poolFilters.status === "all" || candidate.status === state.poolFilters.status;
+    const businessUnitMatch = state.poolFilters.businessUnit === "all" || getCandidateBusinessUnit(candidate) === state.poolFilters.businessUnit;
     const ownerMatch = state.poolFilters.owner === "all" || candidate.owner === state.poolFilters.owner;
 
-    return queryMatch && statusMatch && ownerMatch;
+    return queryMatch && statusMatch && businessUnitMatch && ownerMatch;
   });
 }
 
@@ -3344,17 +3411,19 @@ function candidateTable(candidates) {
                 <div class="candidate-name candidate-name-compact">
                   <span>
                     <button class="candidate-name-button" type="button" data-select-candidate="${candidate.id}">${escapeHtml(candidate.name)}</button>
-                    <span>${escapeHtml(formatBirthAge(candidate))}</span>
+                    <span class="candidate-birth-line">${escapeHtml(formatBirthAge(candidate))}</span>
                   </span>
                 </div>
               </td>
               <td class="summary-cell">
-                <strong>${escapeHtml(educationSummary.title)}</strong>
-                <span>${escapeHtml(educationSummary.meta)}</span>
+                ${educationSummary.length
+                  ? educationSummary.map((line) => `<span class="summary-line">${escapeHtml(line)}</span>`).join("")
+                  : `<span class="muted-text">학력 정보 없음</span>`}
               </td>
               <td class="summary-cell">
-                <strong>${escapeHtml(careerSummary.title)}</strong>
-                <span>${escapeHtml(careerSummary.meta)}</span>
+                ${careerSummary.length
+                  ? careerSummary.map((line) => `<span class="summary-line">${escapeHtml(line)}</span>`).join("")
+                  : `<span class="muted-text">경력 정보 없음</span>`}
               </td>
               <td class="role-cell">${escapeHtml(candidate.role)}</td>
               <td>${escapeHtml(candidate.organization || "사업부 미입력")}</td>
@@ -3374,13 +3443,24 @@ function candidateTable(candidates) {
 function renderPool() {
   const owners = [...new Set(getVisibleCandidates().map((candidate) => candidate.owner))];
   const candidates = sortCandidatesByCreatedAt(getFilteredCandidates());
+  const businessUnits = [...new Set(getVisibleCandidates().map(getCandidateBusinessUnit))]
+    .filter(Boolean)
+    .sort((a, b) => {
+      const indexA = BUSINESS_UNITS.indexOf(a);
+      const indexB = BUSINESS_UNITS.indexOf(b);
+      return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB) || a.localeCompare(b, "ko");
+    });
 
   $("#pool-content").innerHTML = `
-    <div class="filter-strip">
+    <div class="filter-strip pool-filter-strip">
       <input class="control-input" id="pool-query" type="search" value="${escapeHtml(state.poolFilters.query)}" placeholder="이름, 회사, 기술, 태그" />
       <select class="control-select" id="pool-status">
         <option value="all">전체 상태</option>
         ${STATUS_ORDER.map((status) => `<option value="${status}" ${state.poolFilters.status === status ? "selected" : ""}>${STATUS_LABELS[status]}</option>`).join("")}
+      </select>
+      <select class="control-select" id="pool-business-unit">
+        <option value="all">전체 사업부</option>
+        ${businessUnits.map((unit) => `<option value="${escapeHtml(unit)}" ${state.poolFilters.businessUnit === unit ? "selected" : ""}>${escapeHtml(unit)}</option>`).join("")}
       </select>
       <select class="control-select" id="pool-owner">
         <option value="all">전체 담당자</option>
@@ -4730,9 +4810,17 @@ function renderRegister() {
     <div class="form-grid">
       <form class="form-panel register-form-panel" id="register-form">
         <div class="field-grid">
-          <div class="field full">
+          <div class="field">
+            <label for="profile-photo">얼굴 프로필 사진</label>
+            <div class="dropzone profile-upload compact-upload">
+              <input id="profile-photo" name="photo" type="file" accept="image/*" />
+              <div id="photo-preview" class="photo-preview">사진 미리보기</div>
+              <span>상세 프로필 상단에 표시됩니다.</span>
+            </div>
+          </div>
+          <div class="field">
             <label for="resume-file">이력서 파일</label>
-            <div class="dropzone">
+            <div class="dropzone compact-upload">
               <input id="resume-file" name="resume" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
               <span id="resume-parse-status" class="form-help">이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.</span>
             </div>
@@ -4742,11 +4830,7 @@ function renderRegister() {
             <input class="control-input" id="candidate-name" name="name" autocomplete="off" />
           </div>
           <div class="field">
-            <label for="candidate-company">현재/최근 회사</label>
-            <input class="control-input" id="candidate-company" name="company" autocomplete="organization" />
-          </div>
-          <div class="field">
-            <label for="candidate-role">직무</label>
+            <label for="candidate-role">핵심 역량</label>
             <input class="control-input" id="candidate-role" name="role" autocomplete="off" />
           </div>
           <div class="field">
@@ -4791,14 +4875,6 @@ function renderRegister() {
           <div class="field">
             <label for="candidate-reference-url">기타 참고 URL</label>
             <input class="control-input" id="candidate-reference-url" name="referenceUrl" type="url" autocomplete="url" />
-          </div>
-          <div class="field full">
-            <label for="profile-photo">얼굴 프로필 사진</label>
-            <div class="dropzone profile-upload">
-              <input id="profile-photo" name="photo" type="file" accept="image/*" />
-              <div id="photo-preview" class="photo-preview">사진 미리보기</div>
-              <span>업로드한 사진은 상세 프로필 상단에 표시됩니다.</span>
-            </div>
           </div>
           <div class="field full">
             <label for="candidate-skills">주요 역량/성과</label>
@@ -4891,11 +4967,11 @@ function renderRegisterCareerRecord(item = {}, index = 0) {
           <input class="control-input" id="register-career-company-${index}" name="register-career-company-${index}" value="${inputValue(item.company)}" />
         </div>
         <div class="field">
-          <label for="register-career-rank-${index}">직급</label>
+          <label for="register-career-rank-${index}">직급/직책</label>
           <input class="control-input" id="register-career-rank-${index}" name="register-career-rank-${index}" value="${inputValue(item.rank)}" />
         </div>
         <div class="field">
-          <label for="register-career-position-${index}">직책</label>
+          <label for="register-career-position-${index}">소속부서</label>
           <input class="control-input" id="register-career-position-${index}" name="register-career-position-${index}" value="${inputValue(item.position)}" />
         </div>
         <div class="field">
@@ -4910,7 +4986,7 @@ function renderRegisterCareerRecord(item = {}, index = 0) {
           <label class="inline-check"><input type="checkbox" name="register-career-current-${index}" ${isCurrent ? "checked" : ""} /> 현재 재직 중</label>
         </div>
         <div class="field full">
-          <label for="register-career-achievements-${index}">직장에서의 주요성과/실적</label>
+          <label for="register-career-achievements-${index}">주요성과/실적</label>
           <textarea class="control-textarea" id="register-career-achievements-${index}" name="register-career-achievements-${index}">${inputValue(item.achievements)}</textarea>
         </div>
       </div>
@@ -6967,10 +7043,7 @@ function formatDetailCareerLine(candidate) {
     return "";
   }
 
-  const careerTitle = uniqueTextParts([career.company, career.rank, career.position]).join(", ");
-  const period = formatHeaderPeriod(career.start, career.end);
-
-  return [careerTitle, period].filter(Boolean).join(" ");
+  return formatCareerMainLine(career);
 }
 
 function formatDetailEducationLine(candidate) {
@@ -6980,13 +7053,7 @@ function formatDetailEducationLine(candidate) {
     return "";
   }
 
-  const educationTitle = [
-    `${education.degree ? `${education.degree}) ` : ""}${education.school || ""}`.trim(),
-    education.major
-  ].filter(Boolean).join(", ");
-  const period = formatHeaderPeriod(education.start, education.end);
-
-  return [educationTitle, period].filter(Boolean).join(" ");
+  return formatEducationMainLine(education);
 }
 
 function uniqueTextParts(parts) {
@@ -7005,39 +7072,11 @@ function uniqueTextParts(parts) {
 }
 
 function formatHeaderPeriod(start, end) {
-  const startText = formatHeaderPeriodPart(start);
-  const endText = String(end || "").trim() === "현재" ? "현재" : formatHeaderPeriodPart(end);
-
-  if (!startText && !endText) {
-    return "";
-  }
-
-  return `('${startText || ""}~${endText || ""})`;
+  return formatDisplayPeriod(start, end);
 }
 
 function formatHeaderPeriodPart(value) {
-  const normalized = String(value || "").trim();
-
-  if (!normalized || normalized === "0" || normalized === "00" || normalized === "0000-00") {
-    return "";
-  }
-
-  if (normalized === "현재") {
-    return "현재";
-  }
-
-  const match = normalized.match(/^(\d{2,4})(?:[-./](\d{1,2}))?/);
-
-  if (!match) {
-    return normalized;
-  }
-
-  const year = match[1].slice(-2);
-  const month = match[2] && match[2] !== "0" && match[2] !== "00"
-    ? match[2].padStart(2, "0")
-    : "";
-
-  return month ? `${year}.${month}` : year;
+  return formatDisplayPeriodPart(value).replace(/^'/, "");
 }
 
 function renderDetailStatusControl(candidate) {
@@ -7406,8 +7445,7 @@ function renderEducationTab(candidate) {
       ${candidate.education.map((item) => `
         <article class="detail-record-card record-list-item">
           <div class="record-mainline">
-            <strong>${escapeHtml(`${item.degree ? `${item.degree}) ` : ""}${[item.school, item.major].filter(Boolean).join(", ")}`.trim())}</strong>
-            <span>${escapeHtml(formatPeriod(item.start, item.end))}</span>
+            <strong>${escapeHtml(formatEducationMainLine(item))}</strong>
           </div>
           ${item.affiliation ? `<div class="record-subline"><span>${escapeHtml(item.affiliation)}</span></div>` : ""}
         </article>
@@ -7426,14 +7464,11 @@ function renderCareerTab(candidate) {
       ${candidate.career.map((item) => `
         <article class="detail-record-card record-list-item">
           <div class="record-mainline">
-            <strong>${escapeHtml([item.company, item.rank || item.position].filter(Boolean).join(", "))}</strong>
-            <span>${escapeHtml(formatPeriod(item.start, item.end))}</span>
+            <strong>${escapeHtml(formatCareerMainLine(item))}</strong>
           </div>
-          <div class="record-subline">
-            ${[item.position, item.country, item.end === "현재" ? "현재 재직" : "경력"].filter(Boolean).map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
-          </div>
+          ${item.country ? `<div class="record-subline"><span>${escapeHtml(item.country)}</span></div>` : ""}
           ${item.achievements ? `<div class="achievement-box">
-            <span>직장에서의 주요성과/실적</span>
+            <span>주요성과/실적</span>
             <p>${escapeHtml(item.achievements)}</p>
           </div>` : ""}
         </article>
@@ -7639,11 +7674,11 @@ function renderCareerEditRecord(item, index) {
           <input class="control-input" id="career-company-${index}" name="career-company-${index}" value="${inputValue(item.company)}" />
         </div>
         <div class="field">
-          <label for="career-rank-${index}">직급</label>
+          <label for="career-rank-${index}">직급/직책</label>
           <input class="control-input" id="career-rank-${index}" name="career-rank-${index}" value="${inputValue(item.rank)}" />
         </div>
         <div class="field">
-          <label for="career-position-${index}">직책</label>
+          <label for="career-position-${index}">소속부서</label>
           <input class="control-input" id="career-position-${index}" name="career-position-${index}" value="${inputValue(item.position)}" />
         </div>
         <div class="field">
@@ -7658,7 +7693,7 @@ function renderCareerEditRecord(item, index) {
           <label class="inline-check"><input type="checkbox" name="career-current-${index}" ${isCurrent ? "checked" : ""} /> 현재 재직 중</label>
         </div>
         <div class="field full">
-          <label for="career-achievements-${index}">직장에서의 주요성과/실적</label>
+          <label for="career-achievements-${index}">주요성과/실적</label>
           <textarea class="control-textarea" id="career-achievements-${index}" name="career-achievements-${index}">${inputValue(item.achievements)}</textarea>
         </div>
       </div>
@@ -9372,7 +9407,6 @@ function hasParsedResumeValues(parsed) {
 function registerFormHasEnteredValues() {
   const fields = [
     "#candidate-name",
-    "#candidate-company",
     "#candidate-role",
     "#candidate-organization",
     "#candidate-owner",
@@ -9417,7 +9451,6 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   const currentCareerIsBlank = !collectRegisterCareerFromForm($("#register-form"), true).some(hasAnyRecordValue);
 
   setFieldValue("#candidate-name", parsed.name, overwrite);
-  setFieldValue("#candidate-company", parsed.company, overwrite);
   setFieldValue("#candidate-role", parsed.role, overwrite);
   setFieldValue("#candidate-birth-year", parsed.birthYear, overwrite);
   setFieldValue("#candidate-email", parsed.email, overwrite);
@@ -9943,7 +9976,6 @@ async function registerCandidate(eventOrForm) {
 
   const form = new FormData(formElement);
   const name = form.get("name").toString().trim();
-  const company = form.get("company").toString().trim();
   const role = form.get("role").toString().trim();
   const visibility = normalizeCandidateVisibility(form.get("visibility"));
   let organization = normalizeBusinessUnit(form.get("organization"));
@@ -9953,12 +9985,12 @@ async function registerCandidate(eventOrForm) {
   const birthYear = form.get("birthYear").toString().trim();
   const owner = normalizeOwnerSelection(form.get("owner"));
   const today = getTodayDate();
-  const candidateName = name || "이름 미입력";
-  const candidateCompany = company || "미입력";
-  const candidateRole = role || "미입력";
 
   const education = collectRegisterEducationFromForm(formElement);
   const career = collectRegisterCareerFromForm(formElement);
+  const candidateName = name || "이름 미입력";
+  const candidateCompany = career[0]?.company || "미입력";
+  const candidateRole = role || "미입력";
   const skills = form
     .get("skills")
     .toString()
@@ -10060,6 +10092,7 @@ async function registerCandidate(eventOrForm) {
 function updatePoolFilters() {
   state.poolFilters.query = $("#pool-query")?.value || "";
   state.poolFilters.status = $("#pool-status")?.value || "all";
+  state.poolFilters.businessUnit = $("#pool-business-unit")?.value || "all";
   state.poolFilters.owner = $("#pool-owner")?.value || "all";
   persistState();
   renderPoolTable();
@@ -11159,6 +11192,7 @@ async function handleLoginSubmit(form) {
   }
 
   member.lastLoginAt = getTimestampText();
+  recordPageVisit();
   setRememberedLoginEmail(shouldRememberEmail ? email : "");
   state.currentUserId = member.id;
   state.authMessage = "";
@@ -12335,7 +12369,7 @@ function bindEvents() {
   });
 
   document.addEventListener("input", (event) => {
-    if (["pool-query", "pool-status", "pool-owner"].includes(event.target.id)) {
+    if (["pool-query", "pool-status", "pool-business-unit", "pool-owner"].includes(event.target.id)) {
       updatePoolFilters();
     }
 
@@ -12380,7 +12414,7 @@ function bindEvents() {
       updateScreeningBusinessUnitFilter(event.target.value);
     }
 
-    if (["pool-status", "pool-owner"].includes(event.target.id)) {
+    if (["pool-status", "pool-business-unit", "pool-owner"].includes(event.target.id)) {
       updatePoolFilters();
     }
 
@@ -12475,7 +12509,9 @@ function bindEvents() {
 async function initializeApp() {
   restorePersistedState();
   ensureMemberDefaults();
-  recordPageVisit();
+  if (isAuthenticated()) {
+    recordPageVisit();
+  }
   bindEvents();
 
   try {
