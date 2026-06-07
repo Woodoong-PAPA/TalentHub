@@ -702,7 +702,7 @@ table {
 }
 
 .candidate-table {
-  min-width: 1260px;
+  min-width: 1240px;
   table-layout: fixed;
 }
 
@@ -730,7 +730,7 @@ table {
   width: 280px;
 }
 
-.col-role {
+.col-competency {
   width: 220px;
 }
 
@@ -755,6 +755,10 @@ td {
 .candidate-table th,
 .candidate-table td {
   border-right: 1px solid var(--line);
+}
+
+.candidate-table tbody tr {
+  height: 96px;
 }
 
 .candidate-table th:last-child,
@@ -868,13 +872,13 @@ tr:last-child td {
 .role-cell {
   color: var(--text);
   line-height: 1.45;
-  white-space: normal;
-  word-break: keep-all;
+  white-space: nowrap;
 }
 
 .summary-cell {
-  white-space: normal;
-  word-break: keep-all;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  white-space: nowrap;
 }
 
 .summary-cell strong,
@@ -893,14 +897,28 @@ tr:last-child td {
 
 .summary-cell span,
 .summary-cell .summary-line {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  margin-top: 0;
+  color: var(--text);
+  font-size: inherit;
+  line-height: 1.55;
+  white-space: nowrap;
 }
 
 .summary-cell .summary-line:first-child {
   margin-top: 0;
+}
+
+.summary-scroll {
+  display: grid;
+  max-height: calc(1.55em * 3);
+  gap: 0;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.summary-scroll .muted-text {
+  color: var(--muted);
 }
 
 .member-identity {
@@ -2602,9 +2620,12 @@ tr:last-child td {
   box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.12);
 }
 
-.register-form-panel .compact-upload {
-  min-height: 118px;
+.register-form-panel .compact-upload,
+.edit-form .compact-upload {
+  min-height: 126px;
   padding: 12px;
+  align-content: center;
+  gap: 8px;
 }
 
 .dropzone input {
@@ -2636,9 +2657,10 @@ tr:last-child td {
   text-align: center;
 }
 
-.register-form-panel .photo-preview {
-  width: 58px;
-  height: 58px;
+.register-form-panel .photo-preview,
+.edit-form .compact-upload .photo-preview {
+  width: 50px;
+  height: 50px;
   font-size: 11px;
 }
 

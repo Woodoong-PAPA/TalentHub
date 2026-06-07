@@ -608,6 +608,7 @@ const state = {
   trendingMailError: "",
   trendingMailStatus: "",
   registerExtractedPhotoUrl: "",
+  editExtractedPhotoUrl: "",
   remoteSyncStatus: REMOTE_SYNC_ENABLED ? "대기" : "로컬",
   auditLogs: [
     { actor: "이지원", action: "후보자 상세 조회", resource: "김도현", purpose: "DS 공정 AI 후보 검토", time: "2026-06-04 09:18" },
@@ -907,6 +908,7 @@ function normalizeCandidate(candidate) {
     nationality: "",
     linkedinUrl: "",
     referenceUrl: "",
+    attachments: [],
     education: [],
     career: [],
     skills: [],
@@ -925,6 +927,9 @@ function normalizeCandidate(candidate) {
   normalized.createdAt = inferCreatedAt(normalized);
   normalized.updatedAt = normalized.updatedAt || normalized.createdAt;
   normalized.age = calculateAge(normalized.birthYear);
+  normalized.attachments = Array.isArray(normalized.attachments)
+    ? normalized.attachments.filter((attachment) => attachment && (attachment.name || attachment.dataUrl))
+    : [];
   normalized.education = (normalized.education || []).map(normalizeEducationRecord).filter(hasAnyRecordValue);
   normalized.interviews = Array.isArray(normalized.interviews)
     ? normalized.interviews.map(normalizeInterviewRecord).filter(Boolean)
@@ -2604,6 +2609,7 @@ function startCandidateEdit() {
 
   if (!state.isEditingCandidate) {
     state.editSnapshot = structuredClone(candidate);
+    state.editExtractedPhotoUrl = "";
   }
 
   state.isEditingCandidate = true;
@@ -2618,6 +2624,7 @@ function discardCandidateEditDraft() {
 
   state.editSnapshot = null;
   state.isEditingCandidate = false;
+  state.editExtractedPhotoUrl = "";
 }
 
 function getStatusChip(status) {
@@ -3519,6 +3526,16 @@ function renderTopViewedProfiles(items) {
   `;
 }
 
+function renderCandidateSummaryScroll(lines, emptyText) {
+  return `
+    <div class="summary-scroll" tabindex="0">
+      ${lines.length
+        ? lines.map((line) => `<span class="summary-line">${escapeHtml(line)}</span>`).join("")
+        : `<span class="muted-text">${escapeHtml(emptyText)}</span>`}
+    </div>
+  `;
+}
+
 function candidateTable(candidates) {
   if (!candidates.length) {
     return `<div class="empty-state">표시할 후보자가 없습니다.</div>`;
@@ -3532,7 +3549,7 @@ function candidateTable(candidates) {
           <col class="col-name" />
           <col class="col-education" />
           <col class="col-career" />
-          <col class="col-role" />
+          <col class="col-competency" />
           <col class="col-status" />
           <col class="col-owner" />
           <col class="col-actions" />
@@ -3543,7 +3560,7 @@ function candidateTable(candidates) {
             <th>후보자 이름</th>
             <th>학력</th>
             <th>경력</th>
-            <th>직무</th>
+            <th>핵심역량</th>
             <th>사업부</th>
             <th>담당자</th>
             <th>관리</th>
@@ -3553,6 +3570,7 @@ function candidateTable(candidates) {
           ${candidates.map((candidate) => {
             const educationSummary = formatEducationSummary(candidate);
             const careerSummary = formatCareerSummary(candidate);
+            const competencyLines = [candidate.role || candidate.skills?.[0] || ""].filter(Boolean);
 
             return `
             <tr>
@@ -3566,16 +3584,12 @@ function candidateTable(candidates) {
                 </div>
               </td>
               <td class="summary-cell">
-                ${educationSummary.length
-                  ? educationSummary.map((line) => `<span class="summary-line">${escapeHtml(line)}</span>`).join("")
-                  : `<span class="muted-text">학력 정보 없음</span>`}
+                ${renderCandidateSummaryScroll(educationSummary, "학력 정보 없음")}
               </td>
               <td class="summary-cell">
-                ${careerSummary.length
-                  ? careerSummary.map((line) => `<span class="summary-line">${escapeHtml(line)}</span>`).join("")
-                  : `<span class="muted-text">경력 정보 없음</span>`}
+                ${renderCandidateSummaryScroll(careerSummary, "경력 정보 없음")}
               </td>
-              <td class="role-cell">${escapeHtml(candidate.role)}</td>
+              <td class="role-cell">${renderCandidateSummaryScroll(competencyLines, "핵심역량 미입력")}</td>
               <td>${escapeHtml(candidate.organization || "사업부 미입력")}</td>
               <td>${escapeHtml(candidate.owner)}</td>
               <td>
@@ -4961,7 +4975,7 @@ function renderRegister() {
       <form class="form-panel register-form-panel" id="register-form">
         <div class="field-grid">
           <div class="field">
-            <label for="profile-photo">얼굴 프로필 사진</label>
+            <label for="profile-photo">프로필 사진</label>
             <div class="dropzone profile-upload compact-upload">
               <input id="profile-photo" name="photo" type="file" accept="image/*" />
               <div id="photo-preview" class="photo-preview">사진 미리보기</div>
@@ -4969,7 +4983,7 @@ function renderRegister() {
             </div>
           </div>
           <div class="field">
-            <label for="resume-file">이력서 파일</label>
+            <label for="resume-file">이력서</label>
             <div class="dropzone compact-upload">
               <input id="resume-file" name="resume" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
               <span id="resume-parse-status" class="form-help">이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.</span>
@@ -4983,6 +4997,10 @@ function renderRegister() {
             <label for="candidate-role">핵심 역량</label>
             <input class="control-input" id="candidate-role" name="role" autocomplete="off" />
           </div>
+          <div class="field full">
+            <label for="candidate-skills">주요성과/실적</label>
+            <input class="control-input" id="candidate-skills" name="skills" autocomplete="off" />
+          </div>
           <div class="field">
             <label for="candidate-organization">사업부</label>
             <select class="control-select" id="candidate-organization" name="organization">
@@ -4994,7 +5012,6 @@ function renderRegister() {
             <select class="control-select" id="candidate-visibility" name="visibility">
               ${renderCandidateVisibilityOptions("all")}
             </select>
-            <span class="field-caption">사업부 공개는 해당 사업부 회원과 관리자/부문 담당자만 조회할 수 있습니다.</span>
           </div>
           <div class="field">
             <label for="candidate-owner">담당자</label>
@@ -5011,6 +5028,10 @@ function renderRegister() {
             <input class="control-input" id="candidate-age" name="age" type="text" readonly />
           </div>
           <div class="field">
+            <label for="candidate-nationality">국적</label>
+            <input class="control-input" id="candidate-nationality" name="nationality" autocomplete="off" />
+          </div>
+          <div class="field">
             <label for="candidate-email">이메일 주소</label>
             <input class="control-input" id="candidate-email" name="email" type="email" autocomplete="email" />
           </div>
@@ -5025,10 +5046,6 @@ function renderRegister() {
           <div class="field">
             <label for="candidate-reference-url">기타 참고 URL</label>
             <input class="control-input" id="candidate-reference-url" name="referenceUrl" type="url" autocomplete="url" />
-          </div>
-          <div class="field full">
-            <label for="candidate-skills">주요 역량/성과</label>
-            <input class="control-input" id="candidate-skills" name="skills" autocomplete="off" />
           </div>
           <div class="field full">
             <label for="candidate-summary">담당자 메모</label>
@@ -5053,6 +5070,19 @@ function renderRegister() {
           </div>
           <div class="edit-record-list" id="register-career-list">
             ${renderRegisterCareerRecord({}, 0)}
+          </div>
+        </section>
+
+        <section class="edit-section register-section">
+          <div class="edit-section-header">
+            <h5>기타 첨부파일</h5>
+          </div>
+          <div class="field">
+            <label for="candidate-other-attachments">개인정보동의서, 포트폴리오 등</label>
+            <div class="dropzone compact-upload">
+              <input id="candidate-other-attachments" name="otherAttachments" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" />
+              <span class="form-help">이력서 외 보관이 필요한 자료를 여러 개 첨부할 수 있습니다.</span>
+            </div>
           </div>
         </section>
 
@@ -5084,6 +5114,10 @@ function renderRegisterEducationRecord(item = {}, index = 0) {
         <div class="field">
           <label for="register-education-major-${index}">전공명</label>
           <input class="control-input" id="register-education-major-${index}" name="register-education-major-${index}" value="${inputValue(item.major)}" />
+        </div>
+        <div class="field">
+          <label for="register-education-affiliation-${index}">소속</label>
+          <input class="control-input" id="register-education-affiliation-${index}" name="register-education-affiliation-${index}" value="${inputValue(item.affiliation)}" />
         </div>
         <div class="field">
           <label for="register-education-start-${index}">학위 시작</label>
@@ -5454,8 +5488,8 @@ function isGenericCandidateName(value) {
     return true;
   }
 
-  return /^(프로필|이력서|지원서|경력기술서|자기소개서|소개서|resume|cv|profile|curriculumvitae|주소|연락처|이메일|휴대폰|전화번호|전화|국적|생년|생년월일|출생년도|미확인|이름미확인)$/i.test(text) ||
-    /(대학교|대학원|연구소|회사|팀|그룹|센터|부문|사업부|프로젝트|포트폴리오|경력|학력|요약|직무|기술|사항|첨부|파일|주소|연락처|이메일|휴대폰|전화|국적|생년|출생)/.test(text);
+  return /^(프로필|이력서|지원서|경력기술서|자기소개서|소개서|resume|cv|profile|curriculumvitae|주소|연락처|이메일|휴대폰|전화번호|전화|국적|생년|생년월일|출생년도|미확인|이름미확인|역할|직무|직급|직책|부서|소속|학위|학교|전공)$/i.test(text) ||
+    /(대학교|대학원|연구소|회사|팀|그룹|센터|부문|사업부|프로젝트|포트폴리오|경력|학력|요약|직무|기술|사항|첨부|파일|주소|연락처|이메일|휴대폰|전화|국적|생년|출생|역할|직급|직책|부서|소속|학위|학교|전공)/.test(text);
 }
 
 function normalizeInferredCandidateName(value) {
@@ -8637,7 +8671,8 @@ function renderCompetencySection(candidate) {
 function renderResumeAttachmentSection(candidate) {
   const attachments = [
     ...(Array.isArray(candidate.resumeAttachments) ? candidate.resumeAttachments : []),
-    candidate.resumeAttachment
+    candidate.resumeAttachment,
+    ...(Array.isArray(candidate.attachments) ? candidate.attachments : [])
   ].filter((attachment) => attachment?.dataUrl);
 
   if (!attachments.length) {
@@ -8880,16 +8915,33 @@ function renderCandidateEditForm(candidate) {
         <h5>기본 정보</h5>
         <div class="field-grid">
           <div class="field">
+            <label for="edit-photo">프로필 사진</label>
+            <div class="dropzone profile-upload compact-upload">
+              <input id="edit-photo" name="editPhoto" type="file" accept="image/*" />
+              <div id="edit-photo-preview" class="photo-preview">
+                ${candidate.photoUrl ? `<img src="${escapeHtml(candidate.photoUrl)}" alt="${escapeHtml(candidate.name)} 프로필 사진 미리보기" />` : "사진 미리보기"}
+              </div>
+              <span>새 사진을 선택하면 저장 후 상세 프로필에 반영됩니다.</span>
+            </div>
+          </div>
+          <div class="field">
+            <label for="edit-resume-file">이력서</label>
+            <div class="dropzone compact-upload">
+              <input id="edit-resume-file" name="editResume" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
+              <span id="edit-resume-parse-status" class="form-help">이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.</span>
+            </div>
+          </div>
+          <div class="field">
             <label for="edit-name">이름</label>
             <input class="control-input" id="edit-name" name="editName" value="${inputValue(candidate.name)}" />
           </div>
           <div class="field">
-            <label for="edit-company">현재/최근 회사</label>
-            <input class="control-input" id="edit-company" name="editCompany" value="${inputValue(candidate.company)}" />
-          </div>
-          <div class="field">
-            <label for="edit-role">직무</label>
+            <label for="edit-role">핵심 역량</label>
             <input class="control-input" id="edit-role" name="editRole" value="${inputValue(candidate.role)}" />
+          </div>
+          <div class="field full">
+            <label for="edit-skills">주요성과/실적</label>
+            <input class="control-input" id="edit-skills" name="editSkills" value="${inputValue(candidate.skills.join(", "))}" />
           </div>
           <div class="field">
             <label for="edit-organization">사업부</label>
@@ -8902,18 +8954,11 @@ function renderCandidateEditForm(candidate) {
             <select class="control-select" id="edit-visibility" name="editVisibility">
               ${renderCandidateVisibilityOptions(candidate.visibility)}
             </select>
-            <span class="field-caption">사업부 공개는 해당 사업부 회원과 관리자/부문 담당자만 조회할 수 있습니다.</span>
           </div>
           <div class="field">
             <label for="edit-owner">담당자</label>
             <select class="control-select" id="edit-owner" name="editOwner">
               ${renderOwnerOptions(candidate.owner, { includePlaceholder: true })}
-            </select>
-          </div>
-          <div class="field">
-            <label for="edit-status">상태</label>
-            <select class="control-select" id="edit-status" name="editStatus">
-              ${STATUS_ORDER.map((status) => `<option value="${status}" ${candidate.status === status ? "selected" : ""}>${STATUS_LABELS[status]}</option>`).join("")}
             </select>
           </div>
           <div class="field">
@@ -8945,21 +8990,7 @@ function renderCandidateEditForm(candidate) {
             <input class="control-input" id="edit-reference-url" name="editReferenceUrl" type="url" value="${inputValue(candidate.referenceUrl)}" />
           </div>
           <div class="field full">
-            <label for="edit-photo">얼굴 프로필 사진</label>
-            <div class="dropzone profile-upload">
-              <input id="edit-photo" name="editPhoto" type="file" accept="image/*" />
-              <div id="edit-photo-preview" class="photo-preview">
-                ${candidate.photoUrl ? `<img src="${escapeHtml(candidate.photoUrl)}" alt="${escapeHtml(candidate.name)} 프로필 사진 미리보기" />` : "사진 미리보기"}
-              </div>
-              <span>새 사진을 선택하면 저장 후 상세 프로필에 반영됩니다.</span>
-            </div>
-          </div>
-          <div class="field full">
-            <label for="edit-skills">주요 역량/성과</label>
-            <input class="control-input" id="edit-skills" name="editSkills" value="${inputValue(candidate.skills.join(", "))}" />
-          </div>
-          <div class="field full">
-            <label for="edit-summary">요약</label>
+            <label for="edit-summary">담당자 메모</label>
             <textarea class="control-textarea" id="edit-summary" name="editSummary">${inputValue(candidate.summary)}</textarea>
           </div>
         </div>
@@ -8970,7 +9001,7 @@ function renderCandidateEditForm(candidate) {
           <h5>학력 정보</h5>
           <button class="soft-button" type="button" data-add-education>학력 추가</button>
         </div>
-        <div class="edit-record-list">
+        <div class="edit-record-list" id="edit-education-list">
           ${education.map((item, index) => renderEducationEditRecord(item, index)).join("")}
         </div>
       </section>
@@ -8980,8 +9011,21 @@ function renderCandidateEditForm(candidate) {
           <h5>경력 정보</h5>
           <button class="soft-button" type="button" data-add-career>경력 추가</button>
         </div>
-        <div class="edit-record-list">
+        <div class="edit-record-list" id="edit-career-list">
           ${career.map((item, index) => renderCareerEditRecord(item, index)).join("")}
+        </div>
+      </section>
+
+      <section class="edit-section">
+        <div class="edit-section-header">
+          <h5>기타 첨부파일</h5>
+        </div>
+        <div class="field">
+          <label for="edit-other-attachments">개인정보동의서, 포트폴리오 등</label>
+          <div class="dropzone compact-upload">
+            <input id="edit-other-attachments" name="editOtherAttachments" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" />
+            <span class="form-help">새로 선택한 파일은 기존 첨부파일에 추가됩니다. 기존 첨부 ${candidate.attachments?.length || 0}개</span>
+          </div>
         </div>
       </section>
 
@@ -9142,45 +9186,13 @@ function validateCandidateEditForm(form) {
   const education = collectEducationFromForm(form, true).filter(hasAnyRecordValue);
   const career = collectCareerFromForm(form, true).filter(hasAnyRecordValue);
 
-  if (!getFormText(form, "editName")) {
-    errors.push("이름을 입력해주세요.");
-  }
-
-  if (!getFormText(form, "editRole")) {
-    errors.push("직무를 입력해주세요.");
-  }
-
-  if (!getFormText(form, "editOwner")) {
-    errors.push("담당자를 입력해주세요.");
-  }
-
-  if (!education.length) {
-    errors.push("학력 정보를 1개 이상 입력해주세요.");
-  }
-
   education.forEach((item, index) => {
-    const missing = ["degree", "school", "major", "start", "end"].filter((key) => !item[key]);
-
-    if (missing.length) {
-      errors.push(`학력 ${index + 1}의 학위, 학교명, 전공명, 시작/종료 시점을 모두 입력해주세요.`);
-    }
-
     if ((item.start && !isMonthValue(item.start)) || (item.end && !isMonthValue(item.end))) {
       errors.push(`학력 ${index + 1}의 기간은 년/월 형식으로 입력해주세요.`);
     }
   });
 
-  if (!career.length) {
-    errors.push("경력 정보를 1개 이상 입력해주세요.");
-  }
-
   career.forEach((item, index) => {
-    const missing = ["country", "company", "rank", "position", "start", "end", "achievements"].filter((key) => !item[key]);
-
-    if (missing.length) {
-      errors.push(`경력 ${index + 1}의 국가, 직장명, 직급, 직책, 기간, 주요성과를 모두 입력해주세요.`);
-    }
-
     if (item.start && !isMonthValue(item.start)) {
       errors.push(`경력 ${index + 1}의 시작 시점은 년/월 형식으로 입력해주세요.`);
     }
@@ -9207,12 +9219,16 @@ async function saveCandidateEdits(form, options = {}) {
 
   const formData = new FormData(form);
   const photoFile = formData.get("editPhoto");
+  const resumeFile = formData.get("editResume");
+  const otherAttachmentFiles = formData.getAll("editOtherAttachments").filter((file) => file && file.size);
   const skills = getFormText(form, "editSkills")
     .split(",")
     .map((skill) => skill.trim())
     .filter(Boolean);
   const name = getFormText(form, "editName") || candidate.name;
-  const company = getFormText(form, "editCompany") || candidate.company;
+  const education = collectEducationFromForm(form, options.preserveBlankRecords);
+  const career = collectCareerFromForm(form, options.preserveBlankRecords);
+  const company = career.find(hasAnyRecordValue)?.company || candidate.company;
 
   candidate.name = name;
   candidate.initials = `${name.slice(0, 1)}${name.slice(-1)}`;
@@ -9221,7 +9237,6 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.organization = normalizeBusinessUnit(getFormText(form, "editOrganization")) || candidate.organization;
   candidate.visibility = normalizeCandidateVisibility(getFormText(form, "editVisibility"));
   candidate.owner = normalizeOwnerSelection(getFormText(form, "editOwner")) || candidate.owner;
-  candidate.status = getFormText(form, "editStatus") || candidate.status;
   candidate.birthYear = getFormText(form, "editBirthYear");
   candidate.age = calculateAge(candidate.birthYear);
   candidate.nationality = getFormText(form, "editNationality");
@@ -9231,8 +9246,8 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.referenceUrl = getFormText(form, "editReferenceUrl");
   candidate.skills = skills.length ? skills : candidate.skills;
   candidate.summary = getFormText(form, "editSummary") || candidate.summary;
-  candidate.education = collectEducationFromForm(form, options.preserveBlankRecords);
-  candidate.career = collectCareerFromForm(form, options.preserveBlankRecords);
+  candidate.education = education;
+  candidate.career = career;
   candidate.years = estimateCareerYears(candidate.career);
   candidate.updatedAt = getTodayDate();
 
@@ -9242,6 +9257,35 @@ async function saveCandidateEdits(form, options = {}) {
     } catch (error) {
       console.warn("Profile photo could not be read.", error);
       showToast("사진 파일을 읽지 못했습니다. 다른 파일을 선택해주세요.");
+      return false;
+    }
+  } else if (state.editExtractedPhotoUrl) {
+    candidate.photoUrl = state.editExtractedPhotoUrl;
+  }
+
+  if (resumeFile && resumeFile.size) {
+    try {
+      candidate.resumeAttachment = {
+        name: resumeFile.name,
+        type: resumeFile.type || "application/octet-stream",
+        size: resumeFile.size,
+        uploadedAt: new Date().toISOString().slice(0, 10),
+        dataUrl: await readFileAsDataUrl(resumeFile)
+      };
+    } catch (error) {
+      console.warn("Resume attachment could not be read.", error);
+      showToast("이력서 첨부 파일을 저장하지 못했습니다. 다른 파일을 선택해주세요.");
+      return false;
+    }
+  }
+
+  if (otherAttachmentFiles.length) {
+    try {
+      const newAttachments = (await Promise.all(otherAttachmentFiles.map(attachmentFromFile))).filter(Boolean);
+      candidate.attachments = [...(candidate.attachments || []), ...newAttachments];
+    } catch (error) {
+      console.warn("Additional attachments could not be read.", error);
+      showToast("기타 첨부파일을 저장하지 못했습니다. 파일을 확인해주세요.");
       return false;
     }
   }
@@ -9263,6 +9307,7 @@ async function saveCandidateEdits(form, options = {}) {
   if (!options.keepEditing) {
     state.isEditingCandidate = false;
     state.editSnapshot = null;
+    state.editExtractedPhotoUrl = "";
   }
 
   render();
@@ -9904,6 +9949,7 @@ function collectRegisterEducationFromForm(formElement, preserveBlank = false) {
       degree: (formData.get(`register-education-degree-${index}`) || "").toString().trim(),
       school: (formData.get(`register-education-school-${index}`) || "").toString().trim(),
       major: (formData.get(`register-education-major-${index}`) || "").toString().trim(),
+      affiliation: (formData.get(`register-education-affiliation-${index}`) || "").toString().trim(),
       start: (formData.get(`register-education-start-${index}`) || "").toString().trim(),
       end: (formData.get(`register-education-end-${index}`) || "").toString().trim()
     }));
@@ -9982,6 +10028,24 @@ function setRegisterCareerRecords(records) {
 
   if (list) {
     list.innerHTML = items.map((item, index) => renderRegisterCareerRecord(item, index)).join("");
+  }
+}
+
+function setEditEducationRecords(records) {
+  const list = $("#edit-education-list");
+  const items = records.length ? records : [{}];
+
+  if (list) {
+    list.innerHTML = items.map((item, index) => renderEducationEditRecord(item, index)).join("");
+  }
+}
+
+function setEditCareerRecords(records) {
+  const list = $("#edit-career-list");
+  const items = records.length ? records : [{}];
+
+  if (list) {
+    list.innerHTML = items.map((item, index) => renderCareerEditRecord(item, index)).join("");
   }
 }
 
@@ -10497,6 +10561,27 @@ function extractSchoolNameFromEducationText(value) {
   return cleanParsedValue(school);
 }
 
+function removeSchoolAliasesFromText(value, school) {
+  let text = cleanParsedValue(value);
+  const aliases = [];
+
+  if (/^KAIST$/i.test(school || "") || /카이스트|KAIST/i.test(text)) {
+    aliases.push("KAIST", "카이스트");
+  }
+
+  if (school) {
+    aliases.push(school);
+  }
+
+  aliases
+    .filter(Boolean)
+    .forEach((alias) => {
+      text = text.replace(new RegExp(`\\(?${escapeRegExp(alias)}\\)?`, "gi"), " ");
+    });
+
+  return text.replace(/\s{2,}/g, " ").trim();
+}
+
 function extractMajorFromEducationText(value, school, degree) {
   const text = cleanParsedValue(value);
   const explicitMajor = cleanParsedValue(firstMatch(text, [
@@ -10508,11 +10593,7 @@ function extractMajorFromEducationText(value, school, degree) {
     return explicitMajor;
   }
 
-  let stripped = removePeriodText(text);
-
-  if (school) {
-    stripped = stripped.replace(new RegExp(escapeRegExp(school), "gi"), " ");
-  }
+  let stripped = removeSchoolAliasesFromText(removePeriodText(text), school);
 
   stripped = stripped
     .replace(/박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor/gi, " ")
@@ -10539,6 +10620,83 @@ function parseEducationLine(line) {
   const period = extractPeriodValues(body);
 
   return { degree, school, major, ...period };
+}
+
+function hasCareerCompanyKeyword(value) {
+  return /(미래로봇기술연구소|뉴로메카트로닉스|네이버클라우드|현대백화점|아모레퍼시픽|삼성전자|LG전자|NVIDIA|엔비디아|크래프톤|Bluehole|본엔젤스|[가-힣A-Za-z0-9.&+-]+(?:연구소|메카트로닉스|로보틱스|Robotics|Research|Technology|Technologies|Labs?|Studio|Group|전자|백화점|퍼시픽|SDS|모비스|Cloud|Inc\.?|Corp\.?))/i.test(value);
+}
+
+function hasCareerRoleKeyword(value) {
+  return /(대표|대표이사|연구원|책임연구원|선임연구원|수석연구원|디자이너|엔지니어|개발자|매니저|팀장|Lab장|센터장|부장|차장|과장|대리|사원|Associate|Designer|Engineer|Researcher|Manager|Director|Lead|Principal|Staff|팀|그룹|센터|Lab|Team|Department)/i.test(value);
+}
+
+function isCareerSectionHeader(line) {
+  return /^(?:상세\s*)?경력\s*(?:사항|정보)?|Professional Experience|Work Experience|Experience|Career$/i.test(cleanParsedValue(line));
+}
+
+function isCareerSectionBoundary(line) {
+  return /^(학력|Education|논문|특허|수상|기술|Skills|프로젝트|Project|자격|Certification|주요\s*성과|Awards?)/i.test(cleanParsedValue(line));
+}
+
+function buildCareerExtractionLines(lines) {
+  const extracted = [];
+  let inCareerSection = false;
+
+  const pushLine = (line) => {
+    const cleaned = cleanParsedValue(line);
+
+    if (cleaned && !extracted.includes(cleaned)) {
+      extracted.push(cleaned);
+    }
+  };
+
+  lines.forEach((line, index) => {
+    if (isCareerSectionHeader(line)) {
+      inCareerSection = true;
+      return;
+    }
+
+    if (inCareerSection && isCareerSectionBoundary(line)) {
+      inCareerSection = false;
+    }
+
+    const period = extractPeriodValues(line);
+    const companyLike = hasCareerCompanyKeyword(line);
+    const roleLike = hasCareerRoleKeyword(line);
+    const shouldExtract = (
+      /(경력|재직|근무|직장|Experience|Career|Work)/i.test(line) ||
+      (period.start && (companyLike || roleLike)) ||
+      (inCareerSection && (period.start || companyLike || roleLike))
+    ) && !/(대학교|대학원|University|College|학사|석사|박사|전공)/i.test(line);
+
+    if (!shouldExtract) {
+      return;
+    }
+
+    pushLine(line);
+
+    const previous = lines[index - 1] || "";
+    const next = lines[index + 1] || "";
+    const nextAfter = lines[index + 2] || "";
+
+    if (period.start && !companyLike && hasCareerCompanyKeyword(next)) {
+      pushLine(`${line} ${next}`);
+    }
+
+    if (companyLike && !period.start && extractPeriodValues(previous).start) {
+      pushLine(`${previous} ${line}`);
+    }
+
+    if (companyLike && !period.start && extractPeriodValues(next).start) {
+      pushLine(`${line} ${next}`);
+    }
+
+    if (companyLike && !period.start && !extractPeriodValues(next).start && extractPeriodValues(nextAfter).start) {
+      pushLine(`${line} ${next} ${nextAfter}`);
+    }
+  });
+
+  return extracted;
 }
 
 function stripCareerCountryPrefix(value) {
@@ -10591,7 +10749,7 @@ function parseCareerLine(line) {
 
   const company = cleanParsedValue(labeledValueFromLine(body, ["회사", "직장", "근무처", "Company"]) || firstMatch(body, [
     /(?:회사|직장|근무처)[:\s]+([가-힣A-Za-z0-9\s.&+-]+)/,
-    /([가-힣A-Za-z0-9.&+-]+(?:전자|백화점|퍼시픽|SDS|모비스|로보틱스|Robotics|Research|Cloud|hynix|ASML|Samsung|Naver|Kakao|Hyundai|Amorepacific|LG|SK|Inc\.?|Corp\.?|Labs?|Studio|Group|Korea))/i
+    /(미래로봇기술연구소|뉴로메카트로닉스|네이버클라우드|현대백화점|아모레퍼시픽|삼성전자|LG전자|NVIDIA|엔비디아|크래프톤|Bluehole|본엔젤스|[가-힣A-Za-z0-9.&+-]+(?:전자|백화점|퍼시픽|SDS|모비스|연구소|메카트로닉스|로보틱스|Robotics|Research|Technology|Technologies|Cloud|hynix|ASML|Samsung|Naver|Kakao|Hyundai|Amorepacific|LG|SK|Inc\.?|Corp\.?|Labs?|Studio|Group|Korea))/i
   ]));
   const position = cleanParsedValue(labeledValueFromLine(body, ["직책", "담당", "포지션", "Position"]) || firstMatch(body, [
     /(?:소속부서|부서|조직|직책|담당|포지션)[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
@@ -10649,6 +10807,11 @@ function extractBirthYear(text, lines = []) {
   return text.match(/(?:출생|생년|Birth)[^\d]{0,12}(19\d{2}|20\d{2})/)?.[1] || "";
 }
 
+function extractNationality(text, lines = []) {
+  return cleanParsedValue(findLabeledValue(lines, ["국적", "Nationality", "Citizen", "Citizenship"]) ||
+    firstMatch(text, [/(?:국적|Nationality|Citizenship)\s*[:：]?\s*([가-힣A-Za-z\s]{2,30})/i]));
+}
+
 function extractLinkedinUrl(text) {
   const match = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s<>)"']+/i);
   return cleanParsedValue(match?.[0] || "");
@@ -10678,17 +10841,8 @@ function parseResumeText(text, filename = "") {
     /(학력|Education|대학교|대학원|University|College|KAIST|POSTECH|학사|석사|박사|전공)/i.test(line) &&
     !/(경력|Experience|회사|근무|재직)/i.test(line)
   );
-  const careerLines = lines.filter((line) => {
-    const hasCareerContext = /(경력|재직|근무|직장|Experience|Career|Work)/i.test(line);
-    const hasPeriodAndCompany = !!extractPeriodValues(line).start &&
-      /(회사|직장|전자|백화점|퍼시픽|로보틱스|Samsung|Naver|Kakao|Hyundai|Amorepacific|SK|LG|ASML|Cloud|Mobis|Inc\.?|Corp\.?|Labs?|Studio|Group|Korea)/i.test(line);
-    const hasPeriodAndRole = !!extractPeriodValues(line).start &&
-      /(팀|그룹|센터|Lab|Team|Department|Designer|Engineer|Researcher|Manager|선임|수석|책임|과장|차장|부장|대리|사원|Associate)/i.test(line);
-    const isProfileSummaryLine = /(현재\s*회사|최근\s*회사|현재\/최근|지원\s*직무|희망직무|지원분야|직무[:\s]|포지션[:\s])/i.test(line);
-    const isEducationLine = /(대학교|대학원|University|College|학사|석사|박사|전공)/i.test(line);
-
-    return (hasCareerContext || hasPeriodAndCompany || hasPeriodAndRole) && !isProfileSummaryLine && !isEducationLine;
-  });
+  const careerLines = buildCareerExtractionLines(lines)
+    .filter((line) => !/(현재\s*회사|최근\s*회사|현재\/최근|지원\s*직무|희망직무|지원분야|직무[:\s]|포지션[:\s])/i.test(line));
   const education = educationLines.map(parseEducationLine).filter(hasAnyRecordValue).slice(0, 5);
   const career = careerLines.map(parseCareerLine).filter(hasAnyRecordValue).slice(0, 6);
   const skills = inferSkills(compact);
@@ -10703,6 +10857,7 @@ function parseResumeText(text, filename = "") {
     company,
     role: role || career[0]?.position || "",
     birthYear: extractBirthYear(compact, lines),
+    nationality: extractNationality(compact, lines),
     email: extractEmail(compact),
     phone: extractPhone(compact),
     linkedinUrl: extractLinkedinUrl(compact),
@@ -10772,6 +10927,7 @@ function normalizeParsedResumeForForm(parsed = {}) {
         degree: ["박사", "석사", "학사"].includes(cleanParsedValue(item.degree)) ? cleanParsedValue(item.degree) : "",
         school: cleanParsedValue(item.school),
         major: cleanParsedValue(item.major),
+        affiliation: cleanParsedValue(item.affiliation || item.department || item.organization),
         start: normalizeParsedDate(item.start),
         end: normalizeParsedDate(item.end)
       }))
@@ -10790,6 +10946,7 @@ function normalizeParsedResumeForForm(parsed = {}) {
     company: cleanParsedValue(parsed.company || career[0]?.company),
     role: cleanParsedValue(parsed.role || career[0]?.position),
     birthYear: cleanParsedValue(parsed.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
+    nationality: cleanParsedValue(parsed.nationality),
     email: extractEmail(String(parsed.email || "")),
     phone: cleanParsedValue(parsed.phone),
     linkedinUrl: cleanParsedValue(parsed.linkedinUrl),
@@ -10838,6 +10995,7 @@ function hasParsedResumeValues(parsed) {
     parsed?.company ||
     parsed?.role ||
     parsed?.birthYear ||
+    parsed?.nationality ||
     parsed?.email ||
     parsed?.phone ||
     parsed?.linkedinUrl ||
@@ -10848,13 +11006,37 @@ function hasParsedResumeValues(parsed) {
   );
 }
 
+function mergeParsedResumeResults(primary = {}, fallback = {}) {
+  const primaryEducation = (primary.education || []).filter(hasAnyRecordValue);
+  const fallbackEducation = (fallback.education || []).filter(hasAnyRecordValue);
+  const primaryCareer = (primary.career || []).filter(hasAnyRecordValue);
+  const fallbackCareer = (fallback.career || []).filter(hasAnyRecordValue);
+  const skills = [...new Set([...(primary.skills || []), ...(fallback.skills || [])].map(cleanParsedValue).filter(Boolean))];
+
+  return normalizeParsedResumeForForm({
+    ...fallback,
+    ...primary,
+    name: normalizeInferredCandidateName(primary.name) || normalizeInferredCandidateName(fallback.name),
+    company: primary.company || fallback.company,
+    role: primary.role || fallback.role,
+    birthYear: primary.birthYear || fallback.birthYear,
+    nationality: primary.nationality || fallback.nationality,
+    email: primary.email || fallback.email,
+    phone: primary.phone || fallback.phone,
+    linkedinUrl: primary.linkedinUrl || fallback.linkedinUrl,
+    referenceUrl: primary.referenceUrl || fallback.referenceUrl,
+    skills,
+    education: primaryEducation.length ? primaryEducation : fallbackEducation,
+    career: primaryCareer.length ? primaryCareer : fallbackCareer
+  });
+}
+
 function registerFormHasEnteredValues() {
   const fields = [
     "#candidate-name",
     "#candidate-role",
-    "#candidate-organization",
-    "#candidate-owner",
     "#candidate-birth-year",
+    "#candidate-nationality",
     "#candidate-email",
     "#candidate-phone",
     "#candidate-linkedin",
@@ -10897,6 +11079,7 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   setFieldValue("#candidate-name", parsed.name, overwrite);
   setFieldValue("#candidate-role", parsed.role, overwrite);
   setFieldValue("#candidate-birth-year", parsed.birthYear, overwrite);
+  setFieldValue("#candidate-nationality", parsed.nationality, overwrite);
   setFieldValue("#candidate-email", parsed.email, overwrite);
   setFieldValue("#candidate-phone", parsed.phone, overwrite);
   setFieldValue("#candidate-linkedin", parsed.linkedinUrl, overwrite);
@@ -10910,6 +11093,62 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
 
   if (career.length && (overwrite || currentCareerIsBlank)) {
     setRegisterCareerRecords(career);
+  }
+}
+
+function editFormHasEnteredValues() {
+  const form = $("#candidate-edit-form");
+
+  if (!form) {
+    return false;
+  }
+
+  const fields = [
+    "#edit-name",
+    "#edit-role",
+    "#edit-organization",
+    "#edit-owner",
+    "#edit-birth-year",
+    "#edit-nationality",
+    "#edit-email",
+    "#edit-phone",
+    "#edit-linkedin",
+    "#edit-reference-url",
+    "#edit-skills",
+    "#edit-summary"
+  ];
+  const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
+  const hasEducationValue = collectEducationFromForm(form, true).some(hasAnyRecordValue);
+  const hasCareerValue = collectCareerFromForm(form, true).some(hasAnyRecordValue);
+
+  return hasBasicValue || hasEducationValue || hasCareerValue;
+}
+
+function applyParsedResumeToEditForm(parsed, options = {}) {
+  const form = $("#candidate-edit-form");
+  const overwrite = options.overwrite !== false;
+  const education = (parsed.education || []).filter(hasAnyRecordValue);
+  const career = (parsed.career || []).filter(hasAnyRecordValue);
+  const currentEducationIsBlank = form ? !collectEducationFromForm(form, true).some(hasAnyRecordValue) : true;
+  const currentCareerIsBlank = form ? !collectCareerFromForm(form, true).some(hasAnyRecordValue) : true;
+
+  setFieldValue("#edit-name", parsed.name, overwrite);
+  setFieldValue("#edit-role", parsed.role, overwrite);
+  setFieldValue("#edit-birth-year", parsed.birthYear, overwrite);
+  setFieldValue("#edit-nationality", parsed.nationality, overwrite);
+  setFieldValue("#edit-email", parsed.email, overwrite);
+  setFieldValue("#edit-phone", parsed.phone, overwrite);
+  setFieldValue("#edit-linkedin", parsed.linkedinUrl, overwrite);
+  setFieldValue("#edit-reference-url", parsed.referenceUrl, overwrite);
+  setFieldValue("#edit-skills", parsed.skills.join(", "), overwrite);
+  updateAgeOutput("#edit-birth-year", "#edit-age");
+
+  if (education.length && (overwrite || currentEducationIsBlank)) {
+    setEditEducationRecords(education);
+  }
+
+  if (career.length && (overwrite || currentCareerIsBlank)) {
+    setEditCareerRecords(career);
   }
 }
 
@@ -10950,6 +11189,42 @@ async function applyResumeProfilePhotoToRegisterForm(file, status) {
   }
 }
 
+async function applyResumeProfilePhotoToEditForm(file, status) {
+  const manualPhotoSelected = Boolean($("#edit-photo")?.files?.length);
+
+  if (manualPhotoSelected) {
+    return false;
+  }
+
+  try {
+    if (status) {
+      status.textContent = `${status.textContent} 프로필 사진 후보를 확인하는 중입니다.`;
+    }
+
+    const extracted = await extractProfilePhotoFromResume(file);
+
+    if (!extracted?.dataUrl || $("#edit-photo")?.files?.length) {
+      return false;
+    }
+
+    state.editExtractedPhotoUrl = extracted.dataUrl;
+    const preview = $("#edit-photo-preview");
+
+    if (preview) {
+      preview.innerHTML = `<img src="${escapeHtml(extracted.dataUrl)}" alt="이력서에서 추출한 프로필 사진 미리보기" />`;
+    }
+
+    if (status) {
+      status.textContent = `${status.textContent} 이력서 내 사진을 프로필 사진으로 반영했습니다.`;
+    }
+
+    return true;
+  } catch (error) {
+    console.warn("Resume profile photo extraction failed.", error);
+    return false;
+  }
+}
+
 async function parseResumeIntoRegisterForm(file) {
   const status = $("#resume-parse-status");
 
@@ -10978,7 +11253,7 @@ async function parseResumeIntoRegisterForm(file) {
       }
 
       const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
-      parsed = serverResult.parsed;
+      parsed = mergeParsedResumeResults(serverResult.parsed, deterministicParsed);
       parserSource = serverResult.source === "openai-web" ? "AI 구조화 및 회사 소재국가 보강" : "AI 구조화";
     } catch (serverError) {
       console.warn("Structured resume parser failed. Falling back to browser parser.", serverError);
@@ -11007,6 +11282,76 @@ async function parseResumeIntoRegisterForm(file) {
     }
 
     showToast("이력서 정보를 입력란에 자동 반영했습니다.");
+  } catch (error) {
+    console.warn("Resume parsing failed.", error);
+
+    if (status) {
+      status.textContent = error.isResumeParseError
+        ? error.message
+        : "이력서 파일을 읽지 못했습니다. 파일 형식을 확인해주세요.";
+    }
+
+    showToast(error.isResumeParseError ? "이력서 텍스트 추출이 중단되었습니다." : "이력서 파일을 읽지 못했습니다.");
+  }
+}
+
+async function parseResumeIntoEditForm(file) {
+  const status = $("#edit-resume-parse-status");
+
+  if (status) {
+    status.textContent = "이력서를 읽고 구조화하는 중입니다.";
+  }
+
+  try {
+    const result = await readResumeText(file);
+
+    if (!result.text || result.text.length < 20) {
+      if (status) {
+        status.textContent = "읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 수동 입력해주세요.";
+      }
+      showToast("이력서 텍스트를 충분히 읽지 못했습니다.");
+      return;
+    }
+
+    const deterministicParsed = normalizeParsedResumeForForm(parseResumeText(result.text, file.name));
+    let parsed = deterministicParsed;
+    let parserSource = "브라우저 기본 파서";
+
+    try {
+      if (status) {
+        status.textContent = "이력서 내용을 구조화하고 회사 소재국가를 보강하는 중입니다.";
+      }
+
+      const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
+      parsed = mergeParsedResumeResults(serverResult.parsed, deterministicParsed);
+      parserSource = serverResult.source === "openai-web" ? "AI 구조화 및 회사 소재국가 보강" : "AI 구조화";
+    } catch (serverError) {
+      console.warn("Structured resume parser failed. Falling back to browser parser.", serverError);
+      parserSource = "브라우저 기본 파서";
+    }
+
+    if (!hasParsedResumeValues(parsed)) {
+      if (status) {
+        status.textContent = "이력서는 읽었지만 수정 필드에 매핑할 수 있는 값이 부족합니다. 내용을 확인해 수동 입력해주세요.";
+      }
+      showToast("매핑 가능한 이력서 정보를 찾지 못했습니다.");
+      return;
+    }
+
+    const overwrite = editFormHasEnteredValues()
+      ? window.confirm("현재 수정 입력값을 이력서에서 읽은 정보로 덮어쓸까요?")
+      : true;
+
+    applyParsedResumeToEditForm(parsed, { overwrite });
+    const profilePhotoApplied = await applyResumeProfilePhotoToEditForm(file, status);
+
+    if (status) {
+      const quality = result.meta?.textQuality ? ` 텍스트 품질 ${Math.round(result.meta.textQuality)}점.` : "";
+      const photoMessage = profilePhotoApplied ? " 프로필 사진도 자동 반영했습니다." : "";
+      status.textContent = `${parserSource} 결과를 수정 입력란에 반영했습니다.${quality}${photoMessage} 실제 이력서와 비교 후 저장해주세요.`;
+    }
+
+    showToast("이력서 정보를 수정 입력란에 자동 반영했습니다.");
   } catch (error) {
     console.warn("Resume parsing failed.", error);
 
@@ -11443,8 +11788,10 @@ async function registerCandidate(eventOrForm) {
     .filter(Boolean);
   const photoFile = form.get("photo");
   const resumeFile = form.get("resume");
+  const otherAttachmentFiles = form.getAll("otherAttachments").filter((file) => file && file.size);
   let photoUrl = state.registerExtractedPhotoUrl || "";
   let resumeAttachment = null;
+  let attachments = [];
 
   if (photoFile && photoFile.size) {
     try {
@@ -11468,6 +11815,16 @@ async function registerCandidate(eventOrForm) {
     } catch (error) {
       console.warn("Resume attachment could not be read.", error);
       showToast("이력서 첨부 파일을 저장하지 못했습니다. 다른 파일을 선택해주세요.");
+      return;
+    }
+  }
+
+  if (otherAttachmentFiles.length) {
+    try {
+      attachments = (await Promise.all(otherAttachmentFiles.map(attachmentFromFile))).filter(Boolean);
+    } catch (error) {
+      console.warn("Additional attachments could not be read.", error);
+      showToast("기타 첨부파일을 저장하지 못했습니다. 파일을 확인해주세요.");
       return;
     }
   }
@@ -11498,8 +11855,10 @@ async function registerCandidate(eventOrForm) {
     age: calculateAge(birthYear),
     email: form.get("email").toString().trim(),
     phone: form.get("phone").toString().trim(),
+    nationality: form.get("nationality").toString().trim(),
     linkedinUrl: form.get("linkedinUrl").toString().trim(),
     referenceUrl: form.get("referenceUrl").toString().trim(),
+    attachments,
     education,
     career,
     skills,
@@ -11507,7 +11866,7 @@ async function registerCandidate(eventOrForm) {
     summary: form.get("summary").toString().trim(),
     evidence: [
       "업로드 이력서에서 후보자 정보를 자동 입력",
-      "주요 역량/성과 태그 자동 생성",
+      "주요성과/실적 태그 자동 생성",
       "담당자 검수 대기 상태"
     ],
     applications: [],
@@ -13995,6 +14354,7 @@ function bindEvents() {
     visualTarget?.classList.remove("is-dragover");
 
     if (applyDroppedFilesToInput(input, event.dataTransfer?.files)) {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
       showToast("파일을 업로드 영역에 추가했습니다.");
     }
   });
@@ -14102,7 +14462,16 @@ function bindEvents() {
       const file = event.target.files?.[0];
 
       if (preview && file) {
+        state.editExtractedPhotoUrl = "";
         preview.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="업로드한 얼굴 프로필 사진 미리보기" />`;
+      }
+    }
+
+    if (event.target.id === "edit-resume-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        parseResumeIntoEditForm(file);
       }
     }
 
