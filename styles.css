@@ -2240,6 +2240,16 @@ tr:last-child td {
   white-space: nowrap;
 }
 
+.job-fit-panel-header > .job-fit-result-actions {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+.job-fit-result-actions .compact-button {
+  flex: 0 0 auto;
+}
+
 .job-fit-header-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2319,29 +2329,32 @@ tr:last-child td {
 .job-fit-profile-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 12px;
-  background: var(--surface-soft);
+  gap: 18px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+  background: transparent;
 }
 
 .job-fit-profile-summary section {
   display: grid;
   align-content: start;
-  gap: 5px;
+  gap: 7px;
   min-width: 0;
+  border-left: 3px solid var(--blue-soft);
+  padding-left: 12px;
 }
 
 .job-fit-profile-summary strong {
-  color: var(--muted);
+  color: var(--blue-700);
   font-size: 12px;
+  font-weight: 900;
 }
 
 .job-fit-profile-summary span {
   color: var(--text);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 

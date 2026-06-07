@@ -5454,8 +5454,8 @@ function isGenericCandidateName(value) {
     return true;
   }
 
-  return /^(프로필|이력서|지원서|경력기술서|자기소개서|소개서|resume|cv|profile|curriculumvitae)$/i.test(text) ||
-    /(대학교|대학원|연구소|회사|팀|그룹|센터|부문|사업부|프로젝트|포트폴리오|경력|학력|요약|직무|기술|사항|첨부|파일)/.test(text);
+  return /^(프로필|이력서|지원서|경력기술서|자기소개서|소개서|resume|cv|profile|curriculumvitae|주소|연락처|이메일|휴대폰|전화번호|전화|국적|생년|생년월일|출생년도|미확인|이름미확인)$/i.test(text) ||
+    /(대학교|대학원|연구소|회사|팀|그룹|센터|부문|사업부|프로젝트|포트폴리오|경력|학력|요약|직무|기술|사항|첨부|파일|주소|연락처|이메일|휴대폰|전화|국적|생년|출생)/.test(text);
 }
 
 function normalizeInferredCandidateName(value) {
@@ -5798,9 +5798,38 @@ function jobFitGradeChip(grade) {
   return `<span class="status-chip ${chipClass}">적합도 ${escapeHtml(grade)}</span>`;
 }
 
+function formatJobFitEducationSummaryLine(item = {}) {
+  const degree = formatEducationDegreeShort(item.degree);
+  const school = cleanParsedValue(item.school);
+  const major = cleanParsedValue(item.major);
+  const title = [
+    degree ? `${degree}) ${school}`.trim() : school,
+    major
+  ].filter(Boolean).join(", ");
+  const period = formatDisplayPeriod(item.start, item.end);
+
+  return [title, period].filter(Boolean).join(" ");
+}
+
+function formatJobFitCareerSummaryLine(item = {}) {
+  const company = cleanParsedValue(item.company);
+  const rank = cleanParsedValue(item.rank);
+  const position = cleanParsedValue(item.position || item.department);
+  const title = uniqueTextParts([company, rank, position]).join(", ");
+  const period = formatDisplayPeriod(item.start, item.end);
+
+  return [title, period].filter(Boolean).join(" ");
+}
+
 function renderJobFitProfileSummary(result) {
-  const educationLines = formatEducationSummary({ education: result.education || [] });
-  const careerLines = formatCareerSummary({ career: result.career || [] });
+  const educationLines = (result.education || [])
+    .map(formatJobFitEducationSummaryLine)
+    .filter(Boolean)
+    .slice(0, 3);
+  const careerLines = (result.career || [])
+    .map(formatJobFitCareerSummaryLine)
+    .filter(Boolean)
+    .slice(0, 3);
 
   if (!educationLines.length && !careerLines.length) {
     return "";
@@ -10450,31 +10479,98 @@ function extractPeriodValues(line) {
   };
 }
 
+function removePeriodText(value) {
+  return cleanParsedValue(value)
+    .replace(/(?:19|20)\d{2}\s*[.\-/년]\s*(?:\d{1,2})?\s*월?\s*(?:~|-|–|—|to)\s*(?:현재|재직중?|present|current|ongoing|(?:19|20)\d{2}\s*[.\-/년]?\s*(?:\d{1,2})?\s*월?)/gi, " ")
+    .replace(/(?:19|20)\d{2}\s*[.\-/년]\s*(?:\d{1,2})?\s*월?/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function extractSchoolNameFromEducationText(value) {
+  const text = cleanParsedValue(value);
+  const school = firstMatch(text, [
+    /(KAIST|카이스트|POSTECH|포항공과대학교|서울대학교|연세대학교|고려대학교|한양대학교|성균관대학교|서강대학교|중앙대학교|경희대학교|이화여자대학교|부산대학교|경북대학교|전남대학교|전북대학교|충남대학교|충북대학교|인하대학교|아주대학교|건국대학교|동국대학교|홍익대학교|[가-힣A-Za-z]+대학교|[A-Z][A-Za-z\s]+University|[A-Z][A-Za-z\s]+College|[A-Z][A-Za-z\s]+Institute)/i
+  ]);
+
+  if (/카이스트/i.test(school)) return "KAIST";
+  return cleanParsedValue(school);
+}
+
+function extractMajorFromEducationText(value, school, degree) {
+  const text = cleanParsedValue(value);
+  const explicitMajor = cleanParsedValue(firstMatch(text, [
+    /전공\s*[:：]\s*([가-힣A-Za-z0-9\s/·&+-]+?)(?:[),/]|지도|$)/i,
+    /Major\s*[:：]\s*([A-Za-z0-9\s/·&+-]+?)(?:[),/]|$)/i
+  ]));
+
+  if (explicitMajor) {
+    return explicitMajor;
+  }
+
+  let stripped = removePeriodText(text);
+
+  if (school) {
+    stripped = stripped.replace(new RegExp(escapeRegExp(school), "gi"), " ");
+  }
+
+  stripped = stripped
+    .replace(/박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor/gi, " ")
+    .replace(/지도교수\s*[:：]?\s*[가-힣A-Za-z\s]+/gi, " ")
+    .replace(/[()]/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const major = firstMatch(stripped, [
+    /([가-힣A-Za-z0-9\s]+?(?:공학부|공학과|학과|전공|공학|디자인|Science|Engineering|Design|Robotics|Computer Science))/i
+  ]);
+
+  const cleanedMajor = cleanParsedValue(major);
+
+  return degree ? cleanedMajor.replace(new RegExp(escapeRegExp(degree), "gi"), "").trim() : cleanedMajor;
+}
+
 function parseEducationLine(line) {
   const body = cleanParsedValue(line).replace(/^(?:학력|Education)[:：\s-]*/i, "");
   const parts = splitResumeParts(body);
-  const degree = cleanParsedValue(parts.find((part) => /(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i.test(part)) ||
-    firstMatch(body, [/(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i]));
-  const school = cleanParsedValue(parts.find((part) => /(대학교|대학원|University|College|Institute|KAIST|POSTECH)/i.test(part)) ||
-    firstMatch(body, [/([가-힣A-Za-z0-9\s]+(?:대학교|대학원|University|College|Institute|KAIST|POSTECH))/i]));
-  const major = cleanParsedValue(labeledValueFromLine(body, ["전공", "Major"]) || parts.find((part) =>
-    !part.includes(degree) &&
-    !part.includes(school) &&
-    !extractPeriodValues(part).start &&
-    /(공학|학과|전공|Science|Engineering|Management|Business|AI|SW|컴퓨터|전자|기계|산업)/i.test(part)
-  ) || firstMatch(body, [
-    /전공[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
-    /([가-힣A-Za-z0-9\s]+(?:공학|학과|전공|Science|Engineering|Management|Business))/i
-  ]));
+  const degree = normalizeJobFitDegree(firstMatch(body, [/(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i]) ||
+    parts.find((part) => /(박사|석사|학사|전문학사|Ph\.?D|Master|Bachelor)/i.test(part)) || "");
+  const school = extractSchoolNameFromEducationText(body);
+  const major = extractMajorFromEducationText(body, school, degree);
   const period = extractPeriodValues(body);
 
   return { degree, school, major, ...period };
+}
+
+function stripCareerCountryPrefix(value) {
+  return cleanParsedValue(value)
+    .replace(/^(?:한국|대한민국|미국|중국|일본|독일|영국|프랑스|USA|United States|Korea|Japan|China)\)?\s*/i, "")
+    .trim();
+}
+
+function normalizeCareerPart(value) {
+  return stripCareerCountryPrefix(removePeriodText(value)
+    .replace(/^(?:경력|Career|Experience|Work Experience)[:：\s-]*/i, ""));
 }
 
 function parseCareerLine(line) {
   const period = extractPeriodValues(line);
   const body = cleanParsedValue(line).replace(/^(?:경력|Career|Experience|Work Experience)[:：\s-]*/i, "");
   const parts = splitResumeParts(body);
+  const cleanParts = parts.map(normalizeCareerPart).filter(Boolean);
+  const commaCareerLine = cleanParts.length >= 3 && (period.start || period.end || /(팀|그룹|센터|Lab|Team|Department|Designer|Engineer|Researcher|Manager|선임|수석|책임|과장|차장|부장|대리|사원)/i.test(body));
+
+  if (commaCareerLine) {
+    return {
+      country: body.includes("미국") || /USA|United States/i.test(body) ? "미국" : body.includes("대한민국") || body.includes("한국") ? "한국" : "",
+      company: cleanParts[0],
+      rank: cleanParts[1],
+      position: cleanParts[2],
+      start: period.start,
+      end: period.end,
+      achievements: cleanParsedValue(cleanParts.slice(3).join(", "))
+    };
+  }
+
   const structuredCareerLine = parts.length >= 4 &&
     (line.includes("경력") || /Career|Experience/i.test(line) || period.start || parts.some((part) => /(사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager)/i.test(part)));
 
@@ -10495,13 +10591,13 @@ function parseCareerLine(line) {
 
   const company = cleanParsedValue(labeledValueFromLine(body, ["회사", "직장", "근무처", "Company"]) || firstMatch(body, [
     /(?:회사|직장|근무처)[:\s]+([가-힣A-Za-z0-9\s.&+-]+)/,
-    /([가-힣A-Za-z0-9\s.&+-]+(?:전자|반도체|리서치|Research|Cloud|Mobis|hynix|ASML|Samsung|Naver|LG|SK|Inc\.?|Corp\.?|Korea))/i
+    /([가-힣A-Za-z0-9.&+-]+(?:전자|백화점|퍼시픽|SDS|모비스|로보틱스|Robotics|Research|Cloud|hynix|ASML|Samsung|Naver|Kakao|Hyundai|Amorepacific|LG|SK|Inc\.?|Corp\.?|Labs?|Studio|Group|Korea))/i
   ]));
   const position = cleanParsedValue(labeledValueFromLine(body, ["직책", "담당", "포지션", "Position"]) || firstMatch(body, [
-    /(?:직책|담당|포지션)[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
-    /([가-힣A-Za-z0-9\s]+(?:엔지니어|개발자|리서처|아키텍트|컨설턴트|분석|리드|Engineer|Researcher|Architect|Developer))/i
+    /(?:소속부서|부서|조직|직책|담당|포지션)[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
+    /([가-힣A-Za-z0-9\s]+(?:팀|그룹|센터|랩|연구소|Lab|Team|Department|Office))/i
   ]));
-  const rank = cleanParsedValue(firstMatch(body, [/(사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager)/i]));
+  const rank = cleanParsedValue(firstMatch(body, [/(선임\s*디자이너|Associate|사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager|Designer|Engineer|Researcher)/i]));
 
   return {
     country: body.includes("미국") || /USA|United States/i.test(body) ? "미국" : body.includes("대한민국") ? "대한민국" : "",
@@ -10585,11 +10681,13 @@ function parseResumeText(text, filename = "") {
   const careerLines = lines.filter((line) => {
     const hasCareerContext = /(경력|재직|근무|직장|Experience|Career|Work)/i.test(line);
     const hasPeriodAndCompany = !!extractPeriodValues(line).start &&
-      /(회사|직장|Samsung|Naver|SK|LG|ASML|Cloud|Mobis|Inc\.?|Corp\.?|Korea)/i.test(line);
+      /(회사|직장|전자|백화점|퍼시픽|로보틱스|Samsung|Naver|Kakao|Hyundai|Amorepacific|SK|LG|ASML|Cloud|Mobis|Inc\.?|Corp\.?|Labs?|Studio|Group|Korea)/i.test(line);
+    const hasPeriodAndRole = !!extractPeriodValues(line).start &&
+      /(팀|그룹|센터|Lab|Team|Department|Designer|Engineer|Researcher|Manager|선임|수석|책임|과장|차장|부장|대리|사원|Associate)/i.test(line);
     const isProfileSummaryLine = /(현재\s*회사|최근\s*회사|현재\/최근|지원\s*직무|희망직무|지원분야|직무[:\s]|포지션[:\s])/i.test(line);
     const isEducationLine = /(대학교|대학원|University|College|학사|석사|박사|전공)/i.test(line);
 
-    return (hasCareerContext || hasPeriodAndCompany) && !isProfileSummaryLine && !isEducationLine;
+    return (hasCareerContext || hasPeriodAndCompany || hasPeriodAndRole) && !isProfileSummaryLine && !isEducationLine;
   });
   const education = educationLines.map(parseEducationLine).filter(hasAnyRecordValue).slice(0, 5);
   const career = careerLines.map(parseCareerLine).filter(hasAnyRecordValue).slice(0, 6);
