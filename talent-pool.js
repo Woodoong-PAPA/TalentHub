@@ -99,6 +99,7 @@ const POLICY_CHAT_MAX_MESSAGES = 20;
 const POLICY_CHAT_MAX_CONTEXT_CHARS = 1800;
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
 const VISIT_SESSION_KEY = "samsung-talent-pool-visit-counted";
+const REMEMBERED_LOGIN_EMAIL_KEY = "samsung-talent-pool-remembered-email-v1";
 const SCREENING_STAGE_LABELS = {
   reception: "지원자 접수",
   registered: "1차 대상",
@@ -1640,6 +1641,28 @@ function loadPersistedState() {
   }
 }
 
+function getRememberedLoginEmail() {
+  try {
+    return String(window.localStorage.getItem(REMEMBERED_LOGIN_EMAIL_KEY) || "").trim();
+  } catch (error) {
+    return "";
+  }
+}
+
+function setRememberedLoginEmail(email) {
+  try {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    if (normalizedEmail) {
+      window.localStorage.setItem(REMEMBERED_LOGIN_EMAIL_KEY, normalizedEmail);
+    } else {
+      window.localStorage.removeItem(REMEMBERED_LOGIN_EMAIL_KEY);
+    }
+  } catch (error) {
+    console.warn("Remembered login email could not be saved.", error);
+  }
+}
+
 function persistState(options = {}) {
   try {
     ensureAuditLogIds();
@@ -2580,6 +2603,7 @@ function renderAuth() {
   const message = state.authMessage
     ? `<div class="auth-message">${escapeHtml(state.authMessage)}</div>`
     : "";
+  const rememberedLoginEmail = getRememberedLoginEmail();
 
   authContent.innerHTML = state.authView === "signup"
     ? `
@@ -2665,19 +2689,19 @@ function renderAuth() {
         <form id="login-form" class="auth-form">
           <div class="field">
             <label for="login-email">이메일</label>
-            <input class="control-input" id="login-email" name="email" type="email" required autocomplete="email" />
+            <input class="control-input" id="login-email" name="email" type="email" required autocomplete="email" value="${escapeHtml(rememberedLoginEmail)}" />
           </div>
           <div class="field">
             <label for="login-password">비밀번호</label>
             <input class="control-input" id="login-password" name="password" type="password" required autocomplete="current-password" />
           </div>
+          <label class="inline-check auth-remember">
+            <input type="checkbox" name="rememberEmail" ${rememberedLoginEmail ? "checked" : ""} />
+            이메일(ID) 저장
+          </label>
           <button class="primary-button" type="submit">로그인</button>
           <button class="ghost-button" type="button" data-auth-view="signup">회원가입 신청</button>
         </form>
-        <div class="auth-demo-note">
-          <strong>초기 관리자 계정</strong>
-          <span>admin@samsung.com / Admin1234!</span>
-        </div>
       </section>
     `;
 }
@@ -11121,6 +11145,7 @@ async function handleLoginSubmit(form) {
   const formData = new FormData(form);
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
+  const shouldRememberEmail = Boolean(formData.get("rememberEmail"));
   const member = state.members.find((item) => item.email === email);
 
   if (!member || !await verifyMemberPassword(member, password)) {
@@ -11134,6 +11159,7 @@ async function handleLoginSubmit(form) {
   }
 
   member.lastLoginAt = getTimestampText();
+  setRememberedLoginEmail(shouldRememberEmail ? email : "");
   state.currentUserId = member.id;
   state.authMessage = "";
   state.memberProfileModalOpen = false;
