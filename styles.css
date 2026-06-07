@@ -2114,6 +2114,30 @@ tr:last-child td {
   font-size: 12px;
 }
 
+.job-fit-upload-status,
+.job-fit-inline-status {
+  display: block;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.job-fit-upload-status.is-loading::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--blue);
+  vertical-align: 1px;
+}
+
 .job-fit-status {
   margin: 0;
 }
@@ -2150,6 +2174,13 @@ tr:last-child td {
   background: var(--blue-soft);
   font-size: 12px;
   font-weight: 800;
+}
+
+.job-fit-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .job-fit-result-card {
@@ -4147,6 +4178,10 @@ tr:last-child td {
   }
 
   .job-fit-score-box {
+    justify-content: flex-start;
+  }
+
+  .job-fit-result-actions {
     justify-content: flex-start;
   }
 

@@ -574,8 +574,13 @@ const state = {
     resumes: [],
     results: [],
     savedAnalyses: [],
-    loading: false,
-    status: ""
+    jdLoading: false,
+    resumeLoading: false,
+    analysisLoading: false,
+    jdStatus: "",
+    resumeStatus: "",
+    analysisStatus: "",
+    hasAnalyzed: false
   },
   policySources: [],
   policyChatMessages: [],
@@ -5086,8 +5091,13 @@ function normalizeJobFitState(value = {}) {
     savedAnalyses: Array.isArray(value.savedAnalyses)
       ? value.savedAnalyses.map(normalizeSavedJobFitAnalysis).filter(Boolean).slice(0, 20)
       : [],
-    loading: Boolean(value.loading),
-    status: String(value.status || "").trim()
+    jdLoading: Boolean(value.jdLoading),
+    resumeLoading: Boolean(value.resumeLoading),
+    analysisLoading: Boolean(value.analysisLoading || value.loading),
+    jdStatus: String(value.jdStatus || "").trim(),
+    resumeStatus: String(value.resumeStatus || "").trim(),
+    analysisStatus: String(value.analysisStatus || value.status || "").trim(),
+    hasAnalyzed: Boolean(value.hasAnalyzed || (Array.isArray(value.results) && value.results.length))
   };
 }
 
@@ -5109,7 +5119,11 @@ function normalizeSavedJobFitAnalysis(analysis = {}) {
 }
 
 function getJobFitState() {
-  state.jobFitAnalysis = normalizeJobFitState(state.jobFitAnalysis);
+  const current = state.jobFitAnalysis && typeof state.jobFitAnalysis === "object"
+    ? state.jobFitAnalysis
+    : {};
+  Object.assign(current, normalizeJobFitState(current));
+  state.jobFitAnalysis = current;
   return state.jobFitAnalysis;
 }
 
@@ -5325,17 +5339,19 @@ function renderJobFitResultCard(result, index) {
 
 function renderJobFitResultsPanel() {
   const jobFit = getJobFitState();
-  refreshJobFitResults();
   const hasJd = Boolean(normalizeResumeText(jobFit.jdText));
   const hasResumes = jobFit.resumes.length > 0;
+  const canAnalyze = hasJd && hasResumes && !jobFit.jdLoading && !jobFit.resumeLoading && !jobFit.analysisLoading;
   const requirements = hasJd ? extractJobFitRequirements(jobFit.jdText) : [];
-  const resultBody = jobFit.loading
-    ? `<div class="empty-state">업로드된 문서를 읽고 직무적합도를 다시 계산하는 중입니다.</div>`
-    : hasJd && hasResumes
+  const resultBody = jobFit.analysisLoading
+    ? `<div class="empty-state">직무기술서와 이력서 풀을 기준으로 적합도를 분석하는 중입니다.</div>`
+    : jobFit.hasAnalyzed
       ? jobFit.results.length
         ? jobFit.results.map(renderJobFitResultCard).join("")
-        : `<div class="empty-state">분석 가능한 이력서 텍스트가 부족합니다. 다른 형식의 이력서를 추가해 주세요.</div>`
-      : `<div class="empty-state">왼쪽에 직무기술서를 입력하고 오른쪽에 이력서를 업로드하면 결과가 자동으로 표시됩니다.</div>`;
+        : `<div class="empty-state">분석 가능한 결과가 없습니다. JD와 이력서 텍스트를 확인한 뒤 다시 분석해 주세요.</div>`
+      : hasJd && hasResumes
+        ? `<div class="empty-state">업로드된 JD와 이력서가 준비되었습니다. 평가 분석 시작 버튼을 눌러 결과를 생성해 주세요.</div>`
+        : `<div class="empty-state">왼쪽에 직무기술서를 입력하고 오른쪽에 이력서를 업로드한 뒤 평가 분석을 시작해 주세요.</div>`;
 
   return `
     <section class="form-panel job-fit-results-panel" id="job-fit-results-section">
@@ -5344,8 +5360,12 @@ function renderJobFitResultsPanel() {
           <strong>직무기술서 기반 평가 결과</strong>
           <span>${hasJd ? `추출 요구사항 ${requirements.length}개` : "JD 미입력"} · 이력서 ${jobFit.resumes.length}개 · 결과 ${jobFit.results.length}개</span>
         </div>
-        <button class="primary-button compact-button" type="button" data-save-job-fit-analysis ${jobFit.results.length ? "" : "disabled"}>분석 결과 저장</button>
+        <div class="job-fit-result-actions">
+          <button class="primary-button compact-button" type="button" data-run-job-fit-analysis ${canAnalyze ? "" : "disabled"}>${jobFit.analysisLoading ? "분석 중" : "평가 분석 시작"}</button>
+          <button class="ghost-button compact-button" type="button" data-save-job-fit-analysis ${jobFit.results.length && !jobFit.analysisLoading ? "" : "disabled"}>분석 결과 저장</button>
+        </div>
       </div>
+      ${jobFit.analysisStatus ? `<div class="job-fit-inline-status">${escapeHtml(jobFit.analysisStatus)}</div>` : ""}
       ${requirements.length ? `
         <div class="job-fit-requirement-summary">
           <strong>JD 요구사항</strong>
@@ -5433,6 +5453,7 @@ function renderJobFitAnalysis() {
           <div class="dropzone compact-upload">
             <input id="job-fit-jd-file" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
             <span class="form-help">${escapeHtml(jdFileLabel)}</span>
+            ${jobFit.jdStatus ? `<strong class="job-fit-upload-status ${jobFit.jdLoading ? "is-loading" : ""}">${escapeHtml(jobFit.jdStatus)}</strong>` : ""}
           </div>
         </section>
 
@@ -5446,7 +5467,8 @@ function renderJobFitAnalysis() {
           </div>
           <div class="dropzone job-fit-resume-dropzone">
             <input id="job-fit-resume-files" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
-            <span class="form-help">이력서를 추가하거나 삭제하면 결과가 자동 재계산됩니다.</span>
+            <span class="form-help">이력서를 추가하거나 삭제한 뒤 평가 분석 시작 버튼을 눌러 결과를 생성합니다.</span>
+            ${jobFit.resumeStatus ? `<strong class="job-fit-upload-status ${jobFit.resumeLoading ? "is-loading" : ""}">${escapeHtml(jobFit.resumeStatus)}</strong>` : ""}
           </div>
           <div id="job-fit-resume-list">
             ${renderJobFitResumeList()}
@@ -5454,7 +5476,6 @@ function renderJobFitAnalysis() {
         </section>
       </div>
 
-      ${jobFit.status ? `<div class="auth-message job-fit-status">${escapeHtml(jobFit.status)}</div>` : ""}
       ${renderJobFitResultsPanel()}
 
       <section class="form-panel job-fit-saved-panel" id="job-fit-saved-section">
@@ -5470,8 +5491,11 @@ function renderJobFitAnalysis() {
   `;
 }
 
-function rerenderJobFitWorkspace() {
-  refreshJobFitResults();
+function rerenderJobFitWorkspace(options = {}) {
+  if (options.refreshResults) {
+    refreshJobFitResults();
+  }
+
   persistState();
   renderJobFitAnalysis();
 }
@@ -5479,8 +5503,11 @@ function rerenderJobFitWorkspace() {
 function updateJobFitJdText(value) {
   const jobFit = getJobFitState();
   jobFit.jdText = value;
-  jobFit.status = "";
-  refreshJobFitResults();
+  jobFit.results = [];
+  jobFit.hasAnalyzed = false;
+  jobFit.analysisStatus = value.trim()
+    ? "직무기술서가 수정되었습니다. 평가 분석 시작 버튼을 눌러 결과를 다시 생성해 주세요."
+    : "";
   persistState();
 
   const resultSection = $("#job-fit-results-section");
@@ -5495,8 +5522,9 @@ async function handleJobFitJdFileUpload(file) {
   }
 
   const jobFit = getJobFitState();
-  jobFit.loading = true;
-  jobFit.status = `${file.name} 파일을 읽는 중입니다.`;
+  jobFit.jdLoading = true;
+  jobFit.jdStatus = `${file.name} 파일을 읽는 중입니다.`;
+  jobFit.analysisStatus = "";
   renderJobFitAnalysis();
 
   try {
@@ -5508,12 +5536,15 @@ async function handleJobFitJdFileUpload(file) {
       type: file.type,
       uploadedAt: getTimestampText()
     };
-    jobFit.status = "직무기술서 파일 내용을 입력란에 반영했습니다.";
+    jobFit.results = [];
+    jobFit.hasAnalyzed = false;
+    jobFit.jdStatus = "직무기술서 파일 내용을 입력란에 반영했습니다.";
+    jobFit.analysisStatus = "직무기술서가 준비되었습니다. 이력서를 업로드한 뒤 평가 분석을 시작해 주세요.";
   } catch (error) {
     console.warn("JD file could not be read.", error);
-    jobFit.status = error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.";
+    jobFit.jdStatus = error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.";
   } finally {
-    jobFit.loading = false;
+    jobFit.jdLoading = false;
     rerenderJobFitWorkspace();
   }
 }
@@ -5526,8 +5557,9 @@ async function handleJobFitResumeUpload(files) {
   }
 
   const jobFit = getJobFitState();
-  jobFit.loading = true;
-  jobFit.status = `${uploadFiles.length}개 이력서를 읽는 중입니다.`;
+  jobFit.resumeLoading = true;
+  jobFit.resumeStatus = `${uploadFiles.length}개 이력서를 읽는 중입니다.`;
+  jobFit.analysisStatus = "";
   renderJobFitAnalysis();
 
   const loadedResumes = [];
@@ -5550,11 +5582,16 @@ async function handleJobFitResumeUpload(files) {
   }
 
   jobFit.resumes = [...jobFit.resumes, ...loadedResumes];
-  jobFit.loading = false;
-  jobFit.status = [
+  jobFit.results = [];
+  jobFit.hasAnalyzed = false;
+  jobFit.resumeLoading = false;
+  jobFit.resumeStatus = [
     loadedResumes.length ? `${loadedResumes.length}개 이력서를 분석 풀에 추가했습니다.` : "",
     failedNames.length ? `읽지 못한 파일: ${failedNames.join(", ")}` : ""
   ].filter(Boolean).join(" ");
+  jobFit.analysisStatus = loadedResumes.length
+    ? "이력서 풀이 변경되었습니다. 평가 분석 시작 버튼을 눌러 결과를 생성해 주세요."
+    : "분석 가능한 이력서가 추가되지 않았습니다.";
 
   rerenderJobFitWorkspace();
 }
@@ -5562,7 +5599,10 @@ async function handleJobFitResumeUpload(files) {
 function removeJobFitResume(resumeId) {
   const jobFit = getJobFitState();
   jobFit.resumes = jobFit.resumes.filter((resume) => resume.id !== resumeId);
-  jobFit.status = "이력서를 삭제하고 적합도 결과를 다시 계산했습니다.";
+  jobFit.results = [];
+  jobFit.hasAnalyzed = false;
+  jobFit.resumeStatus = "이력서를 삭제했습니다.";
+  jobFit.analysisStatus = "이력서 풀이 변경되었습니다. 평가 분석 시작 버튼을 눌러 결과를 다시 생성해 주세요.";
   rerenderJobFitWorkspace();
 }
 
@@ -5571,7 +5611,42 @@ function clearJobFitJd() {
   jobFit.jdText = "";
   jobFit.jdFile = null;
   jobFit.results = [];
-  jobFit.status = "직무기술서 입력을 초기화했습니다.";
+  jobFit.hasAnalyzed = false;
+  jobFit.jdStatus = "직무기술서 입력을 초기화했습니다.";
+  jobFit.analysisStatus = "";
+  rerenderJobFitWorkspace();
+}
+
+async function runJobFitAnalysis() {
+  const jobFit = getJobFitState();
+  const jdText = normalizeResumeText(jobFit.jdText);
+
+  if (!jdText) {
+    jobFit.analysisStatus = "직무기술서를 먼저 입력하거나 업로드해 주세요.";
+    rerenderJobFitWorkspace();
+    showToast("직무기술서를 먼저 입력해 주세요.");
+    return;
+  }
+
+  if (!jobFit.resumes.length) {
+    jobFit.analysisStatus = "분석할 이력서를 먼저 업로드해 주세요.";
+    rerenderJobFitWorkspace();
+    showToast("이력서를 먼저 업로드해 주세요.");
+    return;
+  }
+
+  jobFit.analysisLoading = true;
+  jobFit.analysisStatus = "평가 분석을 진행 중입니다.";
+  renderJobFitAnalysis();
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+  refreshJobFitResults();
+  jobFit.analysisLoading = false;
+  jobFit.hasAnalyzed = true;
+  jobFit.analysisStatus = jobFit.results.length
+    ? `${jobFit.results.length}개 이력서의 직무적합도 분석을 완료했습니다.`
+    : "분석 결과를 생성하지 못했습니다. 업로드한 파일의 텍스트를 확인해 주세요.";
+  addAuditLog("직무적합도 분석 실행", `${jobFit.resumes.length}개 이력서`, `결과 ${jobFit.results.length}개`);
   rerenderJobFitWorkspace();
 }
 
@@ -5602,7 +5677,7 @@ function saveJobFitAnalysis() {
   });
 
   jobFit.savedAnalyses = [saved, ...jobFit.savedAnalyses.filter((item) => item.id !== saved.id)].slice(0, 20);
-  jobFit.status = "분석 결과를 저장했습니다.";
+  jobFit.analysisStatus = "분석 결과를 저장했습니다.";
   addAuditLog("직무적합도 분석 저장", saved.title, `${saved.results.length}개 이력서 평가`);
   rerenderJobFitWorkspace();
   showToast("분석 결과가 저장되었습니다.");
@@ -5623,7 +5698,8 @@ function loadSavedJobFitAnalysis(analysisId) {
     jdFile: saved.jdFile,
     resumes: saved.resumes,
     results: saved.results,
-    status: "저장된 분석 결과를 불러왔습니다."
+    hasAnalyzed: true,
+    analysisStatus: "저장된 분석 결과를 불러왔습니다."
   });
   rerenderJobFitWorkspace();
 }
@@ -5631,7 +5707,7 @@ function loadSavedJobFitAnalysis(analysisId) {
 function deleteSavedJobFitAnalysis(analysisId) {
   const jobFit = getJobFitState();
   jobFit.savedAnalyses = jobFit.savedAnalyses.filter((analysis) => analysis.id !== analysisId);
-  jobFit.status = "저장된 분석 결과를 삭제했습니다.";
+  jobFit.analysisStatus = "저장된 분석 결과를 삭제했습니다.";
   rerenderJobFitWorkspace();
 }
 
@@ -12582,6 +12658,17 @@ function bindEvents() {
 
     if (event.target.closest("[data-clear-job-fit-jd]")) {
       clearJobFitJd();
+      return;
+    }
+
+    if (event.target.closest("[data-run-job-fit-analysis]")) {
+      runJobFitAnalysis().catch((error) => {
+        console.warn("Job fit analysis failed.", error);
+        const jobFit = getJobFitState();
+        jobFit.analysisLoading = false;
+        jobFit.analysisStatus = "직무적합도 분석 중 오류가 발생했습니다.";
+        rerenderJobFitWorkspace();
+      });
       return;
     }
 
