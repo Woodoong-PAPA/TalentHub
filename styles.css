@@ -30,6 +30,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html {
   width: 100%;
   min-height: 100%;
@@ -1725,6 +1729,25 @@ tr:last-child td {
   background: var(--surface-soft);
 }
 
+.screening-applicant-card.is-reviewing {
+  border-color: rgba(49, 130, 246, 0.45);
+}
+
+.screening-applicant-card.is-passed {
+  border-color: rgba(3, 178, 108, 0.45);
+  box-shadow: inset 4px 0 0 rgba(3, 178, 108, 0.28);
+}
+
+.screening-applicant-card.is-draft {
+  border-color: rgba(254, 152, 0, 0.55);
+  box-shadow: inset 4px 0 0 rgba(254, 152, 0, 0.28);
+}
+
+.screening-applicant-card.is-rejected {
+  border-color: rgba(240, 68, 82, 0.5);
+  box-shadow: inset 4px 0 0 rgba(240, 68, 82, 0.24);
+}
+
 .screening-lock-note {
   color: var(--blue-700);
   font-size: 12px;
@@ -1812,6 +1835,36 @@ tr:last-child td {
   font-weight: 800;
 }
 
+.screening-opinion-field {
+  grid-column: 1 / -1;
+}
+
+.screening-opinion-field .control-textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.screening-fit-criteria-panel {
+  gap: 12px;
+}
+
+.screening-fit-criteria-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.screening-fit-criteria-list span {
+  border: 1px solid var(--blue-soft);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .screening-applicant-detail-modal {
   max-width: 860px;
 }
@@ -1861,6 +1914,12 @@ tr:last-child td {
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.screening-fit-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .screening-detail-list small {
@@ -2526,6 +2585,90 @@ tr:last-child td {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+
+.screening-result-launch-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.screening-result-launch-panel > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.screening-result-launch-panel span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.screening-pass-summary {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.screening-pass-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.screening-result-send-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.screening-result-send-block {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.compact-panel-header {
+  gap: 8px;
+}
+
+.compact-panel-header h5 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.screening-interviewer-list,
+.screening-slot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.screening-interviewer-row,
+.screening-slot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.screening-slot-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.screening-availability-preview-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .screening-mail-guide {
@@ -4340,6 +4483,10 @@ tr:last-child td {
   .screening-applicant-grid,
   .screening-detail-list,
   .screening-fit-detail,
+  .screening-fit-report-grid,
+  .screening-result-send-grid,
+  .screening-interviewer-row,
+  .screening-slot-row,
   .job-fit-result-card,
   .job-fit-profile-summary,
   .job-fit-match-grid,
@@ -4365,6 +4512,11 @@ tr:last-child td {
 
   .job-fit-result-actions {
     justify-content: flex-start;
+  }
+
+  .screening-result-launch-panel {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .screening-file-preview {
