@@ -683,6 +683,22 @@ function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function getKstDateKey(offsetDays = 0) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const date = new Date(Date.UTC(Number(byType.year), Number(byType.month) - 1, Number(byType.day) + offsetDays));
+  return date.toISOString().slice(0, 10);
+}
+
+function getTrendingTargetDate() {
+  return getKstDateKey(-1);
+}
+
 function dateDaysAgo(days) {
   const date = new Date();
   date.setDate(date.getDate() - days);
@@ -3423,6 +3439,10 @@ function trendingReportNeedsRefresh(report) {
     return true;
   }
 
+  if (!state.trendingSelectedDate && (report.targetDate || report.reportDate) !== getTrendingTargetDate()) {
+    return true;
+  }
+
   if (Number(report.profileCompletenessVersion || 0) < TRENDING_PROFILE_COMPLETENESS_VERSION) {
     return true;
   }
@@ -3445,6 +3465,8 @@ function setView(view) {
   state.view = view;
   if (view !== "trending") {
     state.trendingModal = "";
+  } else if (previousView !== "trending") {
+    state.trendingSelectedDate = "";
   }
   if (view !== "screening") {
     state.screeningPositionModalOpen = false;
@@ -12489,11 +12511,18 @@ async function fetchTrendingPeople(options = {}) {
     persistState();
     renderTrendingPeople();
     fetchTrendingHistory({ silent: true });
-    showToast("Today's Talent 리포트를 불러왔습니다.");
+    showToast(payload.refreshFailed
+      ? "Today's Talent 최신 갱신에 실패해 기존 리포트를 유지했습니다."
+      : "Today's Talent 리포트를 불러왔습니다.");
   } catch (error) {
     console.warn("Trending people report failed.", error);
     state.trendingLoading = false;
-    state.trendingError = "Today's Talent 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+    if (state.trendingReport?.people?.length) {
+      state.trendingError = "";
+      showToast("Today's Talent 최신 갱신에 실패해 기존 리포트를 유지했습니다.");
+    } else {
+      state.trendingError = "Today's Talent 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+    }
     renderTrendingPeople();
   }
 }

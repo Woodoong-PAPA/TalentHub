@@ -2,10 +2,9 @@ name: Today's Talent Daily Jobs
 
 on:
   schedule:
-    # 06:00 KST. Generate the previous day's Today's Talent report.
-    - cron: "0 21 * * *"
-    # 07:00 KST. Send the generated report according to saved mail settings.
-    - cron: "0 22 * * *"
+    # Poll every 5 minutes. The API prevents duplicate mail sends, and this
+    # avoids missing the daily jobs when a scheduled runner is delayed.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       action:
@@ -25,8 +24,35 @@ jobs:
       PRIMARY_APP_ORIGIN: https://talentpool-dx.com
       FALLBACK_APP_ORIGIN: https://samsung-talent-pool-console.vercel.app
     steps:
+      - name: Resolve KST job window
+        id: kst
+        shell: bash
+        run: |
+          hour="$(TZ=Asia/Seoul date +%H)"
+          minute="$(TZ=Asia/Seoul date +%M)"
+          total=$((10#$hour * 60 + 10#$minute))
+          generate=false
+          ensure=false
+          mail=false
+
+          if [ "$total" -ge 360 ] && [ "$total" -lt 365 ]; then
+            generate=true
+          fi
+
+          if [ "$total" -ge 360 ]; then
+            ensure=true
+          fi
+
+          if [ "$total" -ge 420 ]; then
+            mail=true
+          fi
+
+          echo "generate=$generate" >> "$GITHUB_OUTPUT"
+          echo "ensure=$ensure" >> "$GITHUB_OUTPUT"
+          echo "mail=$mail" >> "$GITHUB_OUTPUT"
+
       - name: Generate Today's Talent report
-        if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'both' || github.event.inputs.action == 'generate')) || github.event.schedule == '0 21 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'both' || github.event.inputs.action == 'generate')) || steps.kst.outputs.generate == 'true' }}
         run: |
           for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
             if curl --fail --silent --show-error --retry 2 --retry-delay 20 \
@@ -36,8 +62,19 @@ jobs:
           done
           exit 1
 
+      - name: Ensure Today's Talent report exists
+        if: ${{ github.event_name == 'schedule' && steps.kst.outputs.ensure == 'true' }}
+        run: |
+          for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
+            if curl --fail --silent --show-error --retry 2 --retry-delay 20 \
+              "$origin/api/trending-people"; then
+              exit 0
+            fi
+          done
+          exit 1
+
       - name: Send Today's Talent mail
-        if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'both' || github.event.inputs.action == 'mail')) || github.event.schedule == '0 22 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'both' || github.event.inputs.action == 'mail')) || steps.kst.outputs.mail == 'true' }}
         run: |
           for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
             if curl --fail --silent --show-error --retry 2 --retry-delay 20 \

@@ -254,9 +254,14 @@ function getTargetDate(requestUrl) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : kstDateKeyOffset(-1);
 }
 
+function isCronRequest(requestUrl) {
+  const url = new URL(requestUrl, "http://localhost");
+  return url.pathname.endsWith("/trending-people-cron") || url.searchParams.get("cron") === "1";
+}
+
 function forceRefresh(requestUrl) {
   const url = new URL(requestUrl, "http://localhost");
-  return url.searchParams.get("force") === "1" || url.searchParams.get("cron") === "1";
+  return url.searchParams.get("force") === "1" || isCronRequest(requestUrl);
 }
 
 function wantsHistory(requestUrl) {
@@ -919,6 +924,26 @@ async function saveReport(report) {
       payload: report
     }])
   });
+}
+
+async function logReportEvent(event) {
+  try {
+    await supabaseRequest("trending_mail_events", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify([{
+        event_type: event.eventType || "report_cron",
+        report_date: event.reportDate || null,
+        status: event.status,
+        message: event.message || "",
+        recipients: [],
+        provider: "trending-people",
+        payload: event.payload || {}
+      }])
+    });
+  } catch (error) {
+    console.warn("Trending report event could not be logged.", error.message);
+  }
 }
 
 function extractOutputText(responseJson) {
@@ -2053,6 +2078,40 @@ module.exports = async function trendingPeople(request, response) {
     });
   } catch (error) {
     console.warn("Trending people report failed.", error);
+
+    const canUseFallback = request.method === "GET" && !wantsSearchSettings(request.url) && !wantsHistory(request.url);
+
+    if (canUseFallback) {
+      const targetDate = getTargetDate(request.url);
+      const fallback = await loadCachedReport(targetDate).catch((fallbackError) => {
+        console.warn("Trending people fallback cache failed.", fallbackError.message);
+        return null;
+      });
+
+      await logReportEvent({
+        eventType: isCronRequest(request.url) ? "report_cron_failed" : "report_refresh_failed",
+        reportDate: targetDate,
+        status: "failed",
+        message: error.message || "Trending people report failed",
+        payload: {
+          fallbackUsed: Boolean(fallback?.people?.length),
+          requestUrl: request.url
+        }
+      });
+
+      if (fallback?.people?.length) {
+        sendJson(response, 200, {
+          ok: true,
+          cached: true,
+          stale: true,
+          refreshFailed: true,
+          warning: error.message || "Trending people report refresh failed. Cached report returned.",
+          report: fallback
+        });
+        return;
+      }
+    }
+
     sendJson(response, 500, {
       ok: false,
       error: error.message || "Trending people report failed"
