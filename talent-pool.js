@@ -98,6 +98,9 @@ const CANDIDATE_VISIBILITY_ORDER = ["all", "business_unit"];
 const POLICY_CHAT_MAX_CONTEXTS = 4;
 const POLICY_CHAT_MAX_MESSAGES = 20;
 const POLICY_CHAT_MAX_CONTEXT_CHARS = 1800;
+const JOB_FIT_MAX_JD_CHARS = 16000;
+const JOB_FIT_MAX_RESUME_CHARS = 50000;
+const JOB_FIT_MAX_KEYWORD_TOKENS = 180;
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
 const REMEMBERED_LOGIN_EMAIL_KEY = "samsung-talent-pool-remembered-email-v1";
 const SCREENING_STAGE_LABELS = {
@@ -1814,6 +1817,12 @@ function restorePersistedState() {
 
   if (persisted.jobFitAnalysis && typeof persisted.jobFitAnalysis === "object") {
     state.jobFitAnalysis = normalizeJobFitState(persisted.jobFitAnalysis);
+    state.jobFitAnalysis.jdLoading = false;
+    state.jobFitAnalysis.resumeLoading = false;
+    state.jobFitAnalysis.analysisLoading = false;
+    if (persisted.jobFitAnalysis.analysisLoading || persisted.jobFitAnalysis.loading) {
+      state.jobFitAnalysis.analysisStatus = "이전 분석이 완료되지 않아 대기 상태로 복구했습니다. 평가 분석 시작 버튼을 다시 눌러 주세요.";
+    }
   }
 
   if (state.candidates.some((candidate) => candidate.id === persisted.selectedCandidateId)) {
@@ -5157,7 +5166,7 @@ function splitJobFitSentences(text) {
 }
 
 function extractJobFitRequirements(jdText) {
-  const lines = splitJobFitSentences(jdText)
+  const lines = splitJobFitSentences(String(jdText || "").slice(0, JOB_FIT_MAX_JD_CHARS))
     .map((line) => line.replace(/^(?:자격요건|우대사항|담당업무|필수요건|주요업무|Requirements?|Preferred)\s*[:：-]?\s*/i, "").trim())
     .filter((line) => line.length >= 5 && line.length <= 180);
   const strongLines = lines.filter((line) =>
@@ -5182,7 +5191,7 @@ function extractJobFitRequirements(jdText) {
 
 function scoreRequirementAgainstResume(requirement, resumeText) {
   const requirementText = normalizeSearchText(requirement);
-  const resumeSearchText = normalizeSearchText(resumeText);
+  const resumeSearchText = normalizeSearchText(String(resumeText || "").slice(0, JOB_FIT_MAX_RESUME_CHARS));
   const tokens = tokenizeSearchText(requirement)
     .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token));
   const uniqueTokens = [...new Set(tokens)];
@@ -5232,8 +5241,10 @@ function buildJobFitComment(result, totalRequirements) {
 }
 
 function evaluateJobFitResume(jdText, resume) {
-  const requirements = extractJobFitRequirements(jdText);
-  const checks = requirements.map((requirement) => scoreRequirementAgainstResume(requirement, resume.text));
+  const normalizedJdText = normalizeResumeText(jdText).slice(0, JOB_FIT_MAX_JD_CHARS);
+  const normalizedResumeText = normalizeResumeText(resume.text).slice(0, JOB_FIT_MAX_RESUME_CHARS);
+  const requirements = extractJobFitRequirements(normalizedJdText);
+  const checks = requirements.map((requirement) => scoreRequirementAgainstResume(requirement, normalizedResumeText));
   const fulfilled = checks.filter((item) => item.fulfilled).map((item) => item.requirement);
   const missing = checks.filter((item) => !item.fulfilled).map((item) => item.requirement);
   const evidence = checks
@@ -5241,11 +5252,13 @@ function evaluateJobFitResume(jdText, resume) {
     .map((item) => `${item.requirement} · 근거 키워드: ${item.matchedTokens.slice(0, 6).join(", ")}`)
     .slice(0, 5);
   const requirementScore = requirements.length ? (fulfilled.length / requirements.length) * 74 : 0;
-  const jdTokens = tokenizeSearchText(jdText).filter((token) => token.length >= 3 && !SEARCH_STOPWORDS.has(token));
-  const resumeSearchText = normalizeSearchText(resume.text);
+  const jdTokens = tokenizeSearchText(normalizedJdText)
+    .filter((token) => token.length >= 3 && !SEARCH_STOPWORDS.has(token))
+    .slice(0, JOB_FIT_MAX_KEYWORD_TOKENS);
+  const resumeSearchText = normalizeSearchText(normalizedResumeText);
   const keywordHits = [...new Set(jdTokens)].filter((token) => resumeSearchText.includes(token));
   const keywordScore = Math.min(22, keywordHits.length * 2);
-  const textVolumeScore = resume.text.length >= 400 ? 4 : resume.text.length >= 120 ? 2 : 0;
+  const textVolumeScore = normalizedResumeText.length >= 400 ? 4 : normalizedResumeText.length >= 120 ? 2 : 0;
   const score = Math.round(Math.max(0, Math.min(100, requirementScore + keywordScore + textVolumeScore)));
   const grade = gradeFromJobFitScore(score);
   const result = {
@@ -5503,6 +5516,7 @@ function rerenderJobFitWorkspace(options = {}) {
 function updateJobFitJdText(value) {
   const jobFit = getJobFitState();
   jobFit.jdText = value;
+  jobFit.analysisLoading = false;
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
   jobFit.analysisStatus = value.trim()
@@ -5522,6 +5536,7 @@ async function handleJobFitJdFileUpload(file) {
   }
 
   const jobFit = getJobFitState();
+  jobFit.analysisLoading = false;
   jobFit.jdLoading = true;
   jobFit.jdStatus = `${file.name} 파일을 읽는 중입니다.`;
   jobFit.analysisStatus = "";
@@ -5557,6 +5572,7 @@ async function handleJobFitResumeUpload(files) {
   }
 
   const jobFit = getJobFitState();
+  jobFit.analysisLoading = false;
   jobFit.resumeLoading = true;
   jobFit.resumeStatus = `${uploadFiles.length}개 이력서를 읽는 중입니다.`;
   jobFit.analysisStatus = "";
@@ -5598,6 +5614,7 @@ async function handleJobFitResumeUpload(files) {
 
 function removeJobFitResume(resumeId) {
   const jobFit = getJobFitState();
+  jobFit.analysisLoading = false;
   jobFit.resumes = jobFit.resumes.filter((resume) => resume.id !== resumeId);
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
@@ -5608,6 +5625,7 @@ function removeJobFitResume(resumeId) {
 
 function clearJobFitJd() {
   const jobFit = getJobFitState();
+  jobFit.analysisLoading = false;
   jobFit.jdText = "";
   jobFit.jdFile = null;
   jobFit.results = [];
@@ -5620,6 +5638,13 @@ function clearJobFitJd() {
 async function runJobFitAnalysis() {
   const jobFit = getJobFitState();
   const jdText = normalizeResumeText(jobFit.jdText);
+
+  if (jobFit.jdLoading || jobFit.resumeLoading) {
+    jobFit.analysisStatus = "파일을 읽는 중입니다. 업로드가 끝난 뒤 평가 분석을 시작해 주세요.";
+    rerenderJobFitWorkspace();
+    showToast("파일 업로드가 끝난 뒤 분석을 시작해 주세요.");
+    return;
+  }
 
   if (!jdText) {
     jobFit.analysisStatus = "직무기술서를 먼저 입력하거나 업로드해 주세요.";
@@ -5638,16 +5663,24 @@ async function runJobFitAnalysis() {
   jobFit.analysisLoading = true;
   jobFit.analysisStatus = "평가 분석을 진행 중입니다.";
   renderJobFitAnalysis();
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-  refreshJobFitResults();
-  jobFit.analysisLoading = false;
-  jobFit.hasAnalyzed = true;
-  jobFit.analysisStatus = jobFit.results.length
-    ? `${jobFit.results.length}개 이력서의 직무적합도 분석을 완료했습니다.`
-    : "분석 결과를 생성하지 못했습니다. 업로드한 파일의 텍스트를 확인해 주세요.";
-  addAuditLog("직무적합도 분석 실행", `${jobFit.resumes.length}개 이력서`, `결과 ${jobFit.results.length}개`);
-  rerenderJobFitWorkspace();
+  try {
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    refreshJobFitResults();
+    jobFit.hasAnalyzed = true;
+    jobFit.analysisStatus = jobFit.results.length
+      ? `${jobFit.results.length}개 이력서의 직무적합도 분석을 완료했습니다.`
+      : "분석 결과를 생성하지 못했습니다. 업로드한 파일의 텍스트를 확인해 주세요.";
+    addAuditLog("직무적합도 분석 실행", `${jobFit.resumes.length}개 이력서`, `결과 ${jobFit.results.length}개`);
+  } catch (error) {
+    console.warn("Job fit analysis failed.", error);
+    jobFit.results = [];
+    jobFit.hasAnalyzed = true;
+    jobFit.analysisStatus = "직무적합도 분석 중 오류가 발생했습니다. JD와 이력서 파일의 텍스트를 확인한 뒤 다시 실행해 주세요.";
+  } finally {
+    jobFit.analysisLoading = false;
+    rerenderJobFitWorkspace();
+  }
 }
 
 function inferJobFitAnalysisTitle(jdText, results) {
