@@ -2019,6 +2019,248 @@ tr:last-child td {
   min-width: 0;
 }
 
+.job-fit-workspace {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.job-fit-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.job-fit-upload-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.job-fit-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-fit-panel-header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.job-fit-panel-header strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.job-fit-panel-header span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.job-fit-upload-card .control-textarea {
+  min-height: 240px;
+  resize: vertical;
+}
+
+.job-fit-resume-dropzone,
+.job-fit-upload-card .compact-upload {
+  min-height: 92px;
+}
+
+.job-fit-file-list,
+.job-fit-saved-list,
+.job-fit-result-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.job-fit-file-row,
+.job-fit-saved-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-soft);
+}
+
+.job-fit-file-row span,
+.job-fit-saved-card > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.job-fit-file-row strong,
+.job-fit-file-row small,
+.job-fit-saved-card strong,
+.job-fit-saved-card span {
+  overflow-wrap: anywhere;
+}
+
+.job-fit-file-row small,
+.job-fit-saved-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.job-fit-status {
+  margin: 0;
+}
+
+.job-fit-results-panel,
+.job-fit-saved-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.job-fit-requirement-summary {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.job-fit-requirement-summary > strong {
+  font-size: 13px;
+}
+
+.job-fit-requirement-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.job-fit-requirement-summary span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.job-fit-result-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface);
+}
+
+.job-fit-result-rank {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius);
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-weight: 900;
+}
+
+.job-fit-result-main {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.job-fit-result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-fit-result-header > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.job-fit-result-header strong {
+  font-size: 16px;
+}
+
+.job-fit-result-header span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.job-fit-score-box {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.job-fit-score-box > strong {
+  font-size: 18px;
+}
+
+.job-fit-comment {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.job-fit-match-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.job-fit-match-grid section,
+.job-fit-evidence {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.job-fit-match-grid strong,
+.job-fit-evidence strong {
+  font-size: 13px;
+}
+
+.job-fit-requirement-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.job-fit-requirement-list li {
+  overflow-wrap: anywhere;
+}
+
+.job-fit-evidence span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .screening-access-chip strong,
 .screening-access-chip small,
 .screening-access-result strong,
@@ -3741,6 +3983,7 @@ tr:last-child td {
 
   .form-grid,
   .ai-layout,
+  .job-fit-upload-grid,
   .policy-chat-layout,
   .screening-layout,
   .detail-page-shell {
@@ -3885,11 +4128,26 @@ tr:last-child td {
   .screening-applicant-grid,
   .screening-detail-list,
   .screening-fit-detail,
+  .job-fit-result-card,
+  .job-fit-match-grid,
+  .job-fit-file-row,
+  .job-fit-saved-card,
   .screening-access-chip,
   .screening-access-result,
   .screening-file-preview {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .job-fit-panel-header,
+  .job-fit-result-header,
+  .job-fit-score-box {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .job-fit-score-box {
+    justify-content: flex-start;
   }
 
   .screening-file-preview {

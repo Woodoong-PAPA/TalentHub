@@ -40,6 +40,10 @@
             <span class="nav-icon">A</span>
             <span>AI Search</span>
           </button>
+          <button class="nav-item" type="button" data-view="job-fit">
+            <span class="nav-icon">J</span>
+            <span>직무적합도 분석</span>
+          </button>
           <button class="nav-item" type="button" data-view="policy-chat">
             <span class="nav-icon">C</span>
             <span>채용 AI 챗봇</span>
@@ -118,6 +122,17 @@
               <span class="status-chip chip-green">민감 속성 제외</span>
             </div>
             <div id="ai-search-content"></div>
+          </section>
+
+          <section id="job-fit-view" class="view" aria-labelledby="job-fit-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Role Fit Analysis</p>
+                <h3 id="job-fit-title">직무적합도 분석</h3>
+              </div>
+              <span class="status-chip chip-blue">JD 기반 A~E 평가</span>
+            </div>
+            <div id="job-fit-content"></div>
           </section>
 
           <section id="policy-chat-view" class="view" aria-labelledby="policy-chat-title">

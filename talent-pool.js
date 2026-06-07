@@ -23,6 +23,7 @@ const MENU_CONFIG = [
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
+  { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
   { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
@@ -61,9 +62,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
   applicant: ["screening"],
   general: ["dashboard", "pool", "policy-chat", "trending"],
   search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
-  hiring_manager: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "trending", "members"],
+  hiring_manager: ["dashboard", "pool", "screening", "ai-search", "job-fit", "policy-chat", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "ai-search", "job-fit", "policy-chat", "trending", "members"],
+  division_recruiter: ["dashboard", "pool", "screening", "ai-search", "job-fit", "policy-chat", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -567,6 +568,15 @@ const state = {
   aiResults: [],
   aiSearchLoading: false,
   aiSearchFileName: "",
+  jobFitAnalysis: {
+    jdText: "",
+    jdFile: null,
+    resumes: [],
+    results: [],
+    savedAnalyses: [],
+    loading: false,
+    status: ""
+  },
   policySources: [],
   policyChatMessages: [],
   policyChatQuestion: "",
@@ -605,6 +615,7 @@ const viewTitles = {
   screening: "Screening",
   register: "Add Talent",
   "ai-search": "AI Search",
+  "job-fit": "직무적합도 분석",
   "policy-chat": "채용 AI 챗봇",
   trending: "Today's Talent",
   detail: "상세 프로필",
@@ -1694,6 +1705,7 @@ function persistState(options = {}) {
         memberFilters: state.memberFilters,
         managementTab: state.managementTab,
         currentUserId: state.currentUserId,
+        jobFitAnalysis: state.jobFitAnalysis,
         trendingReport: state.trendingReport,
         trendingHistory: state.trendingHistory,
         trendingSelectedDate: state.trendingSelectedDate,
@@ -1793,6 +1805,10 @@ function restorePersistedState() {
 
   if (Array.isArray(persisted.policyChatMessages)) {
     state.policyChatMessages = persisted.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
+  }
+
+  if (persisted.jobFitAnalysis && typeof persisted.jobFitAnalysis === "object") {
+    state.jobFitAnalysis = normalizeJobFitState(persisted.jobFitAnalysis);
   }
 
   if (state.candidates.some((candidate) => candidate.id === persisted.selectedCandidateId)) {
@@ -3100,6 +3116,7 @@ function render() {
   renderScreening();
   renderRegister();
   renderAiSearch();
+  renderJobFitAnalysis();
   renderPolicyChat();
   renderTrendingPeople();
   renderDetail();
@@ -5022,6 +5039,600 @@ function renderAiSearch() {
       </section>
     </div>
   `;
+}
+
+function normalizeJobFitResume(resume = {}) {
+  const text = normalizeResumeText(resume.text || "");
+  const fileName = String(resume.fileName || resume.name || "이력서").trim();
+
+  return {
+    id: resume.id || createId("job-fit-resume"),
+    fileName,
+    size: Number(resume.size || 0),
+    type: String(resume.type || "").trim(),
+    text,
+    candidateName: String(resume.candidateName || inferCandidateNameFromResume(text, fileName)).trim(),
+    uploadedAt: resume.uploadedAt || getTimestampText()
+  };
+}
+
+function normalizeJobFitResult(result = {}) {
+  return {
+    resumeId: String(result.resumeId || "").trim(),
+    candidateName: String(result.candidateName || "").trim(),
+    fileName: String(result.fileName || "").trim(),
+    score: Math.max(0, Math.min(100, Number(result.score || 0))),
+    grade: FIT_GRADE_ORDER.includes(result.grade) ? result.grade : "E",
+    fulfilled: Array.isArray(result.fulfilled) ? result.fulfilled.filter(Boolean) : [],
+    missing: Array.isArray(result.missing) ? result.missing.filter(Boolean) : [],
+    evidence: Array.isArray(result.evidence) ? result.evidence.filter(Boolean) : [],
+    comment: String(result.comment || "").trim()
+  };
+}
+
+function normalizeJobFitState(value = {}) {
+  return {
+    jdText: normalizeResumeText(value.jdText || ""),
+    jdFile: value.jdFile && typeof value.jdFile === "object"
+      ? {
+          name: String(value.jdFile.name || "").trim(),
+          size: Number(value.jdFile.size || 0),
+          type: String(value.jdFile.type || "").trim(),
+          uploadedAt: value.jdFile.uploadedAt || ""
+        }
+      : null,
+    resumes: Array.isArray(value.resumes) ? value.resumes.map(normalizeJobFitResume).filter((resume) => resume.text) : [],
+    results: Array.isArray(value.results) ? value.results.map(normalizeJobFitResult) : [],
+    savedAnalyses: Array.isArray(value.savedAnalyses)
+      ? value.savedAnalyses.map(normalizeSavedJobFitAnalysis).filter(Boolean).slice(0, 20)
+      : [],
+    loading: Boolean(value.loading),
+    status: String(value.status || "").trim()
+  };
+}
+
+function normalizeSavedJobFitAnalysis(analysis = {}) {
+  if (!analysis || typeof analysis !== "object") {
+    return null;
+  }
+
+  return {
+    id: analysis.id || createId("job-fit-saved"),
+    title: String(analysis.title || "저장된 직무적합도 분석").trim(),
+    createdAt: analysis.createdAt || getTimestampText(),
+    createdBy: analysis.createdBy || getCurrentActorName(),
+    jdText: normalizeResumeText(analysis.jdText || ""),
+    jdFile: analysis.jdFile || null,
+    resumes: Array.isArray(analysis.resumes) ? analysis.resumes.map(normalizeJobFitResume) : [],
+    results: Array.isArray(analysis.results) ? analysis.results.map(normalizeJobFitResult) : []
+  };
+}
+
+function getJobFitState() {
+  state.jobFitAnalysis = normalizeJobFitState(state.jobFitAnalysis);
+  return state.jobFitAnalysis;
+}
+
+function inferCandidateNameFromResume(text, fileName = "") {
+  const normalized = normalizeResumeText(text);
+  const explicitName = firstMatch(normalized, [
+    /(?:이름|성명|Name)\s*[:：]\s*([^\n\r]{2,40})/i,
+    /^([가-힣]{2,5})\s*(?:\n|$)/m
+  ]);
+
+  if (explicitName) {
+    return cleanParsedValue(explicitName).split(/\s{2,}|[|,]/)[0].trim();
+  }
+
+  const baseName = String(fileName || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/\b(?:resume|cv|curriculum|vitae)\b/gi, "")
+    .replace(/(?:이력서|경력기술서|프로필|지원서)/g, "")
+    .replace(/[()[\]{}_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return baseName || "이름 미확인";
+}
+
+function splitJobFitSentences(text) {
+  return normalizeResumeText(text)
+    .split(/\n+|(?<=[.!?。！？])\s+|[•·]\s*/g)
+    .map((line) => line.replace(/^[-*ㆍ·•\d.()\s]+/, "").trim())
+    .filter(Boolean);
+}
+
+function extractJobFitRequirements(jdText) {
+  const lines = splitJobFitSentences(jdText)
+    .map((line) => line.replace(/^(?:자격요건|우대사항|담당업무|필수요건|주요업무|Requirements?|Preferred)\s*[:：-]?\s*/i, "").trim())
+    .filter((line) => line.length >= 5 && line.length <= 180);
+  const strongLines = lines.filter((line) =>
+    /(경험|역량|기술|개발|기획|운영|분석|리딩|관리|설계|전공|학위|커뮤니케이션|영어|논문|프로젝트|필수|우대|가능|보유|이상|년)/i.test(line)
+  );
+  const requirements = (strongLines.length ? strongLines : lines)
+    .filter((line, index, array) => array.findIndex((item) => normalizeSearchText(item) === normalizeSearchText(line)) === index)
+    .slice(0, 12);
+
+  if (requirements.length >= 3) {
+    return requirements;
+  }
+
+  const keywords = tokenizeSearchText(jdText)
+    .filter((token) => token.length >= 3 && !SEARCH_STOPWORDS.has(token))
+    .slice(0, 10);
+
+  return [...requirements, ...keywords.map((keyword) => `${keyword} 관련 경험 또는 역량`)]
+    .filter((line, index, array) => array.indexOf(line) === index)
+    .slice(0, 12);
+}
+
+function scoreRequirementAgainstResume(requirement, resumeText) {
+  const requirementText = normalizeSearchText(requirement);
+  const resumeSearchText = normalizeSearchText(resumeText);
+  const tokens = tokenizeSearchText(requirement)
+    .filter((token) => token.length >= 2 && !SEARCH_STOPWORDS.has(token));
+  const uniqueTokens = [...new Set(tokens)];
+  const matchedTokens = uniqueTokens.filter((token) => resumeSearchText.includes(token));
+  const directMatch = requirementText.length >= 6 && resumeSearchText.includes(requirementText);
+  const ratio = uniqueTokens.length ? matchedTokens.length / uniqueTokens.length : 0;
+  const fulfilled = directMatch || ratio >= 0.38 || (matchedTokens.length >= 2 && ratio >= 0.25);
+
+  return {
+    requirement,
+    fulfilled,
+    ratio,
+    matchedTokens
+  };
+}
+
+function gradeFromJobFitScore(score) {
+  if (score >= 82) return "A";
+  if (score >= 68) return "B";
+  if (score >= 52) return "C";
+  if (score >= 36) return "D";
+  return "E";
+}
+
+function buildJobFitComment(result, totalRequirements) {
+  if (!totalRequirements) {
+    return "JD 요구사항을 충분히 추출하지 못했습니다. 직무기술서를 더 구체적으로 입력하면 평가 정밀도가 높아집니다.";
+  }
+
+  if (result.grade === "A") {
+    return "JD 핵심 요구사항 대부분을 충족합니다. 우선 검토 대상입니다.";
+  }
+
+  if (result.grade === "B") {
+    return "핵심 요구사항과의 직접 연관성이 높습니다. 미충족 항목은 인터뷰에서 보완 확인이 필요합니다.";
+  }
+
+  if (result.grade === "C") {
+    return "일부 요구사항은 충족하나 핵심 경험의 직접 증거가 부족합니다. 세부 경력 검증이 필요합니다.";
+  }
+
+  if (result.grade === "D") {
+    return "JD와 일치하는 항목이 제한적입니다. 유관 경험 여부를 별도 확인해야 합니다.";
+  }
+
+  return "JD 요구사항과의 직접 일치도가 낮습니다. 현재 이력서 기준 우선순위는 낮습니다.";
+}
+
+function evaluateJobFitResume(jdText, resume) {
+  const requirements = extractJobFitRequirements(jdText);
+  const checks = requirements.map((requirement) => scoreRequirementAgainstResume(requirement, resume.text));
+  const fulfilled = checks.filter((item) => item.fulfilled).map((item) => item.requirement);
+  const missing = checks.filter((item) => !item.fulfilled).map((item) => item.requirement);
+  const evidence = checks
+    .filter((item) => item.fulfilled && item.matchedTokens.length)
+    .map((item) => `${item.requirement} · 근거 키워드: ${item.matchedTokens.slice(0, 6).join(", ")}`)
+    .slice(0, 5);
+  const requirementScore = requirements.length ? (fulfilled.length / requirements.length) * 74 : 0;
+  const jdTokens = tokenizeSearchText(jdText).filter((token) => token.length >= 3 && !SEARCH_STOPWORDS.has(token));
+  const resumeSearchText = normalizeSearchText(resume.text);
+  const keywordHits = [...new Set(jdTokens)].filter((token) => resumeSearchText.includes(token));
+  const keywordScore = Math.min(22, keywordHits.length * 2);
+  const textVolumeScore = resume.text.length >= 400 ? 4 : resume.text.length >= 120 ? 2 : 0;
+  const score = Math.round(Math.max(0, Math.min(100, requirementScore + keywordScore + textVolumeScore)));
+  const grade = gradeFromJobFitScore(score);
+  const result = {
+    resumeId: resume.id,
+    candidateName: resume.candidateName,
+    fileName: resume.fileName,
+    score,
+    grade,
+    fulfilled,
+    missing,
+    evidence,
+    comment: ""
+  };
+
+  result.comment = buildJobFitComment(result, requirements.length);
+  return result;
+}
+
+function refreshJobFitResults() {
+  const jobFit = getJobFitState();
+  const jdText = normalizeResumeText(jobFit.jdText);
+
+  if (!jdText || !jobFit.resumes.length) {
+    jobFit.results = [];
+    return jobFit.results;
+  }
+
+  jobFit.results = jobFit.resumes
+    .map((resume) => evaluateJobFitResume(jdText, resume))
+    .sort((a, b) => b.score - a.score || FIT_GRADE_ORDER.indexOf(a.grade) - FIT_GRADE_ORDER.indexOf(b.grade));
+
+  return jobFit.results;
+}
+
+function jobFitGradeChip(grade) {
+  const chipClass = {
+    A: "chip-green",
+    B: "chip-blue",
+    C: "chip-violet",
+    D: "chip-amber",
+    E: "chip-red"
+  }[grade] || "chip-blue";
+
+  return `<span class="status-chip ${chipClass}">적합도 ${escapeHtml(grade)}</span>`;
+}
+
+function renderJobFitRequirementList(items, emptyText) {
+  if (!items.length) {
+    return `<span class="muted-text">${escapeHtml(emptyText)}</span>`;
+  }
+
+  return `<ul class="job-fit-requirement-list">${items.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderJobFitResultCard(result, index) {
+  return `
+    <article class="job-fit-result-card">
+      <div class="job-fit-result-rank">${index + 1}</div>
+      <div class="job-fit-result-main">
+        <div class="job-fit-result-header">
+          <div>
+            <strong>${escapeHtml(result.candidateName || "이름 미확인")}</strong>
+            <span>${escapeHtml(result.fileName || "이력서")}</span>
+          </div>
+          <div class="job-fit-score-box">
+            ${jobFitGradeChip(result.grade)}
+            <strong>${escapeHtml(String(result.score))}%</strong>
+          </div>
+        </div>
+        <p class="job-fit-comment">${escapeHtml(result.comment)}</p>
+        <div class="job-fit-match-grid">
+          <section>
+            <strong>충족 항목</strong>
+            ${renderJobFitRequirementList(result.fulfilled, "충족으로 판단된 항목이 없습니다.")}
+          </section>
+          <section>
+            <strong>미충족/확인 필요 항목</strong>
+            ${renderJobFitRequirementList(result.missing, "미충족 항목이 없습니다.")}
+          </section>
+        </div>
+        ${result.evidence.length ? `
+          <div class="job-fit-evidence">
+            <strong>매칭 근거</strong>
+            ${result.evidence.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+          </div>
+        ` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderJobFitResultsPanel() {
+  const jobFit = getJobFitState();
+  refreshJobFitResults();
+  const hasJd = Boolean(normalizeResumeText(jobFit.jdText));
+  const hasResumes = jobFit.resumes.length > 0;
+  const requirements = hasJd ? extractJobFitRequirements(jobFit.jdText) : [];
+  const resultBody = jobFit.loading
+    ? `<div class="empty-state">업로드된 문서를 읽고 직무적합도를 다시 계산하는 중입니다.</div>`
+    : hasJd && hasResumes
+      ? jobFit.results.length
+        ? jobFit.results.map(renderJobFitResultCard).join("")
+        : `<div class="empty-state">분석 가능한 이력서 텍스트가 부족합니다. 다른 형식의 이력서를 추가해 주세요.</div>`
+      : `<div class="empty-state">왼쪽에 직무기술서를 입력하고 오른쪽에 이력서를 업로드하면 결과가 자동으로 표시됩니다.</div>`;
+
+  return `
+    <section class="form-panel job-fit-results-panel" id="job-fit-results-section">
+      <div class="job-fit-panel-header">
+        <div>
+          <strong>직무기술서 기반 평가 결과</strong>
+          <span>${hasJd ? `추출 요구사항 ${requirements.length}개` : "JD 미입력"} · 이력서 ${jobFit.resumes.length}개 · 결과 ${jobFit.results.length}개</span>
+        </div>
+        <button class="primary-button compact-button" type="button" data-save-job-fit-analysis ${jobFit.results.length ? "" : "disabled"}>분석 결과 저장</button>
+      </div>
+      ${requirements.length ? `
+        <div class="job-fit-requirement-summary">
+          <strong>JD 요구사항</strong>
+          <div>${requirements.slice(0, 8).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+        </div>
+      ` : ""}
+      <div class="job-fit-result-list">
+        ${resultBody}
+      </div>
+    </section>
+  `;
+}
+
+function renderJobFitResumeList() {
+  const resumes = getJobFitState().resumes;
+
+  if (!resumes.length) {
+    return `<div class="empty-state compact-empty">업로드된 이력서가 없습니다.</div>`;
+  }
+
+  return `
+    <div class="job-fit-file-list">
+      ${resumes.map((resume) => `
+        <div class="job-fit-file-row">
+          <span>
+            <strong>${escapeHtml(resume.candidateName || "이름 미확인")}</strong>
+            <small>${escapeHtml(resume.fileName)} · ${escapeHtml(formatFileSize(resume.size))}</small>
+          </span>
+          <button class="ghost-button danger-button compact-button" type="button" data-remove-job-fit-resume="${escapeHtml(resume.id)}">삭제</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderSavedJobFitAnalyses() {
+  const savedAnalyses = getJobFitState().savedAnalyses || [];
+
+  if (!savedAnalyses.length) {
+    return `<div class="empty-state compact-empty">저장된 분석 결과가 없습니다.</div>`;
+  }
+
+  return `
+    <div class="job-fit-saved-list">
+      ${savedAnalyses.map((analysis) => `
+        <article class="job-fit-saved-card">
+          <div>
+            <strong>${escapeHtml(analysis.title)}</strong>
+            <span>${escapeHtml(analysis.createdAt)} · ${escapeHtml(analysis.createdBy)} · 결과 ${analysis.results.length}개</span>
+          </div>
+          <div class="member-actions">
+            <button class="ghost-button compact-button" type="button" data-load-job-fit-analysis="${escapeHtml(analysis.id)}">불러오기</button>
+            <button class="ghost-button danger-button compact-button" type="button" data-delete-job-fit-analysis="${escapeHtml(analysis.id)}">삭제</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderJobFitAnalysis() {
+  const container = $("#job-fit-content");
+
+  if (!container) {
+    return;
+  }
+
+  const jobFit = getJobFitState();
+  const jdFileLabel = jobFit.jdFile
+    ? `${jobFit.jdFile.name} · ${formatFileSize(jobFit.jdFile.size)}`
+    : "파일을 업로드하면 텍스트를 읽어 JD 입력란에 자동 반영합니다.";
+
+  container.innerHTML = `
+    <div class="job-fit-workspace">
+      <div class="job-fit-upload-grid">
+        <section class="form-panel job-fit-upload-card">
+          <div class="job-fit-panel-header">
+            <div>
+              <strong>직무기술서</strong>
+              <span>직접 입력하거나 JD 파일을 업로드하세요.</span>
+            </div>
+            <button class="ghost-button compact-button" type="button" data-clear-job-fit-jd ${jobFit.jdText || jobFit.jdFile ? "" : "disabled"}>초기화</button>
+          </div>
+          <textarea class="control-textarea" id="job-fit-jd-text" rows="10" placeholder="직무의 역할, 필수 경험, 우대 요건, 수행 업무를 입력하세요.">${escapeHtml(jobFit.jdText)}</textarea>
+          <div class="dropzone compact-upload">
+            <input id="job-fit-jd-file" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
+            <span class="form-help">${escapeHtml(jdFileLabel)}</span>
+          </div>
+        </section>
+
+        <section class="form-panel job-fit-upload-card">
+          <div class="job-fit-panel-header">
+            <div>
+              <strong>이력서 풀</strong>
+              <span>여러 이력서를 한 번에 업로드할 수 있습니다.</span>
+            </div>
+            <span class="status-chip chip-blue">${jobFit.resumes.length}개</span>
+          </div>
+          <div class="dropzone job-fit-resume-dropzone">
+            <input id="job-fit-resume-files" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
+            <span class="form-help">이력서를 추가하거나 삭제하면 결과가 자동 재계산됩니다.</span>
+          </div>
+          <div id="job-fit-resume-list">
+            ${renderJobFitResumeList()}
+          </div>
+        </section>
+      </div>
+
+      ${jobFit.status ? `<div class="auth-message job-fit-status">${escapeHtml(jobFit.status)}</div>` : ""}
+      ${renderJobFitResultsPanel()}
+
+      <section class="form-panel job-fit-saved-panel" id="job-fit-saved-section">
+        <div class="job-fit-panel-header">
+          <div>
+            <strong>저장된 분석 결과</strong>
+            <span>저장한 결과는 나중에 다시 불러와 검토할 수 있습니다.</span>
+          </div>
+        </div>
+        ${renderSavedJobFitAnalyses()}
+      </section>
+    </div>
+  `;
+}
+
+function rerenderJobFitWorkspace() {
+  refreshJobFitResults();
+  persistState();
+  renderJobFitAnalysis();
+}
+
+function updateJobFitJdText(value) {
+  const jobFit = getJobFitState();
+  jobFit.jdText = value;
+  jobFit.status = "";
+  refreshJobFitResults();
+  persistState();
+
+  const resultSection = $("#job-fit-results-section");
+  if (resultSection) {
+    resultSection.outerHTML = renderJobFitResultsPanel();
+  }
+}
+
+async function handleJobFitJdFileUpload(file) {
+  if (!file) {
+    return;
+  }
+
+  const jobFit = getJobFitState();
+  jobFit.loading = true;
+  jobFit.status = `${file.name} 파일을 읽는 중입니다.`;
+  renderJobFitAnalysis();
+
+  try {
+    const result = await readResumeText(file);
+    jobFit.jdText = result.text;
+    jobFit.jdFile = {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      uploadedAt: getTimestampText()
+    };
+    jobFit.status = "직무기술서 파일 내용을 입력란에 반영했습니다.";
+  } catch (error) {
+    console.warn("JD file could not be read.", error);
+    jobFit.status = error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.";
+  } finally {
+    jobFit.loading = false;
+    rerenderJobFitWorkspace();
+  }
+}
+
+async function handleJobFitResumeUpload(files) {
+  const uploadFiles = [...(files || [])];
+
+  if (!uploadFiles.length) {
+    return;
+  }
+
+  const jobFit = getJobFitState();
+  jobFit.loading = true;
+  jobFit.status = `${uploadFiles.length}개 이력서를 읽는 중입니다.`;
+  renderJobFitAnalysis();
+
+  const loadedResumes = [];
+  const failedNames = [];
+
+  for (const file of uploadFiles) {
+    try {
+      const result = await readResumeText(file);
+      loadedResumes.push(normalizeJobFitResume({
+        fileName: file.name,
+        size: file.size,
+        type: file.type,
+        text: result.text,
+        uploadedAt: getTimestampText()
+      }));
+    } catch (error) {
+      console.warn("Resume file could not be read.", file.name, error);
+      failedNames.push(file.name);
+    }
+  }
+
+  jobFit.resumes = [...jobFit.resumes, ...loadedResumes];
+  jobFit.loading = false;
+  jobFit.status = [
+    loadedResumes.length ? `${loadedResumes.length}개 이력서를 분석 풀에 추가했습니다.` : "",
+    failedNames.length ? `읽지 못한 파일: ${failedNames.join(", ")}` : ""
+  ].filter(Boolean).join(" ");
+
+  rerenderJobFitWorkspace();
+}
+
+function removeJobFitResume(resumeId) {
+  const jobFit = getJobFitState();
+  jobFit.resumes = jobFit.resumes.filter((resume) => resume.id !== resumeId);
+  jobFit.status = "이력서를 삭제하고 적합도 결과를 다시 계산했습니다.";
+  rerenderJobFitWorkspace();
+}
+
+function clearJobFitJd() {
+  const jobFit = getJobFitState();
+  jobFit.jdText = "";
+  jobFit.jdFile = null;
+  jobFit.results = [];
+  jobFit.status = "직무기술서 입력을 초기화했습니다.";
+  rerenderJobFitWorkspace();
+}
+
+function inferJobFitAnalysisTitle(jdText, results) {
+  const firstLine = splitJobFitSentences(jdText)[0] || "직무적합도 분석";
+  const topName = results[0]?.candidateName ? ` · 1순위 ${results[0].candidateName}` : "";
+  return `${firstLine.slice(0, 42)}${firstLine.length > 42 ? "..." : ""}${topName}`;
+}
+
+function saveJobFitAnalysis() {
+  const jobFit = getJobFitState();
+  refreshJobFitResults();
+
+  if (!jobFit.results.length) {
+    showToast("저장할 분석 결과가 없습니다.");
+    return;
+  }
+
+  const saved = normalizeSavedJobFitAnalysis({
+    id: createId("job-fit-saved"),
+    title: inferJobFitAnalysisTitle(jobFit.jdText, jobFit.results),
+    createdAt: getTimestampText(),
+    createdBy: getCurrentActorName(),
+    jdText: jobFit.jdText,
+    jdFile: jobFit.jdFile,
+    resumes: jobFit.resumes,
+    results: jobFit.results
+  });
+
+  jobFit.savedAnalyses = [saved, ...jobFit.savedAnalyses.filter((item) => item.id !== saved.id)].slice(0, 20);
+  jobFit.status = "분석 결과를 저장했습니다.";
+  addAuditLog("직무적합도 분석 저장", saved.title, `${saved.results.length}개 이력서 평가`);
+  rerenderJobFitWorkspace();
+  showToast("분석 결과가 저장되었습니다.");
+}
+
+function loadSavedJobFitAnalysis(analysisId) {
+  const jobFit = getJobFitState();
+  const saved = jobFit.savedAnalyses.find((analysis) => analysis.id === analysisId);
+
+  if (!saved) {
+    showToast("저장된 분석 결과를 찾지 못했습니다.");
+    return;
+  }
+
+  state.jobFitAnalysis = normalizeJobFitState({
+    ...jobFit,
+    jdText: saved.jdText,
+    jdFile: saved.jdFile,
+    resumes: saved.resumes,
+    results: saved.results,
+    status: "저장된 분석 결과를 불러왔습니다."
+  });
+  rerenderJobFitWorkspace();
+}
+
+function deleteSavedJobFitAnalysis(analysisId) {
+  const jobFit = getJobFitState();
+  jobFit.savedAnalyses = jobFit.savedAnalyses.filter((analysis) => analysis.id !== analysisId);
+  jobFit.status = "저장된 분석 결과를 삭제했습니다.";
+  rerenderJobFitWorkspace();
 }
 
 function policySearchText(value) {
@@ -11963,6 +12574,34 @@ function bindEvents() {
       return;
     }
 
+    const removeJobFitResumeButton = event.target.closest("[data-remove-job-fit-resume]");
+    if (removeJobFitResumeButton) {
+      removeJobFitResume(removeJobFitResumeButton.dataset.removeJobFitResume);
+      return;
+    }
+
+    if (event.target.closest("[data-clear-job-fit-jd]")) {
+      clearJobFitJd();
+      return;
+    }
+
+    if (event.target.closest("[data-save-job-fit-analysis]")) {
+      saveJobFitAnalysis();
+      return;
+    }
+
+    const loadJobFitButton = event.target.closest("[data-load-job-fit-analysis]");
+    if (loadJobFitButton) {
+      loadSavedJobFitAnalysis(loadJobFitButton.dataset.loadJobFitAnalysis);
+      return;
+    }
+
+    const deleteJobFitButton = event.target.closest("[data-delete-job-fit-analysis]");
+    if (deleteJobFitButton) {
+      deleteSavedJobFitAnalysis(deleteJobFitButton.dataset.deleteJobFitAnalysis);
+      return;
+    }
+
     if (event.target.closest("[data-close-policy-citation]")) {
       closePolicyCitation();
       return;
@@ -12392,6 +13031,10 @@ function bindEvents() {
     if (event.target.id === "policy-chat-question") {
       state.policyChatQuestion = event.target.value;
     }
+
+    if (event.target.id === "job-fit-jd-text") {
+      updateJobFitJdText(event.target.value);
+    }
   });
 
   document.addEventListener("error", (event) => {
@@ -12474,6 +13117,24 @@ function bindEvents() {
 
       if (file) {
         handleAiSearchFileUpload(file);
+      }
+    }
+
+    if (event.target.id === "job-fit-jd-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        handleJobFitJdFileUpload(file);
+        event.target.value = "";
+      }
+    }
+
+    if (event.target.id === "job-fit-resume-files") {
+      const files = event.target.files;
+
+      if (files?.length) {
+        handleJobFitResumeUpload(files);
+        event.target.value = "";
       }
     }
 
