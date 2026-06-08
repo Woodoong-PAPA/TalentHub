@@ -4845,6 +4845,27 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.detail-core-performance {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.detail-text-block {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface-soft);
+}
+
+.detail-text-block > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .competency-tags {
   gap: 8px;
 }
@@ -5406,6 +5427,7 @@ tr:last-child td {
 
   .kpi-row,
   .field-grid,
+  .detail-core-performance,
   .detail-info-grid,
   .detail-plan-grid,
   .audit-grid {

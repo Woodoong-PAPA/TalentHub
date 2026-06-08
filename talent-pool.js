@@ -296,7 +296,7 @@ const SAMPLE_CANDIDATES = [
     parsingConfidence: 91,
     avatarColor: "#4e5968",
     skills: ["NAND", "Python", "공정 데이터", "수율 분석", "ML"],
-    tags: ["주요 역량/성과", "재접촉 우선", "검수 완료"],
+    tags: ["키워드", "재접촉 우선", "검수 완료"],
     summary:
       "NAND 공정 데이터 분석과 수율 개선 프로젝트를 수행한 6년차 엔지니어. Python 기반 이상 탐지 모델과 공정 변수 최적화 경험이 강점이다.",
     evidence: [
@@ -1021,10 +1021,10 @@ function removeConsentFields(candidate) {
 
   sanitized.tags = (sanitized.tags || [])
     .filter((item) => !String(item).includes(retiredPrivacyTerm))
-    .map((item) => String(item).replace("핵심 기술", "주요 역량/성과"));
+    .map((item) => String(item).replace("핵심 기술", "키워드").replace("주요 역량/성과", "키워드"));
   sanitized.evidence = (sanitized.evidence || [])
     .filter((item) => !String(item).includes(retiredPrivacyTerm))
-    .map((item) => String(item).replace("핵심 기술", "주요 역량/성과"));
+    .map((item) => String(item).replace("핵심 기술", "키워드").replace("주요 역량/성과", "키워드"));
   sanitized.timeline = (sanitized.timeline || [])
     .filter((item) => {
       const text = `${item.type || ""} ${item.text || ""} ${item.actor || ""}`;
@@ -1063,6 +1063,7 @@ function normalizeCandidate(candidate) {
     education: [],
     career: [],
     skills: [],
+    summary: "",
     tags: [],
     evidence: [],
     applications: [],
@@ -1087,6 +1088,7 @@ function normalizeCandidate(candidate) {
     ? normalized.attachments.filter((attachment) => attachment && (attachment.name || attachment.dataUrl))
     : [];
   normalized.education = (normalized.education || []).map(normalizeEducationRecord).filter(hasAnyRecordValue);
+  normalized.career = (normalized.career || []).map(normalizeCareerRecord).filter(hasAnyRecordValue);
   normalized.interviews = Array.isArray(normalized.interviews)
     ? normalized.interviews.map(normalizeInterviewRecord).filter(Boolean)
     : [];
@@ -1103,6 +1105,20 @@ function normalizeEducationRecord(record = {}) {
     affiliation: String(record.affiliation || record.department || record.organization || "").trim(),
     start: String(record.start || "").trim(),
     end: String(record.end || "").trim()
+  };
+}
+
+function normalizeCareerRecord(record = {}) {
+  const roleFields = normalizeCareerRoleFields(record.rank, record.position || record.department || record.title);
+
+  return {
+    country: String(record.country || "").trim(),
+    company: String(record.company || "").trim(),
+    rank: roleFields.rank,
+    position: roleFields.position,
+    start: String(record.start || "").trim(),
+    end: String(record.end || "").trim(),
+    achievements: String(record.achievements || "").trim()
   };
 }
 
@@ -7124,8 +7140,12 @@ function renderRegister() {
             <textarea class="control-textarea compact-textarea" id="candidate-role" name="role" rows="4"></textarea>
           </div>
           <div class="field">
-            <label for="candidate-skills">주요성과/실적</label>
-            <textarea class="control-textarea compact-textarea" id="candidate-skills" name="skills" rows="4"></textarea>
+            <label for="candidate-summary">주요성과/실적</label>
+            <textarea class="control-textarea compact-textarea" id="candidate-summary" name="summary" rows="4"></textarea>
+          </div>
+          <div class="field">
+            <label for="candidate-skills">키워드</label>
+            <textarea class="control-textarea compact-textarea" id="candidate-skills" name="skills" rows="3"></textarea>
           </div>
           <div class="field">
             <label for="candidate-organization">사업부</label>
@@ -11759,12 +11779,33 @@ function detailSection(title, content, className = "", sectionId = "") {
 function renderCompetencySection(candidate) {
   const tags = candidate.skills?.length
     ? candidate.skills.map((skill) => `<span class="tag">${escapeHtml(skill)}</span>`).join("")
-    : `<span class="muted">등록된 주요 역량/성과가 없습니다.</span>`;
+    : `<span class="muted">등록된 키워드가 없습니다.</span>`;
 
   return `
     <div class="bar-list">
       <div class="tag-row competency-tags">${tags}</div>
-      ${candidate.summary ? `<p class="detail-summary">${escapeHtml(candidate.summary)}</p>` : ""}
+    </div>
+  `;
+}
+
+function renderCorePerformanceSection(candidate) {
+  const core = String(candidate.role || "").trim();
+  const achievements = String(candidate.summary || "").trim();
+
+  return `
+    <div class="detail-core-performance">
+      <div class="detail-text-block">
+        <span>핵심 역량</span>
+        ${core
+          ? `<p class="detail-summary">${escapeHtml(core)}</p>`
+          : `<p class="muted">입력된 핵심 역량이 없습니다.</p>`}
+      </div>
+      <div class="detail-text-block">
+        <span>주요성과/실적</span>
+        ${achievements
+          ? `<p class="detail-summary">${escapeHtml(achievements)}</p>`
+          : `<p class="muted">입력된 주요성과/실적이 없습니다.</p>`}
+      </div>
     </div>
   `;
 }
@@ -11942,7 +11983,8 @@ function renderFullDetailContent(candidate) {
       ${detailSection("경력사항", renderCareerTab(candidate), "", "detail-profile-section")}
       ${detailSection("학력사항", renderEducationTab(candidate))}
       ${detailSection("인적사항", renderOverviewSection(candidate))}
-      ${detailSection("주요 역량/성과", renderCompetencySection(candidate), "is-primary", "detail-competency-section")}
+      ${detailSection("핵심 역량 / 주요성과·실적", renderCorePerformanceSection(candidate), "is-primary", "detail-core-performance-section")}
+      ${detailSection("키워드", renderCompetencySection(candidate), "", "detail-competency-section")}
       ${detailSection("첨부파일", renderResumeAttachmentSection(candidate))}
     </div>
   `;
@@ -12047,8 +12089,12 @@ function renderCandidateEditForm(candidate) {
             <textarea class="control-textarea compact-textarea" id="edit-role" name="editRole" rows="4">${inputValue(candidate.role)}</textarea>
           </div>
           <div class="field">
-            <label for="edit-skills">주요성과/실적</label>
-            <textarea class="control-textarea compact-textarea" id="edit-skills" name="editSkills" rows="4">${inputValue(candidate.skills.join("\n"))}</textarea>
+            <label for="edit-summary">주요성과/실적</label>
+            <textarea class="control-textarea compact-textarea" id="edit-summary" name="editSummary" rows="4">${inputValue(candidate.summary)}</textarea>
+          </div>
+          <div class="field">
+            <label for="edit-skills">키워드</label>
+            <textarea class="control-textarea compact-textarea" id="edit-skills" name="editSkills" rows="3">${inputValue(candidate.skills.join("\n"))}</textarea>
           </div>
           <div class="field">
             <label for="edit-organization">사업부</label>
@@ -12346,6 +12392,7 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.company = company;
   candidate.englishName = getFormText(form, "editEnglishName");
   candidate.role = getFormText(form, "editRole");
+  candidate.summary = getFormText(form, "editSummary");
   candidate.organization = normalizeBusinessUnit(getFormText(form, "editOrganization")) || candidate.organization;
   candidate.visibility = normalizeCandidateVisibility(getFormText(form, "editVisibility"));
   candidate.owner = normalizeOwnerSelection(getFormText(form, "editOwner")) || candidate.owner;
@@ -13748,6 +13795,13 @@ function cleanParsedValue(value) {
   return cleaned;
 }
 
+function cleanParsedMultilineValue(value) {
+  return splitNonEmptyLines(value)
+    .map((line) => cleanParsedValue(line))
+    .filter(Boolean)
+    .join("\n");
+}
+
 function labeledValueFromLine(line, labels) {
   const pattern = new RegExp(`^(?:${labels.map(escapeRegExp).join("|")})(?:\\s*[:：-]|\\s+)\\s*(.+)$`, "i");
   const match = cleanParsedValue(line).match(pattern) || line.match(pattern);
@@ -14056,6 +14110,68 @@ function normalizeCareerPart(value) {
     .replace(/^(?:경력|Career|Experience|Work Experience)[:：\s-]*/i, ""));
 }
 
+function looksLikeCareerRank(value) {
+  return /(?:CL\d|사원|주임|대리|과장|차장|부장|이사|상무|전무|부사장|사장|대표|대표이사|회장|의장|고문|창업자|교수|원장|연구원|연구위원|선임|책임|수석|전임|Staff|Senior|Sr\.?|Principal|Lead|Manager|Director|VP|CEO|CTO|CFO|COO|Founder|Engineer|Developer|Designer|Researcher|Scientist|Architect|PM|PO|팀장|파트장|그룹장|실장|센터장|본부장|부문장|Lab장|랩장|리더|Head)/i.test(cleanParsedValue(value));
+}
+
+function looksLikeCareerDepartment(value) {
+  const cleaned = cleanParsedValue(value);
+
+  if (!cleaned || looksLikeCareerRank(cleaned)) {
+    return false;
+  }
+
+  return /(?:팀|그룹|센터|실|본부|부문|사업부|연구소|연구실|랩|Lab|Laboratory|Department|Division|Office|Unit|TF|조직|파트|Chapter|Squad|Cell|Tribe)/i.test(cleaned);
+}
+
+function normalizeCareerRoleFields(rank, position) {
+  const rankParts = [];
+  const positionParts = [];
+
+  [rank, position]
+    .flatMap((value) => String(value || "").split(/\s*,\s*/))
+    .map(cleanParsedValue)
+    .filter(Boolean)
+    .forEach((value) => {
+      if (looksLikeCareerDepartment(value)) {
+        positionParts.push(value);
+      } else if (looksLikeCareerRank(value)) {
+        rankParts.push(value);
+      } else if (!rankParts.length) {
+        rankParts.push(value);
+      } else {
+        positionParts.push(value);
+      }
+    });
+
+  return {
+    rank: uniqueTextParts(rankParts).join(", "),
+    position: uniqueTextParts(positionParts).join(", ")
+  };
+}
+
+function normalizeCareerPartsToFields(parts = []) {
+  const rankParts = [];
+  const positionParts = [];
+
+  parts.map(cleanParsedValue).filter(Boolean).forEach((value) => {
+    if (looksLikeCareerDepartment(value)) {
+      positionParts.push(value);
+    } else if (looksLikeCareerRank(value)) {
+      rankParts.push(value);
+    } else if (!rankParts.length && value.length <= 30) {
+      rankParts.push(value);
+    } else if (value.length <= 30) {
+      positionParts.push(value);
+    }
+  });
+
+  return {
+    rank: uniqueTextParts(rankParts).join(", "),
+    position: uniqueTextParts(positionParts).join(", ")
+  };
+}
+
 function parseCareerLine(line) {
   const period = extractPeriodValues(line);
   const body = cleanParsedValue(line).replace(/^(?:경력|Career|Experience|Work Experience)[:：\s-]*/i, "");
@@ -14064,14 +14180,17 @@ function parseCareerLine(line) {
   const commaCareerLine = cleanParts.length >= 3 && (period.start || period.end || /(팀|그룹|센터|Lab|Team|Department|Designer|Engineer|Researcher|Manager|선임|수석|책임|과장|차장|부장|대리|사원)/i.test(body));
 
   if (commaCareerLine) {
+    const roleParts = cleanParts.slice(1, 4);
+    const roleFields = normalizeCareerPartsToFields(roleParts);
+
     return {
       country: body.includes("미국") || /USA|United States/i.test(body) ? "미국" : body.includes("대한민국") || body.includes("한국") ? "한국" : "",
       company: cleanParts[0],
-      rank: cleanParts[1],
-      position: cleanParts[2],
+      rank: roleFields.rank,
+      position: roleFields.position,
       start: period.start,
       end: period.end,
-      achievements: cleanParsedValue(cleanParts.slice(3).join(", "))
+      achievements: cleanParsedValue(cleanParts.slice(1 + roleParts.length).join(", "))
     };
   }
 
@@ -14081,12 +14200,13 @@ function parseCareerLine(line) {
   if (structuredCareerLine) {
     const periodIndex = parts.findIndex((part) => extractPeriodValues(part).start || extractPeriodValues(part).end);
     const achievementStart = periodIndex >= 0 ? periodIndex + 1 : 4;
+    const roleFields = normalizeCareerRoleFields(parts[2], parts[3]);
 
     return {
       country: cleanParsedValue(parts[0]),
       company: cleanParsedValue(parts[1]),
-      rank: cleanParsedValue(parts[2]),
-      position: cleanParsedValue(parts[3]),
+      rank: roleFields.rank,
+      position: roleFields.position,
       start: period.start,
       end: period.end,
       achievements: cleanParsedValue(parts.slice(achievementStart).join(", "))
@@ -14103,12 +14223,13 @@ function parseCareerLine(line) {
     /([가-힣A-Za-z0-9\s]+(?:팀|그룹|센터|랩|연구소|Lab|Team|Department|Office))/i
   ]));
   const rank = cleanParsedValue(firstMatch(bodyWithoutCompany, [/(선임\s*디자이너|Associate|사원|주임|대리|과장|차장|부장|책임연구원|선임연구원|수석연구원|책임|선임|수석|Staff|Senior|Principal|Manager|Designer|Engineer|Researcher)/i]));
+  const roleFields = normalizeCareerRoleFields(rank, position);
 
   return {
     country: body.includes("미국") || /USA|United States/i.test(body) ? "미국" : body.includes("대한민국") ? "대한민국" : "",
     company,
-    rank,
-    position,
+    rank: roleFields.rank,
+    position: roleFields.position,
     start: period.start,
     end: period.end,
     achievements: body.length > 30 ? body : ""
@@ -14202,7 +14323,7 @@ function buildResumeCoreCompetency(parsed = {}, career = [], education = [], ski
     return direct;
   }
 
-  const role = cleanParsedValue(parsed.role || career[0]?.position || career[0]?.rank);
+  const role = cleanParsedValue(parsed.role || career[0]?.rank || career[0]?.position);
   const skill = skillKeywords.find((item) => !/검수|필요/i.test(item)) || "";
   const major = education[0]?.major || "";
   let phrase = [skill, role].filter(Boolean).join(" ");
@@ -14264,7 +14385,7 @@ function parseResumeText(text, filename = "") {
   return {
     name,
     company,
-    role: role || career[0]?.position || "",
+    role: role || career[0]?.rank || career[0]?.position || "",
     birthYear: extractBirthYear(compact, lines),
     nationality: extractNationality(compact, lines),
     email: extractEmail(compact),
@@ -14318,19 +14439,23 @@ function recentRecordSortValue(record) {
 function normalizeParsedResumeForForm(parsed = {}) {
   const career = Array.isArray(parsed.career)
     ? parsed.career
-      .map((item) => ({
-        country: cleanParsedValue(item.country),
-        company: cleanParsedValue(item.company),
-        rank: cleanParsedValue(item.rank),
-        position: cleanParsedValue(item.position),
-        start: normalizeParsedDate(item.start),
-        end: normalizeParsedDate(item.end),
-        achievements: String(item.achievements || "")
-          .split(/\n+/)
-          .map((line) => cleanParsedValue(line))
-          .filter(Boolean)
-          .join("\n")
-      }))
+      .map((item) => {
+        const roleFields = normalizeCareerRoleFields(item.rank, item.position || item.department || item.title);
+
+        return {
+          country: cleanParsedValue(item.country),
+          company: cleanParsedValue(item.company),
+          rank: roleFields.rank,
+          position: roleFields.position,
+          start: normalizeParsedDate(item.start),
+          end: normalizeParsedDate(item.end),
+          achievements: String(item.achievements || "")
+            .split(/\n+/)
+            .map((line) => cleanParsedValue(line))
+            .filter(Boolean)
+            .join("\n")
+        };
+      })
       .filter(hasAnyRecordValue)
       .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
     : [];
@@ -14362,12 +14487,15 @@ function normalizeParsedResumeForForm(parsed = {}) {
     ]).map(cleanParsedValue).filter(Boolean))].slice(0, 3);
   const coreCompetency = buildResumeCoreCompetency(parsed, career, education, skills);
   const achievementSummary = buildResumeAchievementSummary(parsed, career, skills);
+  const keywordSkills = [...new Set(skills)].slice(0, 12);
+  const achievementText = achievementSummary.join("\n");
+  const parsedSummary = cleanParsedMultilineValue(parsed.summary);
 
   return {
     name: cleanParsedValue(parsed.name),
     englishName: cleanParsedValue(parsed.englishName || parsed.english_name || parsed.nameEnglish),
     company: cleanParsedValue(parsed.company || career[0]?.company),
-    role: coreCompetency || cleanParsedValue(parsed.role || career[0]?.position),
+    role: coreCompetency || cleanParsedValue(parsed.role || career[0]?.rank || career[0]?.position),
     birthYear: cleanParsedValue(parsed.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
     nationality: cleanParsedValue(parsed.nationality),
     email: extractEmail(String(parsed.email || "")),
@@ -14376,8 +14504,8 @@ function normalizeParsedResumeForForm(parsed = {}) {
     referenceUrl: referenceUrls[0] || "",
     referenceUrl2: referenceUrls[1] || "",
     referenceUrl3: referenceUrls[2] || "",
-    skills: achievementSummary.length ? achievementSummary : [...new Set(skills)].slice(0, 3),
-    summary: "",
+    skills: keywordSkills,
+    summary: parsedSummary || achievementText,
     education: education.length ? education : [{}],
     career: career.length ? career : [{}],
     warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map(cleanParsedValue).filter(Boolean) : []
@@ -14428,6 +14556,7 @@ function hasParsedResumeValues(parsed) {
     parsed?.referenceUrl ||
     parsed?.referenceUrl2 ||
     parsed?.referenceUrl3 ||
+    parsed?.summary ||
     parsed?.skills?.length ||
     parsed?.education?.some(hasAnyRecordValue) ||
     parsed?.career?.some(hasAnyRecordValue)
@@ -14440,6 +14569,7 @@ function mergeParsedResumeResults(primary = {}, fallback = {}) {
   const primaryCareer = (primary.career || []).filter(hasAnyRecordValue);
   const fallbackCareer = (fallback.career || []).filter(hasAnyRecordValue);
   const skills = [...new Set([...(primary.skills || []), ...(fallback.skills || [])].map(cleanParsedValue).filter(Boolean))];
+  const summary = cleanParsedMultilineValue(primary.summary) || cleanParsedMultilineValue(fallback.summary);
   const referenceUrls = [
     primary.referenceUrl,
     primary.referenceUrl2,
@@ -14466,7 +14596,8 @@ function mergeParsedResumeResults(primary = {}, fallback = {}) {
     referenceUrl2: uniqueReferenceUrls[1] || "",
     referenceUrl3: uniqueReferenceUrls[2] || "",
     coreCompetency: primary.coreCompetency || fallback.coreCompetency || primary.role || fallback.role,
-    achievementSummary: primary.skills?.length ? primary.skills : fallback.skills,
+    summary,
+    achievementSummary: splitNonEmptyLines(summary),
     skills,
     education: primaryEducation.length ? primaryEducation : fallbackEducation,
     career: primaryCareer.length ? primaryCareer : fallbackCareer
@@ -14486,6 +14617,7 @@ function registerFormHasEnteredValues() {
     "#candidate-reference-url",
     "#candidate-reference-url-2",
     "#candidate-reference-url-3",
+    "#candidate-summary",
     "#candidate-skills"
   ];
   const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
@@ -14531,6 +14663,7 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   setFieldValue("#candidate-reference-url", parsed.referenceUrl, overwrite);
   setFieldValue("#candidate-reference-url-2", parsed.referenceUrl2, overwrite);
   setFieldValue("#candidate-reference-url-3", parsed.referenceUrl3, overwrite);
+  setFieldValue("#candidate-summary", parsed.summary, overwrite);
   setFieldValue("#candidate-skills", parsed.skills.join("\n"), overwrite);
   updateAgeOutput("#candidate-birth-year", "#candidate-age");
 
@@ -14609,6 +14742,7 @@ function editFormHasEnteredValues() {
     "#edit-reference-url",
     "#edit-reference-url-2",
     "#edit-reference-url-3",
+    "#edit-summary",
     "#edit-skills"
   ];
   const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
@@ -14637,6 +14771,7 @@ function applyParsedResumeToEditForm(parsed, options = {}) {
   setFieldValue("#edit-reference-url", parsed.referenceUrl, overwrite);
   setFieldValue("#edit-reference-url-2", parsed.referenceUrl2, overwrite);
   setFieldValue("#edit-reference-url-3", parsed.referenceUrl3, overwrite);
+  setFieldValue("#edit-summary", parsed.summary, overwrite);
   setFieldValue("#edit-skills", parsed.skills.join("\n"), overwrite);
   updateAgeOutput("#edit-birth-year", "#edit-age");
 
@@ -15467,6 +15602,7 @@ async function registerCandidate(eventOrForm) {
   const name = form.get("name").toString().trim();
   const englishName = form.get("englishName").toString().trim();
   const role = form.get("role").toString().trim();
+  const summary = form.get("summary").toString().trim();
   const visibility = normalizeCandidateVisibility(form.get("visibility"));
   let organization = normalizeBusinessUnit(form.get("organization"));
   if (visibility === "business_unit" && !organization) {
@@ -15568,10 +15704,10 @@ async function registerCandidate(eventOrForm) {
     career,
     skills,
     tags: ["신규 등록", "검수 필요"],
-    summary: "",
+    summary,
     evidence: [
       "업로드 이력서에서 후보자 정보를 자동 입력",
-      "주요성과/실적 태그 자동 생성",
+      "키워드 자동 생성",
       "담당자 검수 대기 상태"
     ],
     applications: [],

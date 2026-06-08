@@ -147,6 +147,50 @@ function recentSortValue(record) {
   return normalized || "0000-00";
 }
 
+function uniqueTextParts(parts) {
+  return [...new Set(parts.map(normalizeString).filter(Boolean))];
+}
+
+function looksLikeCareerRank(value) {
+  return /(?:CL\d|사원|주임|대리|과장|차장|부장|이사|상무|전무|부사장|사장|대표|대표이사|회장|의장|고문|창업자|교수|원장|연구원|연구위원|선임|책임|수석|전임|Staff|Senior|Sr\.?|Principal|Lead|Manager|Director|VP|CEO|CTO|CFO|COO|Founder|Engineer|Developer|Designer|Researcher|Scientist|Architect|PM|PO|팀장|파트장|그룹장|실장|센터장|본부장|부문장|Lab장|랩장|리더|Head)/i.test(normalizeString(value));
+}
+
+function looksLikeCareerDepartment(value) {
+  const text = normalizeString(value);
+
+  if (!text || looksLikeCareerRank(text)) {
+    return false;
+  }
+
+  return /(?:팀|그룹|센터|실|본부|부문|사업부|연구소|연구실|랩|Lab|Laboratory|Department|Division|Office|Unit|TF|조직|파트|Chapter|Squad|Cell|Tribe)/i.test(text);
+}
+
+function normalizeCareerRoleFields(rank, position) {
+  const rankParts = [];
+  const positionParts = [];
+
+  [rank, position]
+    .flatMap((value) => String(value || "").split(/\s*,\s*/))
+    .map(normalizeString)
+    .filter(Boolean)
+    .forEach((value) => {
+      if (looksLikeCareerDepartment(value)) {
+        positionParts.push(value);
+      } else if (looksLikeCareerRank(value)) {
+        rankParts.push(value);
+      } else if (!rankParts.length) {
+        rankParts.push(value);
+      } else {
+        positionParts.push(value);
+      }
+    });
+
+  return {
+    rank: uniqueTextParts(rankParts).join(", "),
+    position: uniqueTextParts(positionParts).join(", ")
+  };
+}
+
 function normalizeResult(result) {
   const education = Array.isArray(result.education)
     ? result.education
@@ -162,19 +206,23 @@ function normalizeResult(result) {
     : [];
   const career = Array.isArray(result.career)
     ? result.career
-      .map((item) => ({
-        country: normalizeString(item.country),
-        company: normalizeString(item.company),
-        rank: normalizeString(item.rank),
-        position: normalizeString(item.position),
-        start: normalizeDate(item.start),
-        end: normalizeDate(item.end),
-        achievements: normalizeString(item.achievements)
-          .split(/\n+/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .join("\n")
-      }))
+      .map((item) => {
+        const roleFields = normalizeCareerRoleFields(item.rank, item.position || item.department || item.title);
+
+        return {
+          country: normalizeString(item.country),
+          company: normalizeString(item.company),
+          rank: roleFields.rank,
+          position: roleFields.position,
+          start: normalizeDate(item.start),
+          end: normalizeDate(item.end),
+          achievements: normalizeString(item.achievements)
+            .split(/\n+/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .join("\n")
+        };
+      })
       .filter((item) => item.country || item.company || item.rank || item.position || item.start || item.end || item.achievements)
       .sort((a, b) => recentSortValue(b).localeCompare(recentSortValue(a)))
     : [];
@@ -182,7 +230,7 @@ function normalizeResult(result) {
   return {
     name: normalizeString(result.name),
     company: normalizeString(result.company || career[0]?.company),
-    role: normalizeString(result.role || career[0]?.position),
+    role: normalizeString(result.role || career[0]?.rank || career[0]?.position),
     coreCompetency: normalizeString(result.coreCompetency),
     achievementSummary: Array.isArray(result.achievementSummary)
       ? result.achievementSummary.map(normalizeString).filter(Boolean).slice(0, 3)
@@ -359,7 +407,10 @@ async function callOpenAI({ text, fileName, deterministic, useWebSearch }) {
     "- 현재/최근직무: 현재 또는 가장 최근 직장에서 맡은 직무명. 지원 직무가 아니라 실제 경력상의 직무를 우선한다.",
     "- coreCompetency: 이 사람이 어떠한 전문가인지 20자 내외의 1줄 문구로 작성한다. 예: 온디바이스 AI 전문가, 휴머노이드 제어 전문가.",
     "- achievementSummary: 주요성과/실적을 정확히 3줄로 요약한다. 각 줄은 한 문장, 20자 내외로 작성한다.",
-    "- 핵심기술: 이력서 전반에서 주요 역량을 1줄 키워드 배열로 정리한다.",
+    "- skills: 핵심기술/툴/도메인 키워드만 배열로 정리한다. 주요성과/실적 문장은 skills에 넣지 않는다.",
+    "- career.rank: 직급/직책/역할만 입력한다. 예: CL4, 책임, 선임연구원, 팀장, Manager, Engineer.",
+    "- career.position: 소속부서/조직명만 입력한다. 예: 개발팀, 상품기획그룹, AI연구소, MX사업부.",
+    "- 팀장, 파트장, 그룹장, Lab장, Head, Lead는 부서명이 아니라 직책이므로 career.rank에 넣는다.",
     "- 학력: 고등학교는 제외한다. 박사, 석사, 학사만 사용한다. 여러 개면 최근 학력부터 정렬한다.",
     "- 경력: 여러 개면 최근 경력부터 정렬한다.",
     "- 직장소재국가: 이력서에 있으면 그대로 쓰고, 없으면 가능한 경우 웹 검색으로 회사 소재 국가를 보강한다. 불확실하면 빈 문자열.",
