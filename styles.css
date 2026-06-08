@@ -1921,6 +1921,42 @@ tr:last-child td {
   gap: 6px;
 }
 
+.screening-applicant-profile-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.screening-applicant-profile-summary.is-empty {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.screening-applicant-profile-summary section {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.screening-applicant-profile-summary strong {
+  color: var(--blue-700);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.screening-applicant-profile-summary span {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .screening-applicant-grid {
   display: grid;
   grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1.4fr) minmax(180px, 1fr) minmax(160px, 0.8fr);
@@ -1973,6 +2009,21 @@ tr:last-child td {
 .screening-opinion-field .control-textarea {
   min-height: 78px;
   resize: vertical;
+}
+
+.compact-file-preview {
+  margin-bottom: 8px;
+  padding: 10px;
+}
+
+.strong-help {
+  display: block;
+  border: 1px solid var(--blue-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-weight: 800;
 }
 
 .screening-fit-criteria-panel {
@@ -4877,7 +4928,8 @@ tr:last-child td {
 
   .screening-list-page .screening-folder-card,
   .screening-applicant-main,
-  .screening-applicant-grid {
+  .screening-applicant-grid,
+  .screening-applicant-profile-summary {
     grid-template-columns: 1fr;
     align-items: start;
   }

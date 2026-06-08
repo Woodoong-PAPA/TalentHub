@@ -91,6 +91,25 @@ const DEFAULT_TRENDING_SEARCH_SETTINGS = {
 const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const TRENDING_PROFILE_COMPLETENESS_VERSION = 6;
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
+const SCREENING_JOB_CATEGORIES = [
+  "연구개발",
+  "SW연구개발",
+  "디자인",
+  "영업",
+  "마케팅",
+  "구매",
+  "SCM/물류",
+  "제조",
+  "생산기술",
+  "환경안전",
+  "품질/서비스",
+  "인사",
+  "재무",
+  "법무",
+  "대외협력",
+  "경영관리",
+  "조직총괄"
+];
 const CANDIDATE_VISIBILITY_LABELS = {
   all: "전체 공개",
   business_unit: "사업부 공개"
@@ -592,6 +611,7 @@ const state = {
   selectedInterviewStage: "phone",
   screeningPositionModalOpen: false,
   screeningApplicantModalOpen: false,
+  screeningEditingApplicantId: "",
   screeningJdModalOpen: false,
   screeningAccessModalOpen: false,
   screeningApplicantDetailId: "",
@@ -747,6 +767,20 @@ function renderScreeningBusinessUnitOptions(selectedValue = "", member = getCurr
   return `
     ${selected ? "" : `<option value="">사업부 선택</option>`}
     ${optionUnits.map((unit) => `<option value="${escapeHtml(unit)}" ${unit === selected ? "selected" : ""}>${escapeHtml(unit)}</option>`).join("")}
+  `;
+}
+
+function normalizeScreeningJobCategory(value) {
+  const rawValue = String(value || "").trim();
+  return SCREENING_JOB_CATEGORIES.includes(rawValue) ? rawValue : "";
+}
+
+function renderScreeningJobCategoryOptions(selectedValue = "") {
+  const selected = normalizeScreeningJobCategory(selectedValue);
+
+  return `
+    <option value="" ${selected ? "" : "selected"}>직무 선택</option>
+    ${SCREENING_JOB_CATEGORIES.map((category) => `<option value="${escapeHtml(category)}" ${category === selected ? "selected" : ""}>${escapeHtml(category)}</option>`).join("")}
   `;
 }
 
@@ -1959,6 +1993,40 @@ function canRegisterScreeningApplicant(folder, member = getCurrentMember()) {
     canAccessScreeningStep(folder, "reception", member) &&
     (isSearchFirmRole(member) || isRecruitingRole(member) || canManageScreeningFolder(folder, member))
   );
+}
+
+function isScreeningApplicantOwner(applicant, member = getCurrentMember()) {
+  if (!applicant || !member) {
+    return false;
+  }
+
+  return applicant.registeredById === member.id ||
+    applicant.searchFirmMemberId === member.id;
+}
+
+function canEditScreeningApplicantCore(folder, applicant, member = getCurrentMember()) {
+  if (!folder || !applicant || applicant.stage !== "reception" || !canAccessScreeningStep(folder, "reception", member)) {
+    return false;
+  }
+
+  if (isSearchFirmRole(member)) {
+    return applicant.sourceType === "search_firm" && isScreeningApplicantOwner(applicant, member);
+  }
+
+  return isRecruitingRole(member) || canManageScreeningFolder(folder, member) || isScreeningApplicantOwner(applicant, member);
+}
+
+function canEditScreeningApplicantContact(folder, applicant, member = getCurrentMember()) {
+  return Boolean(applicant && canManageScreeningContact(folder, applicant, member));
+}
+
+function canEditScreeningApplicant(folder, applicant, member = getCurrentMember()) {
+  return canEditScreeningApplicantCore(folder, applicant, member) ||
+    canEditScreeningApplicantContact(folder, applicant, member);
+}
+
+function canDeleteScreeningApplicant(folder, applicant, member = getCurrentMember()) {
+  return canEditScreeningApplicantCore(folder, applicant, member);
 }
 
 function getDefaultView(member = getCurrentMember()) {
@@ -3682,6 +3750,7 @@ function setView(view) {
   if (view !== "screening") {
     state.screeningPositionModalOpen = false;
     state.screeningApplicantModalOpen = false;
+    state.screeningEditingApplicantId = "";
     state.screeningJdModalOpen = false;
     state.screeningAccessModalOpen = false;
     state.screeningApplicantDetailId = "";
@@ -3693,6 +3762,7 @@ function setView(view) {
     state.screeningDetailStep = "first";
     state.screeningPositionModalOpen = false;
     state.screeningApplicantModalOpen = false;
+    state.screeningEditingApplicantId = "";
     state.screeningJdModalOpen = false;
     state.screeningAccessModalOpen = false;
     state.screeningApplicantDetailId = "";
@@ -4414,6 +4484,7 @@ async function deleteScreeningFolder(folderId) {
     state.selectedScreeningFolderId = getAccessibleScreeningFolders(getCurrentMember(), { applyFilters: false })[0]?.id || "";
     state.screeningPage = "list";
     state.screeningApplicantModalOpen = false;
+    state.screeningEditingApplicantId = "";
     state.screeningJdModalOpen = false;
     state.screeningAccessModalOpen = false;
     state.screeningApplicantDetailId = "";
@@ -4714,7 +4785,7 @@ function renderPositionCreateModal() {
           <form id="screening-folder-form" class="screening-create-form">
             <div class="field-grid">
               <div class="field">
-                <label for="screening-folder-title">포지션 리스트명</label>
+                <label for="screening-folder-title">포지션명</label>
                 <input class="control-input" id="screening-folder-title" name="title" placeholder="예: MX 생성형 AI 서비스 PM" />
               </div>
               <div class="field">
@@ -4728,8 +4799,10 @@ function renderPositionCreateModal() {
                 <input class="control-input" id="screening-folder-department" name="department" />
               </div>
               <div class="field">
-                <label for="screening-folder-position">포지션명</label>
-                <input class="control-input" id="screening-folder-position" name="positionName" />
+                <label for="screening-folder-position">직무</label>
+                <select class="control-select" id="screening-folder-position" name="positionName">
+                  ${renderScreeningJobCategoryOptions()}
+                </select>
               </div>
               <div class="field full">
                 <label for="screening-folder-jd">JD 직접 입력</label>
@@ -4889,7 +4962,7 @@ function renderScreeningJdModal(folder) {
             <input type="hidden" name="folderId" value="${escapeHtml(folder.id)}" />
             <div class="field-grid">
               <div class="field">
-                <label for="screening-jd-title">포지션 리스트명</label>
+                <label for="screening-jd-title">포지션명</label>
                 <input class="control-input" id="screening-jd-title" name="title" value="${inputValue(folder.title)}" />
               </div>
               <div class="field">
@@ -4903,8 +4976,10 @@ function renderScreeningJdModal(folder) {
                 <input class="control-input" id="screening-jd-department" name="department" value="${inputValue(folder.department)}" />
               </div>
               <div class="field">
-                <label for="screening-jd-position">포지션명</label>
-                <input class="control-input" id="screening-jd-position" name="positionName" value="${inputValue(folder.positionName)}" />
+                <label for="screening-jd-position">직무</label>
+                <select class="control-select" id="screening-jd-position" name="positionName">
+                  ${renderScreeningJobCategoryOptions(folder.positionName)}
+                </select>
               </div>
               <div class="field full">
                 <label for="screening-jd-text">JD 직접 입력</label>
@@ -4995,18 +5070,44 @@ function renderApplicantRegistrationModal(folder) {
     return "";
   }
 
-  const searchFirmMember = isSearchFirmRole();
+  const editingApplicant = state.screeningEditingApplicantId
+    ? getScreeningApplicant(folder, state.screeningEditingApplicantId)
+    : null;
+  const isEditing = Boolean(editingApplicant);
   const currentMember = getCurrentMember();
+  const searchFirmMember = isSearchFirmRole(currentMember);
+  const coreEditable = isEditing
+    ? canEditScreeningApplicantCore(folder, editingApplicant, currentMember)
+    : canRegisterScreeningApplicant(folder, currentMember);
+  const contactEditable = isEditing
+    ? canEditScreeningApplicantContact(folder, editingApplicant, currentMember)
+    : true;
+
+  if (isEditing && !canEditScreeningApplicant(folder, editingApplicant, currentMember)) {
+    return "";
+  }
+
+  const sourceType = editingApplicant?.sourceType || (searchFirmMember ? "search_firm" : "direct");
+  const selectedFirmId = editingApplicant?.searchFirmMemberId || (searchFirmMember ? currentMember?.id || "" : "");
+  const coreDisabled = isEditing && !coreEditable;
+  const coreDisabledAttr = coreDisabled ? "disabled" : "";
+  const contactDisabledAttr = contactEditable ? "" : "disabled";
+  const modalTitle = isEditing ? "지원자 정보 수정" : "지원자 등록";
+  const modalDescription = isEditing
+    ? coreDisabled
+      ? "스크리닝 단계로 이동한 지원자는 이메일과 휴대폰 번호만 수정할 수 있습니다."
+      : "접수 단계 지원자 정보는 제출 전까지 수정할 수 있습니다."
+    : searchFirmMember
+      ? "접수 저장 후 접수 탭에서 최종 제출하면 1차 스크리닝으로 이동합니다."
+      : `${escapeHtml(folder.title)} 포지션에 지원자 정보를 등록합니다.`;
 
   return `
     <div class="trending-modal-backdrop" data-screening-applicant-modal-backdrop>
       <section class="trending-modal screening-applicant-modal" role="dialog" aria-modal="true" aria-labelledby="screening-applicant-modal-title">
         <div class="trending-modal-header">
           <div>
-            <strong id="screening-applicant-modal-title">지원자 등록</strong>
-            <span>${searchFirmMember
-              ? "접수 저장 후 접수 탭에서 최종 제출하면 1차 스크리닝으로 이동합니다."
-              : `${escapeHtml(folder.title)} 포지션에 지원자 정보를 등록합니다.`}</span>
+            <strong id="screening-applicant-modal-title">${escapeHtml(modalTitle)}</strong>
+            <span>${modalDescription}</span>
           </div>
           <button class="ghost-button compact-button" type="button" data-close-screening-applicant-modal>닫기</button>
         </div>
@@ -5014,55 +5115,66 @@ function renderApplicantRegistrationModal(folder) {
           <form id="screening-applicant-form" class="screening-applicant-form">
             <div class="field-grid">
               <input type="hidden" name="folderId" value="${escapeHtml(folder.id)}" />
+              <input type="hidden" name="applicantId" value="${escapeHtml(editingApplicant?.id || "")}" />
               <div class="field">
                 <label for="screening-applicant-name">이름</label>
-                <input class="control-input" id="screening-applicant-name" name="name" />
+                <input class="control-input" id="screening-applicant-name" name="name" value="${inputValue(editingApplicant?.name || "")}" ${coreDisabledAttr} />
               </div>
               <div class="field">
                 <label for="screening-applicant-source">등록 경로</label>
                 ${searchFirmMember
                   ? `<input type="hidden" name="sourceType" value="search_firm" /><input class="control-input" id="screening-applicant-source" value="서치펌 등록" disabled />`
-                  : `<select class="control-select" id="screening-applicant-source" name="sourceType">
-                      <option value="direct" selected>채용담당자 직접</option>
-                      <option value="search_firm">서치펌 등록</option>
+                  : `<select class="control-select" id="screening-applicant-source" name="sourceType" ${coreDisabledAttr}>
+                      <option value="direct" ${sourceType === "direct" ? "selected" : ""}>채용담당자 직접</option>
+                      <option value="search_firm" ${sourceType === "search_firm" ? "selected" : ""}>서치펌 등록</option>
                     </select>`}
               </div>
               <div class="field">
                 <label for="screening-applicant-firm">서치펌 담당자</label>
                 ${searchFirmMember
-                  ? `<input type="hidden" name="searchFirmMemberId" value="${escapeHtml(currentMember?.id || "")}" /><input class="control-input" id="screening-applicant-firm" value="${escapeHtml([currentMember?.name, currentMember?.email].filter(Boolean).join(" · "))}" disabled />`
-                  : `<select class="control-select" id="screening-applicant-firm" name="searchFirmMemberId">
-                      ${activeSearchFirmOptions()}
+                  ? `<input type="hidden" name="searchFirmMemberId" value="${escapeHtml(selectedFirmId)}" /><input class="control-input" id="screening-applicant-firm" value="${escapeHtml([currentMember?.name, currentMember?.email].filter(Boolean).join(" · "))}" disabled />`
+                  : `<select class="control-select" id="screening-applicant-firm" name="searchFirmMemberId" ${coreDisabledAttr}>
+                      ${activeSearchFirmOptions(selectedFirmId)}
                     </select>`}
               </div>
               <div class="field">
                 <label for="screening-applicant-company">현재/최근 회사</label>
-                <input class="control-input" id="screening-applicant-company" name="company" />
+                <input class="control-input" id="screening-applicant-company" name="company" value="${inputValue(editingApplicant?.company || "")}" ${coreDisabledAttr} />
               </div>
               <div class="field">
                 <label for="screening-applicant-role">현재/최근 직무</label>
-                <input class="control-input" id="screening-applicant-role" name="currentRole" />
+                <input class="control-input" id="screening-applicant-role" name="currentRole" value="${inputValue(editingApplicant?.currentRole || "")}" ${coreDisabledAttr} />
               </div>
               <div class="field">
                 <label for="screening-applicant-email">이메일</label>
-                <input class="control-input" id="screening-applicant-email" name="email" type="email" />
+                <input class="control-input" id="screening-applicant-email" name="email" type="email" value="${inputValue(editingApplicant?.email || "")}" ${contactDisabledAttr} />
               </div>
               <div class="field">
                 <label for="screening-applicant-phone">휴대폰 번호</label>
-                <input class="control-input" id="screening-applicant-phone" name="phone" type="tel" />
+                <input class="control-input" id="screening-applicant-phone" name="phone" type="tel" value="${inputValue(editingApplicant?.phone || "")}" ${contactDisabledAttr} />
               </div>
               <div class="field">
                 <label for="screening-applicant-resume">이력서 첨부</label>
-                <input class="control-input" id="screening-applicant-resume" name="resumeFile" type="file" />
+                ${editingApplicant?.resumeAttachment ? `
+                  <div class="screening-file-preview compact-file-preview">
+                    <span>
+                      <strong>현재 이력서</strong>
+                      <small>${escapeHtml(editingApplicant.resumeAttachment.name)} (${formatFileSize(editingApplicant.resumeAttachment.size)})</small>
+                    </span>
+                    ${editingApplicant.resumeAttachment.dataUrl ? `<a class="soft-button compact-button" href="${escapeHtml(editingApplicant.resumeAttachment.dataUrl)}" download="${escapeHtml(editingApplicant.resumeAttachment.name)}">다운로드</a>` : ""}
+                  </div>
+                ` : ""}
+                <input class="control-input" id="screening-applicant-resume" name="resumeFile" type="file" ${coreDisabledAttr} />
               </div>
               <div class="field full">
                 <label for="screening-applicant-summary">지원자 핵심 경력/역량</label>
-                <textarea class="control-textarea" id="screening-applicant-summary" name="summary" rows="4"></textarea>
+                <textarea class="control-textarea" id="screening-applicant-summary" name="summary" rows="4" ${coreDisabledAttr}>${inputValue(editingApplicant?.summary || "")}</textarea>
               </div>
+              ${coreDisabled ? `<div class="field full"><span class="form-help strong-help">이미 스크리닝 단계로 이동한 지원자입니다. 이메일과 휴대폰 번호만 수정됩니다.</span></div>` : ""}
             </div>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-applicant-modal>취소</button>
-              <button class="primary-button" type="submit">${searchFirmMember ? "접수 저장" : "저장"}</button>
+              <button class="primary-button" type="submit">${isEditing ? "수정 저장" : searchFirmMember ? "접수 저장" : "저장"}</button>
             </div>
           </form>
         </div>
@@ -5389,11 +5501,25 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
   }[applicant.stage];
 
   if (locked) {
-    return `<span class="muted-text">${escapeHtml(getScreeningStageDisplayLabel(applicant))} · 잠금</span>`;
+    const lockedActions = [`<span class="muted-text">${escapeHtml(getScreeningStageDisplayLabel(applicant))} · 잠금</span>`];
+    if (canEditScreeningApplicantContact(folder, applicant)) {
+      lockedActions.push(`<button class="ghost-button compact-button" type="button" data-edit-screening-applicant="${escapeHtml(applicant.id)}">연락처 수정</button>`);
+    }
+    return `<div class="member-actions">${lockedActions.join("")}</div>`;
+  }
+
+  if (canEditScreeningApplicantCore(folder, applicant)) {
+    actions.push(`<button class="ghost-button compact-button" type="button" data-edit-screening-applicant="${escapeHtml(applicant.id)}">정보 수정</button>`);
+  } else if (canEditScreeningApplicantContact(folder, applicant)) {
+    actions.push(`<button class="ghost-button compact-button" type="button" data-edit-screening-applicant="${escapeHtml(applicant.id)}">연락처 수정</button>`);
   }
 
   if (canSubmitScreeningApplicant(folder, applicant)) {
     actions.push(`<button class="primary-button compact-button" type="button" data-screening-submit-applicant="${applicant.id}">최종 제출</button>`);
+  }
+
+  if (canDeleteScreeningApplicant(folder, applicant)) {
+    actions.push(`<button class="ghost-button danger-button compact-button" type="button" data-delete-screening-applicant="${escapeHtml(applicant.id)}">삭제</button>`);
   }
 
   if (applicant.stage === "registered" && canRunFirstScreening(folder)) {
@@ -5619,6 +5745,50 @@ function renderScreeningFitCriteria(folder) {
   `;
 }
 
+function getScreeningApplicantEducationLines(applicant) {
+  return (applicant.fitEducation || applicant.education || [])
+    .map(formatJobFitEducationSummaryLine)
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function getScreeningApplicantCareerLines(applicant) {
+  return (applicant.fitCareer || applicant.career || [])
+    .map(formatJobFitCareerSummaryLine)
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function renderScreeningApplicantProfileSummary(applicant) {
+  const educationLines = getScreeningApplicantEducationLines(applicant);
+  const careerLines = getScreeningApplicantCareerLines(applicant);
+
+  if (!educationLines.length && !careerLines.length) {
+    return `
+      <div class="screening-applicant-profile-summary is-empty">
+        <span>학력/경력 요약 정보가 아직 추출되지 않았습니다. 상세 화면에서 이력서를 확인해 주세요.</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="screening-applicant-profile-summary">
+      <section>
+        <strong>학력</strong>
+        ${educationLines.length
+          ? educationLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")
+          : `<span class="muted-text">학력 정보 없음</span>`}
+      </section>
+      <section>
+        <strong>경력</strong>
+        ${careerLines.length
+          ? careerLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")
+          : `<span class="muted-text">경력 정보 없음</span>`}
+      </section>
+    </div>
+  `;
+}
+
 function renderApplicantCard(folder, applicant, step = state.screeningDetailStep) {
   const firm = applicant.searchFirmMemberId ? state.members.find((member) => member.id === applicant.searchFirmMemberId) : null;
   const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌" : "직접 등록";
@@ -5642,6 +5812,7 @@ function renderApplicantCard(folder, applicant, step = state.screeningDetailStep
           ${screeningStageChip(applicant)}
         </div>
       </div>
+      ${renderScreeningApplicantProfileSummary(applicant)}
       <div class="screening-applicant-grid">
         <div class="summary-cell">
           <span>등록 경로</span>
@@ -13925,12 +14096,13 @@ async function createScreeningFolder(form) {
   const receptionMemberIds = getFormValues(form, "receptionMemberIds");
   const secondScreeningMemberIds = getFormValues(form, "secondScreeningMemberIds");
   const title = getFormText(form, "title") || getFormText(form, "positionName") || "신규 포지션";
+  const positionName = normalizeScreeningJobCategory(getFormText(form, "positionName"));
   const folder = normalizeScreeningFolder({
     id: createId("screening-folder"),
     title,
     businessUnit: getScreeningFormBusinessUnit(getFormText(form, "businessUnit"), currentMember),
     department: getFormText(form, "department"),
-    positionName: getFormText(form, "positionName"),
+    positionName,
     jdText: getFormText(form, "jdText"),
     jdAttachment: await attachmentFromFile(jdFile),
     createdById: currentMember.id,
@@ -14007,12 +14179,114 @@ async function registerScreeningApplicant(form) {
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
   state.screeningApplicantModalOpen = false;
+  state.screeningEditingApplicantId = "";
   state.screeningDetailStep = "reception";
   addAuditLog("Screening 지원자 등록", applicant.name, folder.title);
   persistState();
   showToast(isSearchFirmRole(currentMember)
     ? `${applicant.name} 지원자를 접수 저장했습니다. 최종 제출하면 1차 스크리닝으로 이동합니다.`
     : `${applicant.name} 지원자를 접수 단계에 등록했습니다.`);
+  renderScreening();
+}
+
+async function saveScreeningApplicantForm(form) {
+  return getFormText(form, "applicantId")
+    ? updateScreeningApplicant(form)
+    : registerScreeningApplicant(form);
+}
+
+async function updateScreeningApplicant(form) {
+  const folder = getScreeningFolder(getFormText(form, "folderId"));
+  const applicant = getScreeningApplicant(folder, getFormText(form, "applicantId"));
+
+  if (!folder || !applicant || !canEditScreeningApplicant(folder, applicant)) {
+    showToast("지원자 정보를 수정할 권한이 없습니다.");
+    return;
+  }
+
+  const canEditCore = canEditScreeningApplicantCore(folder, applicant);
+  const canEditContact = canEditScreeningApplicantContact(folder, applicant);
+  const resumeFile = form.elements.resumeFile?.files?.[0];
+
+  if (canEditCore) {
+    const name = getFormText(form, "name");
+
+    if (!name) {
+      showToast("지원자 이름을 입력해주세요.");
+      return;
+    }
+
+    const currentMember = getCurrentMember();
+    const sourceType = isSearchFirmRole(currentMember) || getFormText(form, "sourceType") === "search_firm" ? "search_firm" : "direct";
+    const searchFirmMemberId = sourceType === "search_firm" ? getFormText(form, "searchFirmMemberId") || applicant.searchFirmMemberId || (isSearchFirmRole() ? currentMember.id : "") : "";
+
+    if (sourceType === "search_firm" && !searchFirmMemberId) {
+      showToast("서치펌 등록 지원자는 서치펌 담당자를 선택해주세요.");
+      return;
+    }
+
+    applicant.name = name;
+    applicant.sourceType = sourceType;
+    applicant.searchFirmMemberId = searchFirmMemberId;
+    applicant.company = getFormText(form, "company");
+    applicant.currentRole = getFormText(form, "currentRole");
+    applicant.summary = getFormText(form, "summary");
+
+    if (resumeFile) {
+      applicant.resumeAttachment = await attachmentFromFile(resumeFile);
+    }
+
+    evaluateApplicantFit(folder, applicant);
+  }
+
+  if (canEditContact) {
+    applicant.email = getFormText(form, "email").toLowerCase();
+    applicant.phone = getFormText(form, "phone");
+
+    if (applicant.email && applicant.phone && applicant.stage === "contact_requested") {
+      applicant.stage = "contact_ready";
+    }
+  }
+
+  applicant.updatedAt = getTodayDate();
+  folder.updatedAt = getTodayDate();
+  replaceScreeningFolder(folder);
+  state.screeningApplicantModalOpen = false;
+  state.screeningEditingApplicantId = "";
+  addAuditLog("Screening 지원자 정보 수정", applicant.name, folder.title);
+  persistState();
+  showToast(canEditCore ? "지원자 정보를 수정했습니다." : "지원자 연락처를 수정했습니다.");
+  renderScreening();
+}
+
+async function deleteScreeningApplicant(applicantId) {
+  const folder = getSelectedScreeningFolder();
+  const applicant = getScreeningApplicant(folder, applicantId);
+
+  if (!folder || !applicant || !canDeleteScreeningApplicant(folder, applicant)) {
+    showToast("지원자를 삭제할 권한이 없거나 이미 스크리닝 단계로 이동했습니다.");
+    return;
+  }
+
+  if (!window.confirm(`${applicant.name || "지원자"} 접수 정보를 삭제할까요? 삭제 후 복구할 수 없습니다.`)) {
+    return;
+  }
+
+  folder.applicants = folder.applicants.filter((item) => item.id !== applicant.id);
+  folder.updatedAt = getTodayDate();
+  replaceScreeningFolder(folder);
+
+  if (state.screeningApplicantDetailId === applicant.id) {
+    state.screeningApplicantDetailId = "";
+  }
+  if (state.screeningEditingApplicantId === applicant.id) {
+    state.screeningEditingApplicantId = "";
+    state.screeningApplicantModalOpen = false;
+  }
+
+  addAuditLog("Screening 지원자 삭제", applicant.name, folder.title);
+  persistState();
+  showToast("지원자 접수 정보를 삭제했습니다.");
   renderScreening();
 }
 
@@ -14025,10 +14299,11 @@ async function saveScreeningPositionJd(form) {
   }
 
   const jdFile = form.elements.jdFile?.files?.[0];
+  const positionName = normalizeScreeningJobCategory(getFormText(form, "positionName"));
   folder.title = getFormText(form, "title") || getFormText(form, "positionName") || folder.title || "신규 포지션";
   folder.businessUnit = getScreeningFormBusinessUnit(getFormText(form, "businessUnit"));
   folder.department = getFormText(form, "department");
-  folder.positionName = getFormText(form, "positionName");
+  folder.positionName = positionName || folder.positionName;
   folder.jdText = getFormText(form, "jdText");
 
   if (jdFile) {
@@ -15853,6 +16128,7 @@ function bindEvents() {
     if (event.target.closest("[data-open-screening-position-modal]")) {
       state.screeningPositionModalOpen = true;
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       state.screeningJdModalOpen = false;
       state.screeningAccessModalOpen = false;
       state.screeningApplicantDetailId = "";
@@ -15870,6 +16146,7 @@ function bindEvents() {
       state.screeningJdModalOpen = true;
       state.screeningAccessModalOpen = false;
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       state.screeningApplicantDetailId = "";
       renderScreening();
       return;
@@ -15885,6 +16162,7 @@ function bindEvents() {
       state.screeningAccessModalOpen = true;
       state.screeningJdModalOpen = false;
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       state.screeningApplicantDetailId = "";
       renderScreening();
       return;
@@ -15987,6 +16265,7 @@ function bindEvents() {
       state.screeningDetailStep = "reception";
       state.screeningPositionModalOpen = false;
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       state.screeningJdModalOpen = false;
       state.screeningAccessModalOpen = false;
       state.screeningApplicantDetailId = "";
@@ -15999,6 +16278,7 @@ function bindEvents() {
     if (event.target.closest("[data-back-screening-list]")) {
       state.screeningPage = "list";
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       state.screeningJdModalOpen = false;
       state.screeningAccessModalOpen = false;
       state.screeningApplicantDetailId = "";
@@ -16009,6 +16289,7 @@ function bindEvents() {
 
     if (event.target.closest("[data-open-screening-applicant-modal]")) {
       state.screeningApplicantModalOpen = true;
+      state.screeningEditingApplicantId = "";
       state.screeningJdModalOpen = false;
       state.screeningAccessModalOpen = false;
       state.screeningApplicantDetailId = "";
@@ -16018,7 +16299,36 @@ function bindEvents() {
 
     if (event.target.closest("[data-close-screening-applicant-modal]") || event.target.matches("[data-screening-applicant-modal-backdrop]")) {
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       renderScreening();
+      return;
+    }
+
+    const editScreeningApplicantButton = event.target.closest("[data-edit-screening-applicant]");
+    if (editScreeningApplicantButton) {
+      const folder = getSelectedScreeningFolder();
+      const applicant = getScreeningApplicant(folder, editScreeningApplicantButton.dataset.editScreeningApplicant);
+
+      if (!folder || !applicant || !canEditScreeningApplicant(folder, applicant)) {
+        showToast("지원자 정보를 수정할 권한이 없습니다.");
+        return;
+      }
+
+      state.screeningApplicantModalOpen = true;
+      state.screeningEditingApplicantId = applicant.id;
+      state.screeningJdModalOpen = false;
+      state.screeningAccessModalOpen = false;
+      state.screeningApplicantDetailId = "";
+      renderScreening();
+      return;
+    }
+
+    const deleteScreeningApplicantButton = event.target.closest("[data-delete-screening-applicant]");
+    if (deleteScreeningApplicantButton) {
+      deleteScreeningApplicant(deleteScreeningApplicantButton.dataset.deleteScreeningApplicant).catch((error) => {
+        console.warn(error);
+        showToast("지원자 삭제 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -16026,6 +16336,7 @@ function bindEvents() {
     if (openApplicantDetailButton) {
       state.screeningApplicantDetailId = openApplicantDetailButton.dataset.openScreeningApplicantDetail;
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       state.screeningJdModalOpen = false;
       state.screeningAccessModalOpen = false;
       renderScreening();
@@ -16520,6 +16831,7 @@ function bindEvents() {
 
     if (event.key === "Escape" && state.screeningApplicantModalOpen) {
       state.screeningApplicantModalOpen = false;
+      state.screeningEditingApplicantId = "";
       renderScreening();
     }
 
@@ -16608,9 +16920,9 @@ function bindEvents() {
 
     if (event.target.matches("#screening-applicant-form")) {
       event.preventDefault();
-      registerScreeningApplicant(event.target).catch((error) => {
+      saveScreeningApplicantForm(event.target).catch((error) => {
         console.warn(error);
-        showToast("지원자 등록 중 오류가 발생했습니다.");
+        showToast("지원자 정보 저장 중 오류가 발생했습니다.");
       });
       return;
     }
