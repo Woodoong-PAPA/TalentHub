@@ -641,6 +641,9 @@ const state = {
   trendingHistoryLoading: false,
   trendingError: "",
   trendingModal: "",
+  trendingEditingPersonId: "",
+  trendingProfileSaving: false,
+  trendingProfileError: "",
   trendingMailSettings: structuredClone(DEFAULT_TRENDING_MAIL_SETTINGS),
   trendingSearchSettings: structuredClone(DEFAULT_TRENDING_SEARCH_SETTINGS),
   trendingMailLoading: false,
@@ -3667,6 +3670,8 @@ function setView(view) {
   state.view = view;
   if (view !== "trending") {
     state.trendingModal = "";
+    state.trendingEditingPersonId = "";
+    state.trendingProfileError = "";
   } else if (previousView !== "trending") {
     state.trendingSelectedDate = "";
   }
@@ -9513,6 +9518,170 @@ function renderTrendingSearchPanel(options = {}) {
   `;
 }
 
+function trendingPersonIdentifier(person) {
+  return String(person?.id || person?.name || person?.rank || "").trim();
+}
+
+function trendingEducationEditText(person) {
+  return (person?.education || []).map((item) => [
+    item.degree || "",
+    item.school || "",
+    item.major || "",
+    item.year || item.graduationYear || item.end || ""
+  ].map((value) => String(value || "").trim()).join(" | ")).join("\n");
+}
+
+function trendingCareerEditText(person) {
+  return (person?.career || []).map((item) => [
+    item.country || "",
+    item.company || "",
+    item.rank || "",
+    item.title || item.position || item.department || item.organization || item.team || "",
+    item.start || item.startYear || "",
+    item.end || item.endYear || ""
+  ].map((value) => String(value || "").trim()).join(" | ")).join("\n");
+}
+
+function trendingAchievementsEditText(person) {
+  return (person?.achievements || []).map((item) => String(item || "").trim()).filter(Boolean).join("\n");
+}
+
+function trendingReasonsEditText(person) {
+  return (person?.selectionReasons || [])
+    .map((reason) => typeof reason === "string" ? reason : reason.text)
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function getTrendingPrimarySourceLink(person) {
+  return (person?.selectionReasons || [])
+    .filter((reason) => typeof reason === "object")
+    .flatMap((reason) => reason.links || [])
+    .find((link) => link?.url) || {};
+}
+
+function splitNonEmptyLines(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function parseTrendingEducationLines(value) {
+  return splitNonEmptyLines(value).map((line) => {
+    const parts = line.split("|").map((part) => part.trim());
+    return {
+      degree: parts[0] || "",
+      school: parts[1] || "",
+      major: parts[2] || "",
+      year: parts[3] || ""
+    };
+  }).filter((item) => item.degree || item.school || item.major || item.year);
+}
+
+function parseTrendingCareerLines(value) {
+  return splitNonEmptyLines(value).map((line) => {
+    const parts = line.split("|").map((part) => part.trim());
+    return {
+      country: parts[0] || "",
+      company: parts[1] || "",
+      rank: parts[2] || "",
+      title: parts[3] || "",
+      department: "",
+      start: parts[4] || "",
+      end: parts[5] || ""
+    };
+  }).filter((item) => item.country || item.company || item.rank || item.title || item.start || item.end);
+}
+
+function renderTrendingProfileEditPanel() {
+  const person = findTrendingPerson(state.trendingEditingPersonId);
+
+  if (!person) {
+    return `<div class="empty-state compact-empty">수정할 인물 프로필을 찾을 수 없습니다.</div>`;
+  }
+
+  const sourceLink = getTrendingPrimarySourceLink(person);
+
+  return `
+    <form class="trending-profile-edit-form" id="trending-profile-edit-form" data-trending-profile-id="${escapeHtml(trendingPersonIdentifier(person))}">
+      ${state.trendingProfileError ? `<div class="form-error">${escapeHtml(state.trendingProfileError)}</div>` : ""}
+      <div class="trending-profile-edit-preview">
+        ${person.profileImageUrl
+          ? `<img src="${escapeHtml(person.profileImageUrl)}" alt="${escapeHtml(person.name || "화제 인물")} 프로필 사진 미리보기" referrerpolicy="no-referrer" />`
+          : `<div>${escapeHtml(String(person.name || "?").slice(0, 1))}</div>`}
+        <span>프로필 사진 URL을 수정하면 웹 카드와 메일 본문에 같은 이미지가 반영됩니다.</span>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="trending-edit-name">이름</label>
+          <input class="control-input" id="trending-edit-name" name="name" value="${inputValue(person.name)}" />
+        </div>
+        <div class="field">
+          <label for="trending-edit-birth-year">출생년도</label>
+          <input class="control-input" id="trending-edit-birth-year" name="birthYear" inputmode="numeric" value="${inputValue(person.birthYear)}" />
+        </div>
+        <div class="field">
+          <label for="trending-edit-current-org">현재소속</label>
+          <input class="control-input" id="trending-edit-current-org" name="currentOrg" value="${inputValue(person.currentOrg)}" />
+        </div>
+        <div class="field">
+          <label for="trending-edit-current-title">현재직책</label>
+          <input class="control-input" id="trending-edit-current-title" name="currentTitle" value="${inputValue(person.currentTitle)}" />
+        </div>
+        <div class="field full">
+          <label for="trending-edit-profile-image">프로필 사진 URL</label>
+          <input class="control-input" id="trending-edit-profile-image" name="profileImageUrl" type="url" value="${inputValue(person.profileImageUrl)}" placeholder="https://..." />
+        </div>
+        <div class="field full">
+          <label for="trending-edit-linkedin">LinkedIn URL</label>
+          <input class="control-input" id="trending-edit-linkedin" name="linkedinUrl" type="url" value="${inputValue(person.linkedinUrl)}" placeholder="https://www.linkedin.com/in/..." />
+        </div>
+        <div class="field full">
+          <label for="trending-edit-education">학력</label>
+          <textarea class="control-textarea" id="trending-edit-education" name="education" rows="5" placeholder="박 | 서울대학교 | 전자공학 | 2021">${inputValue(trendingEducationEditText(person))}</textarea>
+          <span class="field-caption">한 줄에 하나씩 입력합니다. 형식: 학위 | 학교 | 전공 | 취득년도</span>
+        </div>
+        <div class="field full">
+          <label for="trending-edit-career">경력</label>
+          <textarea class="control-textarea" id="trending-edit-career" name="career" rows="7" placeholder="한국 | 삼성전자 | 상무 | People팀장 | 2014 | 2020">${inputValue(trendingCareerEditText(person))}</textarea>
+          <span class="field-caption">한 줄에 하나씩 입력합니다. 형식: 국가 | 회사 | 직급 | 직책/부서 | 시작 | 종료</span>
+        </div>
+        <div class="field full">
+          <label for="trending-edit-achievements">주요 성과/실적</label>
+          <textarea class="control-textarea" id="trending-edit-achievements" name="achievements" rows="4">${inputValue(trendingAchievementsEditText(person))}</textarea>
+        </div>
+        <div class="field full">
+          <label for="trending-edit-reasons">선정 사유</label>
+          <textarea class="control-textarea" id="trending-edit-reasons" name="selectionReasons" rows="4">${inputValue(trendingReasonsEditText(person))}</textarea>
+          <span class="field-caption">두 문장을 줄바꿈으로 입력하면 웹 화면과 메일 본문 모두 같은 순서로 표시됩니다.</span>
+        </div>
+        <div class="field">
+          <label for="trending-edit-source">근거기사 매체명</label>
+          <input class="control-input" id="trending-edit-source" name="source" value="${inputValue(sourceLink.source)}" />
+        </div>
+        <div class="field">
+          <label for="trending-edit-source-url">근거기사 URL</label>
+          <input class="control-input" id="trending-edit-source-url" name="sourceUrl" type="url" value="${inputValue(sourceLink.url)}" />
+        </div>
+        <div class="field full">
+          <label for="trending-edit-source-title">근거기사 제목</label>
+          <input class="control-input" id="trending-edit-source-title" name="sourceTitle" value="${inputValue(sourceLink.title)}" />
+        </div>
+        <div class="field full">
+          <label for="trending-edit-source-snippet">근거기사 요약</label>
+          <textarea class="control-textarea compact-textarea" id="trending-edit-source-snippet" name="sourceSnippet" rows="3">${inputValue(sourceLink.snippet || sourceLink.description)}</textarea>
+        </div>
+      </div>
+      <div class="trending-profile-edit-actions">
+        <button class="ghost-button" type="button" data-close-trending-modal>취소</button>
+        <button class="primary-button" type="button" data-save-trending-profile ${state.trendingProfileSaving ? "disabled" : ""}>수정 저장</button>
+      </div>
+    </form>
+  `;
+}
+
 function renderTrendingModal() {
   if (!state.trendingModal) {
     return "";
@@ -9521,6 +9690,7 @@ function renderTrendingModal() {
   const modalType = state.trendingModal;
   const isMailModal = modalType === "mail";
   const isSearchModal = modalType === "search";
+  const isProfileModal = modalType === "profile";
   const title = isMailModal ? "메일링 설정" : "리포트 보관함";
   const description = isMailModal
     ? "발송 시간과 복수 수신처를 설정하고 테스트 메일을 발송합니다."
@@ -9528,13 +9698,15 @@ function renderTrendingModal() {
   const content = isMailModal
     ? renderTrendingMailPanel({ hideTitle: true })
     : renderTrendingHistoryPanel({ hideTitle: true });
-  const effectiveTitle = isMailModal ? "메일링 설정" : isSearchModal ? "관심 분야 설정" : "리포트 보관함";
+  const effectiveTitle = isMailModal ? "메일링 설정" : isSearchModal ? "관심 분야 설정" : isProfileModal ? "Today’s Talent 프로필 수정" : "리포트 보관함";
   const effectiveDescription = isMailModal
     ? "발송 시간과 복수 수신처를 설정하고 테스트 메일을 발송합니다."
     : isSearchModal
       ? "매일 Today's Talent에서 검색해야 하는 관심 분야를 자연어 프롬프트로 관리합니다."
+      : isProfileModal
+        ? "저장된 리포트의 인물 정보와 프로필 사진 URL을 직접 수정합니다."
       : "저장된 날짜를 선택해 과거 Today's Talent 리포트를 조회합니다.";
-  const effectiveContent = isSearchModal ? renderTrendingSearchPanel({ hideTitle: true }) : content;
+  const effectiveContent = isSearchModal ? renderTrendingSearchPanel({ hideTitle: true }) : isProfileModal ? renderTrendingProfileEditPanel() : content;
 
   if (!effectiveContent) {
     return "";
@@ -9572,12 +9744,33 @@ function openTrendingModal(type) {
   }
 }
 
+function openTrendingProfileEditor(identifier) {
+  if (!isAdmin()) {
+    showToast("관리자만 Today's Talent 프로필을 수정할 수 있습니다.");
+    return;
+  }
+
+  const person = findTrendingPerson(identifier);
+
+  if (!person) {
+    showToast("수정할 Today's Talent 프로필을 찾을 수 없습니다.");
+    return;
+  }
+
+  state.trendingEditingPersonId = trendingPersonIdentifier(person);
+  state.trendingProfileError = "";
+  state.trendingModal = "profile";
+  renderTrendingPeople();
+}
+
 function closeTrendingModal() {
   if (!state.trendingModal) {
     return;
   }
 
   state.trendingModal = "";
+  state.trendingEditingPersonId = "";
+  state.trendingProfileError = "";
   renderTrendingPeople();
 }
 
@@ -9611,6 +9804,7 @@ function trendingPersonCard(person) {
           </div>
           <div class="trending-actions">
             ${person.linkedinUrl ? `<a class="soft-button compact-button" href="${escapeHtml(person.linkedinUrl)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}
+            ${isAdmin() ? `<button class="ghost-button compact-button" type="button" data-edit-trending-person="${escapeHtml(trendingPersonIdentifier(person))}">프로필 수정</button>` : ""}
             <button class="primary-button compact-button" type="button" data-register-trending-person="${escapeHtml(person.id || person.name)}" ${alreadyRegistered ? "disabled" : ""}>
               ${alreadyRegistered ? "등록됨" : "Pool 등록"}
             </button>
@@ -13024,6 +13218,104 @@ async function sendTrendingMailTest() {
   }
 }
 
+function collectTrendingProfileFromForm(form, existingPerson) {
+  const sourceLink = {
+    source: String(form.source.value || "").trim(),
+    title: String(form.sourceTitle.value || "").trim(),
+    snippet: String(form.sourceSnippet.value || "").trim(),
+    url: String(form.sourceUrl.value || "").trim()
+  };
+  const hasSourceLink = sourceLink.url || sourceLink.title || sourceLink.source || sourceLink.snippet;
+  const reasons = splitNonEmptyLines(form.selectionReasons.value).slice(0, 2).map((text, index, array) => ({
+    text,
+    links: hasSourceLink && index === array.length - 1 ? [sourceLink] : []
+  }));
+
+  if (!reasons.length && hasSourceLink) {
+    reasons.push({
+      text: sourceLink.snippet || sourceLink.title || "근거 기사 확인 필요",
+      links: [sourceLink]
+    });
+  }
+
+  return {
+    ...existingPerson,
+    name: String(form.name.value || "").trim(),
+    birthYear: String(form.birthYear.value || "").trim(),
+    currentOrg: String(form.currentOrg.value || "").trim(),
+    currentTitle: String(form.currentTitle.value || "").trim(),
+    profileImageUrl: String(form.profileImageUrl.value || "").trim(),
+    linkedinUrl: String(form.linkedinUrl.value || "").trim(),
+    education: parseTrendingEducationLines(form.education.value),
+    career: parseTrendingCareerLines(form.career.value),
+    achievements: splitNonEmptyLines(form.achievements.value).slice(0, 6),
+    selectionReasons: reasons,
+    editedAt: new Date().toISOString(),
+    editedBy: getCurrentActorName()
+  };
+}
+
+async function saveTrendingProfileEdit() {
+  const form = $("#trending-profile-edit-form");
+
+  if (!form || !isAdmin()) {
+    return;
+  }
+
+  const person = findTrendingPerson(form.dataset.trendingProfileId);
+
+  if (!person) {
+    state.trendingProfileError = "수정할 인물 프로필을 찾을 수 없습니다.";
+    renderTrendingPeople();
+    return;
+  }
+
+  try {
+    const updatedPerson = collectTrendingProfileFromForm(form, person);
+
+    if (!updatedPerson.name) {
+      throw new Error("이름을 입력해주세요.");
+    }
+
+    state.trendingProfileSaving = true;
+    state.trendingProfileError = "";
+    renderTrendingPeople();
+
+    const response = await fetch("/api/trending-people", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "updatePerson",
+        targetDate: state.trendingReport?.targetDate || state.trendingReport?.reportDate,
+        personId: trendingPersonIdentifier(person),
+        person: updatedPerson,
+        updatedBy: getCurrentActorName()
+      })
+    });
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Today's Talent profile save failed: ${response.status}`);
+    }
+
+    state.trendingReport = payload.report;
+    state.trendingSelectedDate = payload.report?.targetDate || payload.report?.reportDate || state.trendingSelectedDate;
+    state.trendingModal = "";
+    state.trendingEditingPersonId = "";
+    addAuditLog("Today's Talent 프로필 수정", "Today's Talent", updatedPerson.name);
+    persistState();
+    fetchTrendingHistory({ silent: true });
+    showToast("Today's Talent 프로필을 저장했습니다.");
+  } catch (error) {
+    console.warn("Trending profile save failed.", error);
+    state.trendingProfileError = error.message || "Today's Talent 프로필 저장에 실패했습니다.";
+    showToast(state.trendingProfileError);
+  } finally {
+    state.trendingProfileSaving = false;
+    renderTrendingPeople();
+  }
+}
+
 function normalizeTrendingDegree(value) {
   return { 박: "박사", 석: "석사", 학: "학사", 박사: "박사", 석사: "석사", 학사: "학사" }[value] || "";
 }
@@ -15531,6 +15823,12 @@ function bindEvents() {
       return;
     }
 
+    const editTrendingButton = event.target.closest("[data-edit-trending-person]");
+    if (editTrendingButton) {
+      openTrendingProfileEditor(editTrendingButton.dataset.editTrendingPerson);
+      return;
+    }
+
     if (event.target.closest("[data-save-trending-mail]")) {
       saveTrendingMailSettings();
       return;
@@ -15543,6 +15841,11 @@ function bindEvents() {
 
     if (event.target.closest("[data-send-trending-mail-test]")) {
       sendTrendingMailTest();
+      return;
+    }
+
+    if (event.target.closest("[data-save-trending-profile]")) {
+      saveTrendingProfileEdit();
       return;
     }
 

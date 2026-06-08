@@ -913,10 +913,10 @@ async function loadExcludedNames(targetDate) {
     .filter(Boolean))];
 }
 
-async function saveReport(report) {
+async function saveReport(report, options = {}) {
   const peopleCount = Array.isArray(report.people) ? report.people.length : 0;
 
-  if (peopleCount > 0 && peopleCount < 5) {
+  if (!options.allowShort && peopleCount > 0 && peopleCount < 5) {
     console.warn(`Skipped saving short Today's Talent report for ${report.targetDate}: ${peopleCount} people.`);
     return;
   }
@@ -935,6 +935,120 @@ async function saveReport(report) {
       payload: report
     }])
   });
+}
+
+function normalizeEditableReason(reason) {
+  const text = typeof reason === "string" ? reason : reason?.text;
+  const links = typeof reason === "object" && Array.isArray(reason.links)
+    ? reason.links
+      .map((link) => ({
+        title: String(link.title || "").trim(),
+        source: String(link.source || "").trim(),
+        snippet: String(link.snippet || link.description || "").trim(),
+        url: sanitizeUrl(link.url)
+      }))
+      .filter((link) => link.url)
+      .slice(0, 1)
+    : [];
+
+  return {
+    text: String(text || "").replace(/^[-\s]+/, "").trim(),
+    links
+  };
+}
+
+function normalizeEditablePerson(person, fallback, index) {
+  const merged = { ...(fallback || {}), ...(person || {}) };
+  const birthYear = String(merged.birthYear || "").match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "";
+  const reasons = Array.isArray(merged.selectionReasons)
+    ? merged.selectionReasons.map(normalizeEditableReason).filter((reason) => reason.text).slice(0, 2)
+    : [];
+
+  return normalizePersonProfileBasics({
+    ...merged,
+    id: String(merged.id || fallback?.id || `trend-${index + 1}`).trim(),
+    rank: Number(merged.rank || fallback?.rank || index + 1),
+    name: String(merged.name || "").trim(),
+    birthYear,
+    currentOrg: String(merged.currentOrg || "").trim(),
+    currentTitle: String(merged.currentTitle || "").trim(),
+    education: normalizeEducationRecords(merged.education).slice(0, 8),
+    career: normalizeCareerRecords(merged.career).slice(0, 20),
+    achievements: Array.isArray(merged.achievements)
+      ? merged.achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 6)
+      : [],
+    selectionReasons: reasons,
+    linkedinUrl: sanitizeUrl(merged.linkedinUrl),
+    profileImageUrl: sanitizeUrl(merged.profileImageUrl),
+    topics: Array.isArray(merged.topics)
+      ? merged.topics.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 8)
+      : [],
+    mentionCount: Number(merged.mentionCount || fallback?.mentionCount || 0)
+  });
+}
+
+function findEditablePersonIndex(people, body) {
+  const personId = String(body.personId || body.id || body.person?.id || "").trim();
+  const personName = String(body.personName || body.name || body.person?.name || "").trim();
+  const rank = Number(body.rank || body.person?.rank || 0);
+
+  if (personId) {
+    const index = people.findIndex((person) => String(person.id || "") === personId);
+
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  if (personName) {
+    const index = people.findIndex((person) => String(person.name || "").trim() === personName);
+
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  if (rank > 0) {
+    return people.findIndex((person) => Number(person.rank || 0) === rank);
+  }
+
+  return -1;
+}
+
+async function saveEditedReportPerson(body) {
+  const targetDate = String(body.targetDate || body.reportDate || body.report?.targetDate || body.report?.reportDate || "").trim();
+
+  if (!targetDate) {
+    throw new Error("수정할 Today's Talent 리포트 날짜가 없습니다.");
+  }
+
+  const cached = await loadCachedReport(targetDate);
+  const report = cached || body.report;
+
+  if (!report || !Array.isArray(report.people) || !report.people.length) {
+    throw new Error("수정할 Today's Talent 리포트를 찾을 수 없습니다.");
+  }
+
+  const people = report.people.map(normalizePersonProfileBasics);
+  const index = findEditablePersonIndex(people, body);
+
+  if (index < 0) {
+    throw new Error("수정할 인물 프로필을 찾을 수 없습니다.");
+  }
+
+  people[index] = normalizeEditablePerson(body.person, people[index], index);
+
+  const editedReport = {
+    ...report,
+    targetDate: report.targetDate || targetDate,
+    reportDate: report.reportDate || targetDate,
+    people,
+    editedAt: new Date().toISOString(),
+    editedBy: String(body.updatedBy || body.editedBy || "").trim()
+  };
+
+  await saveReport(editedReport, { allowShort: true });
+  return editedReport;
 }
 
 async function logReportEvent(event) {
@@ -2321,6 +2435,15 @@ module.exports = async function trendingPeople(request, response) {
       sendJson(response, 200, {
         ok: true,
         reports: await loadReportHistory()
+      });
+      return;
+    }
+
+    if (request.method === "PUT") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, {
+        ok: true,
+        report: await saveEditedReportPerson(body)
       });
       return;
     }

@@ -274,6 +274,16 @@ function getRequestOrigin(request) {
 }
 
 async function ensureReport(request, providedReport) {
+  const providedDate = providedReport?.targetDate || providedReport?.reportDate || "";
+
+  if (providedDate) {
+    const cachedProvided = await loadCachedReport(providedDate);
+
+    if (cachedProvided?.people?.length) {
+      return cachedProvided;
+    }
+  }
+
   if (providedReport?.people?.length) {
     return providedReport;
   }

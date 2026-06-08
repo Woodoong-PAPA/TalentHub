@@ -3491,6 +3491,49 @@ tr:last-child td {
   box-shadow: none;
 }
 
+.trending-profile-edit-form {
+  display: grid;
+  gap: 16px;
+}
+
+.trending-profile-edit-preview {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.trending-profile-edit-preview img,
+.trending-profile-edit-preview > div {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--muted);
+  background: var(--surface);
+  object-fit: cover;
+  object-position: center top;
+  font-weight: 800;
+}
+
+.trending-profile-edit-preview span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.trending-profile-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .member-profile-modal {
   width: min(720px, 100%);
 }
@@ -5081,6 +5124,16 @@ tr:last-child td {
   .member-profile-actions {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .trending-profile-edit-preview,
+  .trending-profile-edit-actions {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .trending-profile-edit-actions {
+    display: grid;
   }
 
   .detail-hero-card {
