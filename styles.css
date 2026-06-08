@@ -2048,7 +2048,7 @@ tr:last-child td {
 }
 
 .screening-applicant-detail-modal {
-  max-width: 860px;
+  max-width: 1180px;
 }
 
 .screening-applicant-detail-body {
@@ -2063,6 +2063,44 @@ tr:last-child td {
   border-radius: var(--radius);
   padding: 14px;
   background: var(--surface);
+}
+
+.screening-detail-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.screening-detail-two-column.has-fit {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.screening-fit-analysis-block {
+  align-content: start;
+}
+
+.screening-fit-opinion {
+  display: grid;
+  gap: 8px;
+  border-left: 4px solid var(--blue);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: var(--blue-soft);
+}
+
+.screening-fit-opinion strong {
+  color: var(--blue-700);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.screening-fit-opinion p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-line;
 }
 
 .screening-detail-list,
@@ -4929,6 +4967,8 @@ tr:last-child td {
   .screening-list-page .screening-folder-card,
   .screening-applicant-main,
   .screening-applicant-grid,
+  .screening-detail-two-column,
+  .screening-detail-two-column.has-fit,
   .screening-applicant-profile-summary {
     grid-template-columns: 1fr;
     align-items: start;
@@ -5071,6 +5111,8 @@ tr:last-child td {
   .screening-step-nav,
   .screening-applicant-main,
   .screening-applicant-grid,
+  .screening-detail-two-column,
+  .screening-detail-two-column.has-fit,
   .screening-detail-list,
   .screening-fit-detail,
   .screening-fit-report-grid,

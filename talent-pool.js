@@ -4549,11 +4549,13 @@ function getScreeningApplicantJobFitResume(applicant) {
 }
 
 function applyScreeningFitResult(applicant, result) {
+  const resultEducation = (Array.isArray(result.education) ? result.education : Array.isArray(result.fitEducation) ? result.fitEducation : []).filter(hasAnyRecordValue);
+  const resultCareer = (Array.isArray(result.career) ? result.career : Array.isArray(result.fitCareer) ? result.fitCareer : []).filter(hasAnyRecordValue);
   const normalized = normalizeJobFitResult({
     ...result,
     candidateName: getBestJobFitCandidateName(result.candidateName, applicant.name, result.fileName),
-    education: result.education || result.fitEducation || [],
-    career: result.career || result.fitCareer || []
+    education: resultEducation.length ? resultEducation : applicant.fitEducation || applicant.education || [],
+    career: resultCareer.length ? resultCareer : applicant.fitCareer || applicant.career || []
   });
 
   applicant.fitGrade = normalized.grade;
@@ -5370,6 +5372,31 @@ function hydrateScreeningResumeViewers(folder = getSelectedScreeningFolder()) {
   });
 }
 
+function renderScreeningFitAnalysisPanel(applicant, fit) {
+  return `
+    <section class="screening-detail-block screening-fit-analysis-block">
+      <div class="panel-header">
+        <h4>직무적합도 상세 분석</h4>
+        ${fitGradeChip(applicant.fitGrade)}
+      </div>
+      <div class="screening-fit-opinion">
+        <strong>분석 의견</strong>
+        <p>${escapeHtml(fit.summary || "분석 의견 없음")}</p>
+      </div>
+      <div class="screening-fit-report-grid">
+        <section class="job-fit-report-section is-fulfilled">
+          <strong>충족된 직무 요건</strong>
+          ${renderJobFitReportItems(fit.fulfilledDetails || [], "basis", "충족으로 판단된 항목이 없습니다.")}
+        </section>
+        <section class="job-fit-report-section is-missing">
+          <strong>추가 확인이 필요한 요건</strong>
+          ${renderJobFitReportItems(fit.missingDetails || [], "note", "추가 확인이 필요한 항목이 없습니다.")}
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderScreeningApplicantDetailModal(folder) {
   if (!folder || !state.screeningApplicantDetailId) {
     return "";
@@ -5386,6 +5413,7 @@ function renderScreeningApplicantDetailModal(folder) {
   const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌 등록" : "채용담당자 직접 등록";
   const sourceMeta = firm ? `${firm.name} · ${firm.email}` : applicant.registeredByName || "-";
   const showFit = applicant.stage !== "reception";
+  const canDownloadResume = state.screeningDetailStep === "first" && applicant.resumeAttachment?.dataUrl;
 
   return `
     <div class="trending-modal-backdrop" data-screening-applicant-detail-backdrop>
@@ -5398,7 +5426,7 @@ function renderScreeningApplicantDetailModal(folder) {
           <button class="ghost-button compact-button" type="button" data-close-screening-applicant-detail>닫기</button>
         </div>
         <div class="trending-modal-body screening-applicant-detail-body">
-          <section class="screening-detail-block">
+          <section class="screening-detail-block screening-applicant-overview-block">
             <div class="panel-header">
               <h4>지원자 상세 정보</h4>
               ${screeningStageChip(applicant)}
@@ -5410,47 +5438,30 @@ function renderScreeningApplicantDetailModal(folder) {
               <div><span>최초 등록일</span><strong>${escapeHtml(applicant.createdAt || "-")}</strong></div>
               <div><span>최종 업데이트</span><strong>${escapeHtml(applicant.updatedAt || "-")}</strong></div>
             </div>
+            ${renderScreeningApplicantProfileSummary(applicant)}
             ${applicant.summary ? `<p class="screening-detail-note">${escapeHtml(applicant.summary)}</p>` : ""}
           </section>
 
-          <section class="screening-detail-block">
-            <div class="panel-header">
-              <h4>이력서</h4>
-              ${applicant.resumeAttachment ? `<span class="small-pill">${formatFileSize(applicant.resumeAttachment.size)}</span>` : ""}
-            </div>
-            ${applicant.resumeAttachment ? `
-              <div class="screening-file-preview">
-                <span>
-                  <strong>${escapeHtml(applicant.resumeAttachment.name || "첨부 이력서")}</strong>
-                  <small>${escapeHtml(applicant.resumeAttachment.type || "파일 형식 미확인")}</small>
-                </span>
+          <div class="screening-detail-two-column ${showFit ? "has-fit" : ""}">
+            <section class="screening-detail-block screening-resume-block">
+              <div class="panel-header">
+                <h4>이력서</h4>
+                ${applicant.resumeAttachment ? `<span class="small-pill">${formatFileSize(applicant.resumeAttachment.size)}</span>` : ""}
               </div>
-              ${renderResumeInlineViewer(applicant.resumeAttachment, applicant)}
-            ` : `<div class="empty-state compact-empty">등록된 이력서 첨부 파일이 없습니다.</div>`}
-          </section>
+              ${applicant.resumeAttachment ? `
+                <div class="screening-file-preview">
+                  <span>
+                    <strong>${escapeHtml(applicant.resumeAttachment.name || "첨부 이력서")}</strong>
+                    <small>${escapeHtml(applicant.resumeAttachment.type || "파일 형식 미확인")}</small>
+                  </span>
+                  ${canDownloadResume ? `<a class="soft-button compact-button" href="${escapeHtml(applicant.resumeAttachment.dataUrl)}" download="${escapeHtml(applicant.resumeAttachment.name || "resume")}">다운로드</a>` : ""}
+                </div>
+                ${renderResumeInlineViewer(applicant.resumeAttachment, applicant)}
+              ` : `<div class="empty-state compact-empty">등록된 이력서 첨부 파일이 없습니다.</div>`}
+            </section>
 
-          ${showFit ? `<section class="screening-detail-block">
-            <div class="panel-header">
-              <h4>직무적합도 상세 분석</h4>
-              ${fitGradeChip(applicant.fitGrade)}
-            </div>
-            <div class="screening-fit-detail">
-              <div><span>매칭 점수</span><strong>${fit.score}%</strong></div>
-              <div><span>분석 의견</span><strong>${escapeHtml(fit.summary)}</strong></div>
-              <div><span>충족된 직무 요건</span><strong>${escapeHtml(fit.matched.slice(0, 8).join(", ") || "충족으로 판단된 항목 없음")}</strong></div>
-              <div><span>추가 확인이 필요한 요건</span><strong>${escapeHtml(fit.missing.slice(0, 8).join(", ") || "추가 확인 항목 없음")}</strong></div>
-            </div>
-            <div class="screening-fit-report-grid">
-              <section class="job-fit-report-section is-fulfilled">
-                <strong>충족된 직무 요건</strong>
-                ${renderJobFitReportItems(fit.fulfilledDetails || [], "basis", "충족으로 판단된 항목이 없습니다.")}
-              </section>
-              <section class="job-fit-report-section is-missing">
-                <strong>추가 확인이 필요한 요건</strong>
-                ${renderJobFitReportItems(fit.missingDetails || [], "note", "추가 확인이 필요한 항목이 없습니다.")}
-              </section>
-            </div>
-          </section>` : ""}
+            ${showFit ? renderScreeningFitAnalysisPanel(applicant, fit) : ""}
+          </div>
 
           <section class="screening-detail-block">
             <div class="panel-header">
@@ -6001,7 +6012,6 @@ function renderScreeningStepContent(folder) {
     const canOpenResultPanel = canRunSecondScreening(folder) && (draftCount || passedCount);
 
     return `
-      ${renderScreeningFitCriteria(folder)}
       <section class="profile-panel">
         <div class="panel-header">
           <h4>2차 스크리닝 리스트</h4>
@@ -6039,7 +6049,6 @@ function renderScreeningStepContent(folder) {
   const applicants = getScreeningStepApplicants(folder, "first");
 
   return `
-    ${renderScreeningFitCriteria(folder)}
     <section class="profile-panel">
       <div class="panel-header">
         <h4>1차 스크리닝 리스트</h4>
@@ -12349,6 +12358,91 @@ function splitResumeParts(line) {
     .filter(Boolean);
 }
 
+function splitResumeTextByRecordHints(value) {
+  const text = normalizeResumeText(value);
+
+  if (!text) {
+    return [];
+  }
+
+  const schoolPattern = "KAIST|카이스트|POSTECH|포항공과대학교|서울대학교|연세대학교|고려대학교|한양대학교|성균관대학교|서강대학교|중앙대학교|경희대학교|이화여자대학교|부산대학교|경북대학교|전남대학교|전북대학교|충남대학교|충북대학교|인하대학교|아주대학교|건국대학교|동국대학교|홍익대학교|[가-힣A-Za-z]+대학교|[A-Z][A-Za-z\\s]+University|[A-Z][A-Za-z\\s]+College";
+  const companyPattern = "미래로봇기술연구소|뉴로메카트로닉스|네이버클라우드|현대백화점|아모레퍼시픽|삼성전자|LG전자|NVIDIA|엔비디아|크래프톤|Bluehole|본엔젤스|[가-힣A-Za-z0-9.&+-]+(?:전자|백화점|퍼시픽|SDS|모비스|연구소|메카트로닉스|로보틱스|Robotics|Research|Technology|Technologies|Cloud|hynix|ASML|Samsung|Naver|Kakao|Hyundai|Amorepacific|LG|SK|Inc\\.?|Corp\\.?|Labs?|Studio|Group|Korea)";
+  const marked = text
+    .replace(new RegExp(`\\s+(?=(?:${schoolPattern}))`, "gi"), "\n")
+    .replace(new RegExp(`\\s+(?=(?:${companyPattern}))`, "gi"), "\n")
+    .replace(/\s+(?=(?:박사|석사|학사|Ph\.?D|Master|Bachelor)\b)/gi, "\n")
+    .replace(/\s+(?=(?:상세\s*)?경력\s*(?:사항|정보)?|Professional Experience|Work Experience|Experience|Career)\b/gi, "\n")
+    .replace(/\s+(?=(?:학력|Education)\b)/gi, "\n")
+    .replace(/\s+(?=(?:19|20)\d{2}\s*[.\-/년]?\s*(?:\d{1,2})?\s*(?:월)?\s*(?:~|～|-|–|—|to)\s*(?:현재|재직중?|present|current|(?:19|20)\d{2}))/gi, "\n");
+
+  return marked
+    .split(/\n+/)
+    .map((line) => cleanParsedValue(line))
+    .filter(Boolean);
+}
+
+function expandResumeExtractionLines(lines) {
+  const expanded = [];
+
+  const pushLine = (line) => {
+    const cleaned = cleanParsedValue(line);
+
+    if (cleaned && !expanded.includes(cleaned)) {
+      expanded.push(cleaned);
+    }
+  };
+
+  lines.forEach((line) => {
+    pushLine(line);
+    splitResumeTextByRecordHints(line).forEach(pushLine);
+  });
+
+  return expanded;
+}
+
+function extractResumeSectionLines(lines, headerPattern, boundaryPattern) {
+  const sectionLines = [];
+  let inSection = false;
+
+  lines.forEach((line) => {
+    if (headerPattern.test(line)) {
+      inSection = true;
+      const withoutHeader = cleanParsedValue(line.replace(headerPattern, ""));
+
+      if (withoutHeader) {
+        sectionLines.push(withoutHeader);
+      }
+      return;
+    }
+
+    if (inSection && boundaryPattern.test(line)) {
+      inSection = false;
+      return;
+    }
+
+    if (inSection) {
+      sectionLines.push(line);
+    }
+  });
+
+  return expandResumeExtractionLines(sectionLines);
+}
+
+function buildEducationExtractionLines(lines) {
+  const expanded = expandResumeExtractionLines(lines);
+  const sectionLines = extractResumeSectionLines(
+    expanded,
+    /^(?:학력|Education|Academic Background|Education Background)\s*[:：\s-]*/i,
+    /^(?:상세\s*)?경력|Professional Experience|Work Experience|Experience|Career|프로젝트|Project|기술|Skills|논문|특허|수상|Awards?/i
+  );
+  const candidates = [...sectionLines, ...expanded];
+
+  return [...new Set(candidates.filter((line) =>
+    /(학력|Education|대학교|대학원|University|College|KAIST|카이스트|POSTECH|학사|석사|박사|전공|Major|Ph\.?D|Master|Bachelor)/i.test(line) &&
+    !/(경력|Experience|회사|근무|재직|직장|Company|Work\s+Experience)/i.test(line)
+  ))];
+}
+
 function normalizeDatePart(year, month = "0") {
   const normalizedYear = String(year || "").trim();
   const normalizedMonth = String(month || "0").trim();
@@ -12380,7 +12474,7 @@ function extractPeriodValues(line) {
 
 function removePeriodText(value) {
   return cleanParsedValue(value)
-    .replace(/(?:19|20)\d{2}\s*[.\-/년]\s*(?:\d{1,2})?\s*월?\s*(?:~|-|–|—|to)\s*(?:현재|재직중?|present|current|ongoing|(?:19|20)\d{2}\s*[.\-/년]?\s*(?:\d{1,2})?\s*월?)/gi, " ")
+    .replace(/(?:19|20)\d{2}\s*[.\-/년]\s*(?:\d{1,2})?\s*월?\s*(?:~|～|-|–|—|to)\s*(?:현재|재직중?|present|current|ongoing|(?:19|20)\d{2}\s*[.\-/년]?\s*(?:\d{1,2})?\s*월?)/gi, " ")
     .replace(/(?:19|20)\d{2}\s*[.\-/년]\s*(?:\d{1,2})?\s*월?/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -12476,6 +12570,7 @@ function isCareerSectionBoundary(line) {
 function buildCareerExtractionLines(lines) {
   const extracted = [];
   let inCareerSection = false;
+  const sourceLines = expandResumeExtractionLines(lines);
 
   const pushLine = (line) => {
     const cleaned = cleanParsedValue(line);
@@ -12485,7 +12580,7 @@ function buildCareerExtractionLines(lines) {
     }
   };
 
-  lines.forEach((line, index) => {
+  sourceLines.forEach((line, index) => {
     if (isCareerSectionHeader(line)) {
       inCareerSection = true;
       return;
@@ -12510,9 +12605,9 @@ function buildCareerExtractionLines(lines) {
 
     pushLine(line);
 
-    const previous = lines[index - 1] || "";
-    const next = lines[index + 1] || "";
-    const nextAfter = lines[index + 2] || "";
+    const previous = sourceLines[index - 1] || "";
+    const next = sourceLines[index + 1] || "";
+    const nextAfter = sourceLines[index + 2] || "";
 
     if (period.start && !companyLike && hasCareerCompanyKeyword(next)) {
       pushLine(`${line} ${next}`);
@@ -12586,11 +12681,12 @@ function parseCareerLine(line) {
     /(?:회사|직장|근무처)[:\s]+([가-힣A-Za-z0-9\s.&+-]+)/,
     /(미래로봇기술연구소|뉴로메카트로닉스|네이버클라우드|현대백화점|아모레퍼시픽|삼성전자|LG전자|NVIDIA|엔비디아|크래프톤|Bluehole|본엔젤스|[가-힣A-Za-z0-9.&+-]+(?:전자|백화점|퍼시픽|SDS|모비스|연구소|메카트로닉스|로보틱스|Robotics|Research|Technology|Technologies|Cloud|hynix|ASML|Samsung|Naver|Kakao|Hyundai|Amorepacific|LG|SK|Inc\.?|Corp\.?|Labs?|Studio|Group|Korea))/i
   ]));
-  const position = cleanParsedValue(labeledValueFromLine(body, ["직책", "담당", "포지션", "Position"]) || firstMatch(body, [
+  const bodyWithoutCompany = company ? body.replace(new RegExp(escapeRegExp(company), "i"), " ") : body;
+  const position = cleanParsedValue(labeledValueFromLine(bodyWithoutCompany, ["직책", "담당", "포지션", "Position"]) || firstMatch(bodyWithoutCompany, [
     /(?:소속부서|부서|조직|직책|담당|포지션)[:\s]+([가-힣A-Za-z0-9\s/·&+-]+)/,
     /([가-힣A-Za-z0-9\s]+(?:팀|그룹|센터|랩|연구소|Lab|Team|Department|Office))/i
   ]));
-  const rank = cleanParsedValue(firstMatch(body, [/(선임\s*디자이너|Associate|사원|주임|대리|과장|차장|부장|책임|선임|수석|Staff|Senior|Principal|Manager|Designer|Engineer|Researcher)/i]));
+  const rank = cleanParsedValue(firstMatch(bodyWithoutCompany, [/(선임\s*디자이너|Associate|사원|주임|대리|과장|차장|부장|책임연구원|선임연구원|수석연구원|책임|선임|수석|Staff|Senior|Principal|Manager|Designer|Engineer|Researcher)/i]));
 
   return {
     country: body.includes("미국") || /USA|United States/i.test(body) ? "미국" : body.includes("대한민국") ? "대한민국" : "",
@@ -12667,15 +12763,14 @@ function extractReferenceUrl(text) {
 
 function parseResumeText(text, filename = "") {
   const normalized = normalizeResumeText(text);
-  const lines = normalized
+  const baseLines = normalized
     .split("\n")
     .map((line) => cleanParsedValue(line))
     .filter((line) => line && !/^(이력서|자기소개서|경력기술서)$/i.test(line));
+  const lines = expandResumeExtractionLines(baseLines)
+    .filter((line) => line && !/^(이력서|자기소개서|경력기술서)$/i.test(line));
   const compact = lines.join("\n");
-  const educationLines = lines.filter((line) =>
-    /(학력|Education|대학교|대학원|University|College|KAIST|POSTECH|학사|석사|박사|전공)/i.test(line) &&
-    !/(경력|Experience|회사|근무|재직)/i.test(line)
-  );
+  const educationLines = buildEducationExtractionLines(lines);
   const careerLines = buildCareerExtractionLines(lines)
     .filter((line) => !/(현재\s*회사|최근\s*회사|현재\/최근|지원\s*직무|희망직무|지원분야|직무[:\s]|포지션[:\s])/i.test(line));
   const education = educationLines.map(parseEducationLine).filter(hasAnyRecordValue).slice(0, 5);
