@@ -13151,8 +13151,8 @@ async function fetchTrendingMailSettings() {
   state.trendingMailLoading = true;
 
   try {
-    const response = await fetch("/api/trending-mail");
-    const payload = await response.json();
+    const response = await fetch("/api/trending-mail", { cache: "no-store" });
+    const payload = await readApiJson(response, "메일링 설정");
 
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `Trending mail settings failed: ${response.status}`);
@@ -13167,6 +13167,26 @@ async function fetchTrendingMailSettings() {
   } finally {
     state.trendingMailLoading = false;
     renderTrendingPeople();
+  }
+}
+
+async function readApiJson(response, label) {
+  const text = await response.text();
+  const trimmed = text.trim();
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!trimmed) {
+    return {};
+  }
+
+  if (!contentType.includes("application/json") && trimmed.startsWith("<")) {
+    throw new Error(`${label} 응답이 JSON이 아니라 HTML 오류 페이지입니다. 브라우저 새로고침 후 다시 시도하거나, 접속 주소가 https://talentpool-dx.com 인지 확인해주세요. (${response.status})`);
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    throw new Error(`${label} 응답을 해석하지 못했습니다. 상태 ${response.status}, 응답 시작: ${trimmed.slice(0, 80)}`);
   }
 }
 
@@ -13202,10 +13222,11 @@ async function saveTrendingMailSettings() {
     renderTrendingPeople();
     const response = await fetch("/api/trending-mail", {
       method: "PUT",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings)
     });
-    const payload = await response.json();
+    const payload = await readApiJson(response, "메일링 설정 저장");
 
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `Trending mail save failed: ${response.status}`);
@@ -13288,6 +13309,7 @@ async function sendTrendingMailTest() {
     renderTrendingPeople();
     const response = await fetch("/api/trending-mail", {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "test",
@@ -13296,7 +13318,7 @@ async function sendTrendingMailTest() {
         requestedBy: getCurrentActorName()
       })
     });
-    const payload = await response.json();
+    const payload = await readApiJson(response, "테스트 메일 발송");
 
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `Trending mail send failed: ${response.status}`);
