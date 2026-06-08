@@ -2071,6 +2071,174 @@ tr:last-child td {
   white-space: normal;
 }
 
+.screening-structured-card {
+  gap: 18px;
+  border-color: #111827;
+  border-radius: 2px;
+  padding: 20px;
+  box-shadow: none;
+}
+
+.screening-structured-card.is-passed,
+.screening-structured-card.is-draft,
+.screening-structured-card.is-reviewing,
+.screening-structured-card.is-rejected {
+  border-color: #111827;
+  box-shadow: none;
+}
+
+.screening-structured-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, auto);
+  gap: 16px;
+  align-items: start;
+}
+
+.screening-structured-identity {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.screening-structured-name {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.screening-structured-identity span {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.screening-structured-status {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: right;
+}
+
+.screening-structured-status .stage-chip {
+  border-radius: 0;
+  background: #fff4cf;
+  color: #4e3b00;
+}
+
+.screening-structured-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.screening-structured-info-grid section,
+.screening-structured-special,
+.screening-structured-fit,
+.screening-structured-actions {
+  min-width: 0;
+}
+
+.screening-structured-info-grid h5,
+.screening-structured-special strong,
+.screening-structured-fit-title strong,
+.screening-structured-actions > strong,
+.screening-structured-opinion > span,
+.screening-structured-special-input > span {
+  display: block;
+  margin: 0 0 8px;
+  color: #111827;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.screening-structured-info-grid p,
+.screening-structured-special-box p,
+.screening-structured-fit p {
+  margin: 0 0 6px;
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.screening-structured-empty {
+  color: var(--muted) !important;
+}
+
+.screening-structured-special-box {
+  min-height: 66px;
+  border: 1px solid #111827;
+  padding: 12px;
+  background: #fff;
+}
+
+.screening-structured-special-input {
+  gap: 8px;
+}
+
+.screening-structured-special-input textarea,
+.screening-structured-opinion textarea {
+  min-height: 78px;
+  border-color: #111827;
+  border-radius: 0;
+  background: #fff;
+}
+
+.screening-structured-review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 26px;
+  align-items: stretch;
+}
+
+.screening-structured-fit {
+  border: 1px solid #111827;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.screening-structured-fit-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.screening-structured-actions {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.screening-structured-actions .member-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.screening-structured-actions .member-actions .compact-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.screening-structured-actions .member-actions .compact-button:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.screening-structured-bottom-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.screening-structured-bottom-actions .member-actions {
+  justify-content: flex-end;
+}
+
+.screening-structured-opinion {
+  gap: 8px;
+}
+
 .screening-card-field > span {
   color: var(--muted);
   font-size: 12px;
@@ -5121,6 +5289,9 @@ tr:last-child td {
   .screening-list-page .screening-folder-card,
   .screening-applicant-main,
   .screening-applicant-grid,
+  .screening-structured-top,
+  .screening-structured-info-grid,
+  .screening-structured-review-row,
   .screening-detail-two-column,
   .screening-detail-two-column.has-fit,
   .screening-applicant-profile-summary {
@@ -5147,6 +5318,15 @@ tr:last-child td {
 
   .screening-card-tags {
     justify-content: flex-start;
+  }
+
+  .screening-structured-status {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .screening-structured-actions .member-actions {
+    grid-template-columns: 1fr;
   }
 
   .interview-case-list {
@@ -5278,6 +5458,9 @@ tr:last-child td {
   .screening-step-nav,
   .screening-applicant-main,
   .screening-applicant-grid,
+  .screening-structured-top,
+  .screening-structured-info-grid,
+  .screening-structured-review-row,
   .screening-detail-two-column,
   .screening-detail-two-column.has-fit,
   .screening-detail-list,

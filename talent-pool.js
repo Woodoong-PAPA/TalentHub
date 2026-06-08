@@ -6015,7 +6015,7 @@ function canEditScreeningOpinion(folder, step, applicant, member = getCurrentMem
   return canAccessScreeningStep(folder, "reception", member);
 }
 
-function renderScreeningOpinionField(folder, applicant, step) {
+function renderScreeningOpinionField(folder, applicant, step, options = {}) {
   if (!["reception", "first", "second"].includes(step)) {
     return "";
   }
@@ -6026,13 +6026,16 @@ function renderScreeningOpinionField(folder, applicant, step) {
     first: "1차 평가의견",
     second: "2차 평가의견"
   }[step] || "평가의견";
+  const fieldLabel = options.label || label;
+  const rows = options.rows || 3;
+  const extraClass = options.className || "";
 
   return `
-    <div class="screening-card-field screening-opinion-field">
-      <span>${escapeHtml(label)}</span>
+    <div class="screening-card-field screening-opinion-field ${escapeHtml(extraClass)}">
+      <span>${escapeHtml(fieldLabel)}</span>
       <textarea
         class="control-textarea compact-textarea"
-        rows="3"
+        rows="${rows}"
         data-screening-opinion-applicant="${escapeHtml(applicant.id)}"
         data-screening-opinion-stage="${escapeHtml(step)}"
         placeholder="담당자 검토 의견을 입력하세요."
@@ -6105,7 +6108,142 @@ function renderScreeningApplicantProfileSummary(applicant) {
   `;
 }
 
+function renderScreeningCompactLines(lines, emptyText = "정보 없음") {
+  const normalizedLines = (lines || []).map((line) => String(line || "").trim()).filter(Boolean);
+
+  if (!normalizedLines.length) {
+    return `<p class="screening-structured-empty">${escapeHtml(emptyText)}</p>`;
+  }
+
+  return normalizedLines.map((line) => `<p>${escapeHtml(line)}</p>`).join("");
+}
+
+function formatScreeningBirthAge(applicant) {
+  const birthYear = String(applicant.birthYear || applicant.birth_year || "").trim();
+  const age = applicant.age || calculateAge(birthYear);
+  const parts = [];
+
+  if (birthYear) {
+    parts.push(`${birthYear}년생`);
+  }
+
+  if (age) {
+    parts.push(`${age}세`);
+  }
+
+  return parts.join(", ") || "출생년도, 나이";
+}
+
+function renderScreeningApplicantSpecialBox(folder, applicant, step) {
+  if (step === "reception") {
+    return renderScreeningOpinionField(folder, applicant, "reception", {
+      label: "특이사항",
+      rows: 4,
+      className: "screening-structured-special-input"
+    });
+  }
+
+  const specialText = [applicant.summary, applicant.receptionOpinion]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return `
+    <div class="screening-structured-special">
+      <strong>특이사항</strong>
+      <div class="screening-structured-special-box">
+        ${specialText
+          ? splitNonEmptyLines(specialText).map((line) => `<p>${escapeHtml(line)}</p>`).join("")
+          : `<p class="screening-structured-empty">특이사항 없음</p>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderScreeningStructuredFitPanel(folder, applicant) {
+  const fit = screeningFitDetail(folder, applicant);
+
+  return `
+    <section class="screening-structured-fit">
+      <div class="screening-structured-fit-title">
+        <strong>직무적합도 분석</strong>
+        ${fitGradeChip(applicant.fitGrade)}
+      </div>
+      <p>${escapeHtml(fit.summary || applicant.fitComment || "분석 의견 없음")}</p>
+    </section>
+  `;
+}
+
+function renderScreeningStructuredApplicantCard(folder, applicant, step) {
+  const firm = applicant.searchFirmMemberId ? state.members.find((member) => member.id === applicant.searchFirmMemberId) : null;
+  const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌" : "직접 등록";
+  const sourceMeta = firm ? `${firm.name} · ${firm.email}` : applicant.registeredByName || "-";
+  const educationLines = getScreeningApplicantEducationLines(applicant);
+  const careerLines = getScreeningApplicantCareerLines(applicant);
+  const locked = isScreeningStageSnapshotLocked(applicant, step);
+  const cardClass = [locked ? "is-locked" : "", getScreeningApplicantCardClass(applicant)].filter(Boolean).join(" ");
+  const showFirstScreeningArea = step === "first";
+  const lockedNote = getScreeningStageSnapshotNote(applicant, step);
+
+  return `
+    <article class="screening-applicant-card screening-structured-card ${cardClass}">
+      <div class="screening-structured-top">
+        <div class="screening-structured-identity">
+          <button class="screening-applicant-name-button screening-structured-name" type="button" data-open-screening-applicant-detail="${escapeHtml(applicant.id)}">${escapeHtml(applicant.name || "-")}</button>
+          <span>${escapeHtml(formatScreeningBirthAge(applicant))}</span>
+          ${lockedNote ? `<em class="screening-lock-note">${escapeHtml(lockedNote)}</em>` : ""}
+        </div>
+        <div class="screening-structured-status">
+          ${screeningStageChip(applicant)}
+          <span>등록 경로 : ${escapeHtml(sourceLabel)} (${escapeHtml(sourceMeta)})</span>
+        </div>
+      </div>
+
+      <div class="screening-structured-info-grid">
+        <section>
+          <h5>학력</h5>
+          ${renderScreeningCompactLines(educationLines, "학력 정보 없음")}
+        </section>
+        <section>
+          <h5>경력</h5>
+          ${renderScreeningCompactLines(careerLines, "경력 정보 없음")}
+        </section>
+        <section>
+          <h5>연락처</h5>
+          <p>이메일 : ${escapeHtml(applicant.email || "-")}</p>
+          <p>전화번호 : ${escapeHtml(applicant.phone || "-")}</p>
+        </section>
+      </div>
+
+      ${renderScreeningApplicantSpecialBox(folder, applicant, step)}
+
+      ${showFirstScreeningArea ? `
+        <div class="screening-structured-review-row">
+          ${renderScreeningStructuredFitPanel(folder, applicant)}
+          <aside class="screening-structured-actions">
+            <strong>액션</strong>
+            ${renderApplicantActions(folder, applicant, step)}
+          </aside>
+        </div>
+        ${renderScreeningOpinionField(folder, applicant, "first", {
+          label: "평가의견",
+          rows: 4,
+          className: "screening-structured-opinion"
+        })}
+      ` : `
+        <div class="screening-structured-bottom-actions">
+          ${renderApplicantActions(folder, applicant, step)}
+        </div>
+      `}
+    </article>
+  `;
+}
+
 function renderApplicantCard(folder, applicant, step = state.screeningDetailStep) {
+  if (step === "reception" || step === "first") {
+    return renderScreeningStructuredApplicantCard(folder, applicant, step);
+  }
+
   const firm = applicant.searchFirmMemberId ? state.members.find((member) => member.id === applicant.searchFirmMemberId) : null;
   const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌" : "직접 등록";
   const sourceMeta = firm ? `${firm.name} · ${firm.email}` : applicant.registeredByName || "-";
