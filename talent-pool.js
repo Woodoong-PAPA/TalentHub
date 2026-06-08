@@ -7947,7 +7947,7 @@ function renderJdEnhancement() {
             </div>
             <button class="ghost-button compact-button" type="button" data-download-jd-final ${canDownload ? "" : "disabled"}>Word 다운로드</button>
           </div>
-          <textarea class="control-textarea" id="jd-enhance-final-text" rows="18" placeholder="점검 전에는 JD 원문이 표시되고, 제안 적용 후 최종본으로 정리됩니다.">${escapeHtml(jd.finalText || jd.jdText)}</textarea>
+          <textarea class="control-textarea" id="jd-enhance-final-text" rows="18" placeholder="JD 점검 시작 버튼을 누르면 원문이 먼저 표시되고, 제안 적용 후 최종본으로 정리됩니다.">${escapeHtml(jd.finalText)}</textarea>
         </section>
       </div>
 
@@ -8024,29 +8024,45 @@ function closeJdGuidelineModal() {
   rerenderJdEnhancement();
 }
 
+function syncJdEnhancementActionState() {
+  const jd = getJdEnhancementState();
+  const canRun = Boolean(jd.guidelineText.trim() && jd.jdText.trim() && !jd.loading && !jd.fileLoading);
+  const runButton = document.querySelector("[data-run-jd-enhance]");
+  const clearButton = document.querySelector("[data-clear-jd-enhance-input]");
+  const downloadButton = document.querySelector("[data-download-jd-final]");
+
+  if (runButton) {
+    runButton.disabled = !canRun;
+  }
+
+  if (clearButton) {
+    clearButton.disabled = !(jd.jdText || jd.jdFile);
+  }
+
+  if (downloadButton) {
+    downloadButton.disabled = !jd.finalText.trim();
+  }
+}
+
 function updateJdInputText(value) {
   const jd = getJdEnhancementState();
-  const previousText = jd.jdText;
-  const shouldSyncFinalText = !jd.reviewItems.length
-    && !jd.appliedSuggestionIds.length
-    && (!jd.finalText || jd.finalText === previousText);
-
   jd.jdText = value;
-  if (shouldSyncFinalText) {
-    jd.finalText = value;
-  }
+  jd.finalText = "";
   jd.reviewItems = [];
   jd.score = 0;
   jd.summary = "";
+  jd.revisedDocument = "";
   jd.appliedSuggestionIds = [];
   jd.status = value.trim() ? "JD 원문이 수정되었습니다. JD 점검 시작 버튼을 눌러 다시 점검해 주세요." : "";
   persistState();
+  syncJdEnhancementActionState();
 }
 
 function updateJdFinalText(value) {
   const jd = getJdEnhancementState();
   jd.finalText = value;
   persistState();
+  syncJdEnhancementActionState();
 }
 
 async function handleJdEnhanceFileUpload(file) {
@@ -8066,7 +8082,7 @@ async function handleJdEnhanceFileUpload(file) {
       readFileAsDataUrl(file)
     ]);
     jd.jdText = result.text;
-    jd.finalText = result.text;
+    jd.finalText = "";
     jd.jdFile = {
       name: file.name,
       size: file.size,
