@@ -1247,11 +1247,45 @@ function normalizeInterviewPanelSlots(panel = {}) {
     .filter(Boolean);
 }
 
+function normalizeScreeningEducationRecords(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .map(normalizeEducationRecord)
+    .filter(hasAnyRecordValue)
+    .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)));
+}
+
+function normalizeScreeningCareerRecords(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .map((item = {}) => ({
+      country: String(item.country || "").trim(),
+      company: String(item.company || "").trim(),
+      rank: String(item.rank || "").trim(),
+      position: String(item.position || item.department || item.title || "").trim(),
+      start: String(item.start || "").trim(),
+      end: String(item.end || "").trim(),
+      achievements: String(item.achievements || "").trim()
+    }))
+    .filter(hasAnyRecordValue)
+    .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)));
+}
+
+function getScreeningCurrentProfileFromCareer(career = []) {
+  const current = Array.isArray(career) ? career.find(hasAnyRecordValue) || {} : {};
+  return {
+    company: String(current.company || "").trim(),
+    currentRole: uniqueTextParts([current.rank, current.position]).join(", ")
+  };
+}
+
 function normalizeScreeningApplicant(applicant = {}) {
   const sourceType = applicant.sourceType === "search_firm" ? "search_firm" : "direct";
   const stage = SCREENING_STAGE_LABELS[applicant.stage] ? applicant.stage : "registered";
   const fitGrade = FIT_GRADE_ORDER.includes(applicant.fitGrade) ? applicant.fitGrade : "C";
+  const education = normalizeScreeningEducationRecords(applicant.education || []);
+  const career = normalizeScreeningCareerRecords(applicant.career || []);
+  const currentProfile = getScreeningCurrentProfileFromCareer(career);
   const fit = normalizeScreeningFitResultForApplicant(applicant);
+  const birthYear = String(applicant.birthYear || applicant.birth_year || "").trim();
 
   return {
     id: applicant.id || createId("screening-applicant"),
@@ -1260,12 +1294,20 @@ function normalizeScreeningApplicant(applicant = {}) {
     searchFirmMemberId: String(applicant.searchFirmMemberId || "").trim(),
     registeredById: String(applicant.registeredById || "").trim(),
     registeredByName: String(applicant.registeredByName || "").trim(),
-    company: String(applicant.company || "").trim(),
-    currentRole: String(applicant.currentRole || "").trim(),
+    company: String(applicant.company || currentProfile.company || "").trim(),
+    currentRole: String(applicant.currentRole || currentProfile.currentRole || "").trim(),
+    birthYear,
+    age: calculateAge(birthYear),
+    nationality: String(applicant.nationality || "").trim(),
     email: String(applicant.email || "").trim().toLowerCase(),
     phone: String(applicant.phone || "").trim(),
     summary: String(applicant.summary || "").trim(),
     resumeAttachment: applicant.resumeAttachment || null,
+    attachments: Array.isArray(applicant.attachments)
+      ? applicant.attachments.filter((attachment) => attachment && (attachment.name || attachment.dataUrl))
+      : [],
+    education,
+    career,
     fitGrade,
     fitScore: fit.fitScore,
     fitComment: String(applicant.fitComment || "").trim(),
@@ -4830,11 +4872,22 @@ function getScreeningJdAnalysisText(folder) {
 }
 
 function getScreeningApplicantResumeText(applicant) {
+  const educationText = (applicant.education || [])
+    .map(formatJobFitEducationSummaryLine)
+    .filter(Boolean)
+    .join("\n");
+  const careerText = (applicant.career || [])
+    .map(formatJobFitCareerSummaryLine)
+    .filter(Boolean)
+    .join("\n");
+
   return normalizeResumeText([
     applicant.resumeAttachment?.text,
     applicant.name ? `이름: ${applicant.name}` : "",
     applicant.company ? `현재/최근 회사: ${applicant.company}` : "",
     applicant.currentRole ? `현재/최근 직무: ${applicant.currentRole}` : "",
+    educationText ? `등록 학력:\n${educationText}` : "",
+    careerText ? `등록 경력:\n${careerText}` : "",
     applicant.summary
   ].filter(Boolean).join("\n"));
 }
@@ -5407,6 +5460,9 @@ function renderApplicantRegistrationModal(folder) {
     : searchFirmMember
       ? "접수 저장 후 접수 탭에서 최종 제출하면 1차 스크리닝으로 이동합니다."
       : `${escapeHtml(folder.title)} 포지션에 지원자 정보를 등록합니다.`;
+  const educationRecords = editingApplicant?.education?.length ? editingApplicant.education : [{}];
+  const careerRecords = editingApplicant?.career?.length ? editingApplicant.career : [{}];
+  const otherAttachments = Array.isArray(editingApplicant?.attachments) ? editingApplicant.attachments : [];
 
   return `
     <div class="trending-modal-backdrop" data-screening-applicant-modal-backdrop>
@@ -5445,12 +5501,16 @@ function renderApplicantRegistrationModal(folder) {
                     </select>`}
               </div>
               <div class="field">
-                <label for="screening-applicant-company">현재/최근 회사</label>
-                <input class="control-input" id="screening-applicant-company" name="company" value="${inputValue(editingApplicant?.company || "")}" ${coreDisabledAttr} />
+                <label for="screening-applicant-birth-year">출생년도</label>
+                <input class="control-input" id="screening-applicant-birth-year" name="birthYear" type="number" inputmode="numeric" min="1900" max="${getCurrentYear()}" value="${inputValue(editingApplicant?.birthYear || "")}" ${coreDisabledAttr} />
               </div>
               <div class="field">
-                <label for="screening-applicant-role">현재/최근 직무</label>
-                <input class="control-input" id="screening-applicant-role" name="currentRole" value="${inputValue(editingApplicant?.currentRole || "")}" ${coreDisabledAttr} />
+                <label for="screening-applicant-age">나이</label>
+                <input class="control-input" id="screening-applicant-age" name="age" type="text" value="${inputValue(calculateAge(editingApplicant?.birthYear) ? `${calculateAge(editingApplicant?.birthYear)}세` : "")}" readonly />
+              </div>
+              <div class="field">
+                <label for="screening-applicant-nationality">국적</label>
+                <input class="control-input" id="screening-applicant-nationality" name="nationality" value="${inputValue(editingApplicant?.nationality || "")}" ${coreDisabledAttr} />
               </div>
               <div class="field">
                 <label for="screening-applicant-email">이메일</label>
@@ -5471,14 +5531,51 @@ function renderApplicantRegistrationModal(folder) {
                     ${editingApplicant.resumeAttachment.dataUrl ? `<a class="soft-button compact-button" href="${escapeHtml(editingApplicant.resumeAttachment.dataUrl)}" download="${escapeHtml(editingApplicant.resumeAttachment.name)}">다운로드</a>` : ""}
                   </div>
                 ` : ""}
-                <input class="control-input" id="screening-applicant-resume" name="resumeFile" type="file" ${coreDisabledAttr} />
-              </div>
-              <div class="field full">
-                <label for="screening-applicant-summary">지원자 핵심 경력/역량</label>
-                <textarea class="control-textarea" id="screening-applicant-summary" name="summary" rows="4" ${coreDisabledAttr}>${inputValue(editingApplicant?.summary || "")}</textarea>
+                <div class="dropzone compact-upload">
+                  <input id="screening-applicant-resume" name="resumeFile" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" ${coreDisabledAttr} />
+                  <span id="screening-resume-parse-status" class="form-help">이력서를 업로드하면 이름, 연락처, 학력, 경력 정보를 자동 입력합니다.</span>
+                </div>
               </div>
               ${coreDisabled ? `<div class="field full"><span class="form-help strong-help">이미 스크리닝 단계로 이동한 지원자입니다. 이메일과 휴대폰 번호만 수정됩니다.</span></div>` : ""}
             </div>
+            <section class="edit-section register-section">
+              <div class="edit-section-header">
+                <h5>학력 정보</h5>
+                <button class="soft-button" type="button" data-add-screening-education ${coreDisabledAttr}>학력 추가</button>
+              </div>
+              <div class="edit-record-list" id="screening-education-list">
+                ${educationRecords.map((item, index) => renderScreeningEducationRecord(item, index, coreDisabledAttr)).join("")}
+              </div>
+            </section>
+            <section class="edit-section register-section">
+              <div class="edit-section-header">
+                <h5>경력 정보</h5>
+                <button class="soft-button" type="button" data-add-screening-career ${coreDisabledAttr}>경력 추가</button>
+              </div>
+              <div class="edit-record-list" id="screening-career-list">
+                ${careerRecords.map((item, index) => renderScreeningCareerRecord(item, index, coreDisabledAttr)).join("")}
+              </div>
+            </section>
+            <section class="edit-section register-section">
+              <div class="edit-section-header">
+                <h5>기타 첨부파일</h5>
+              </div>
+              ${otherAttachments.length ? `
+                <div class="screening-file-preview compact-file-preview">
+                  <span>
+                    <strong>등록된 첨부파일</strong>
+                    <small>${otherAttachments.map((attachment) => attachment.name).filter(Boolean).join(", ")}</small>
+                  </span>
+                </div>
+              ` : ""}
+              <div class="field">
+                <label for="screening-applicant-other-attachments">개인정보동의서, 포트폴리오 등</label>
+                <div class="dropzone compact-upload">
+                  <input id="screening-applicant-other-attachments" name="otherAttachments" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" ${coreDisabledAttr} />
+                  <span class="form-help">이력서 외 보관이 필요한 자료를 여러 개 첨부할 수 있습니다.</span>
+                </div>
+              </div>
+            </section>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-applicant-modal>취소</button>
               <button class="primary-button" type="submit">${isEditing ? "수정 저장" : searchFirmMember ? "접수 저장" : "저장"}</button>
@@ -5738,6 +5835,8 @@ function renderScreeningApplicantDetailModal(folder) {
             </div>
             <div class="screening-detail-list">
               <div><span>등록 경로</span><strong>${escapeHtml(sourceLabel)}</strong><small>${escapeHtml(sourceMeta)}</small></div>
+              <div><span>출생년도/나이</span><strong>${escapeHtml(formatScreeningBirthAge(applicant))}</strong></div>
+              <div><span>국적</span><strong>${escapeHtml(applicant.nationality || "-")}</strong></div>
               <div><span>이메일</span><strong>${escapeHtml(applicant.email || "-")}</strong></div>
               <div><span>휴대폰 번호</span><strong>${escapeHtml(applicant.phone || "-")}</strong></div>
               <div><span>최초 등록일</span><strong>${escapeHtml(applicant.createdAt || "-")}</strong></div>
@@ -6065,14 +6164,14 @@ function renderScreeningFitCriteria(folder) {
 }
 
 function getScreeningApplicantEducationLines(applicant) {
-  return (applicant.fitEducation || applicant.education || [])
+  return (applicant.education || [])
     .map(formatJobFitEducationSummaryLine)
     .filter(Boolean)
     .slice(0, 3);
 }
 
 function getScreeningApplicantCareerLines(applicant) {
-  return (applicant.fitCareer || applicant.career || [])
+  return (applicant.career || [])
     .map(formatJobFitCareerSummaryLine)
     .filter(Boolean)
     .slice(0, 3);
@@ -6085,7 +6184,7 @@ function renderScreeningApplicantProfileSummary(applicant) {
   if (!educationLines.length && !careerLines.length) {
     return `
       <div class="screening-applicant-profile-summary is-empty">
-        <span>학력/경력 요약 정보가 아직 추출되지 않았습니다. 상세 화면에서 이력서를 확인해 주세요.</span>
+        <span>학력/경력 정보가 아직 입력되지 않았습니다.</span>
       </div>
     `;
   }
@@ -7198,6 +7297,90 @@ function renderRegisterCareerRecord(item = {}, index = 0) {
         <div class="field full">
           <label for="register-career-achievements-${index}">주요성과/실적</label>
           <textarea class="control-textarea" id="register-career-achievements-${index}" name="register-career-achievements-${index}">${inputValue(item.achievements)}</textarea>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderScreeningEducationRecord(item = {}, index = 0, disabledAttr = "") {
+  return `
+    <article class="edit-record" data-screening-education-index="${index}">
+      <div class="edit-record-header">
+        <strong>학력 ${index + 1}</strong>
+        <button class="ghost-button danger-button compact-button" type="button" data-remove-screening-education="${index}" ${disabledAttr}>삭제</button>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="screening-education-degree-${index}">학위</label>
+          <input class="control-input" id="screening-education-degree-${index}" name="screening-education-degree-${index}" value="${inputValue(item.degree)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-education-school-${index}">학교명</label>
+          <input class="control-input" id="screening-education-school-${index}" name="screening-education-school-${index}" value="${inputValue(item.school)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-education-major-${index}">전공명</label>
+          <input class="control-input" id="screening-education-major-${index}" name="screening-education-major-${index}" value="${inputValue(item.major)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-education-affiliation-${index}">소속</label>
+          <input class="control-input" id="screening-education-affiliation-${index}" name="screening-education-affiliation-${index}" value="${inputValue(item.affiliation)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-education-start-${index}">학위 시작</label>
+          <input class="control-input" id="screening-education-start-${index}" name="screening-education-start-${index}" type="text" inputmode="numeric" placeholder="YYYY-MM 또는 0" value="${inputValue(item.start)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-education-end-${index}">학위 종료</label>
+          <input class="control-input" id="screening-education-end-${index}" name="screening-education-end-${index}" type="text" inputmode="numeric" placeholder="YYYY-MM 또는 0" value="${inputValue(item.end)}" ${disabledAttr} />
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderScreeningCareerRecord(item = {}, index = 0, disabledAttr = "") {
+  const isCurrent = item.end === "현재";
+  const endDisabledAttr = isCurrent ? "disabled" : disabledAttr;
+
+  return `
+    <article class="edit-record" data-screening-career-index="${index}">
+      <div class="edit-record-header">
+        <strong>경력 ${index + 1}</strong>
+        <button class="ghost-button danger-button compact-button" type="button" data-remove-screening-career="${index}" ${disabledAttr}>삭제</button>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="screening-career-country-${index}">직장 소재 국가</label>
+          <input class="control-input" id="screening-career-country-${index}" name="screening-career-country-${index}" value="${inputValue(item.country)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-career-company-${index}">직장명</label>
+          <input class="control-input" id="screening-career-company-${index}" name="screening-career-company-${index}" value="${inputValue(item.company)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-career-rank-${index}">직급/직책</label>
+          <input class="control-input" id="screening-career-rank-${index}" name="screening-career-rank-${index}" value="${inputValue(item.rank)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-career-position-${index}">소속부서</label>
+          <input class="control-input" id="screening-career-position-${index}" name="screening-career-position-${index}" value="${inputValue(item.position)}" ${disabledAttr} />
+        </div>
+        <div class="field">
+          <label for="screening-career-start-${index}">근무 시작</label>
+          <input class="control-input" id="screening-career-start-${index}" name="screening-career-start-${index}" type="text" inputmode="numeric" placeholder="YYYY-MM 또는 0" value="${inputValue(item.start)}" ${disabledAttr} />
+        </div>
+        <div class="field ${isCurrent ? "is-hidden" : ""}" data-career-end-field>
+          <label for="screening-career-end-${index}">근무 종료</label>
+          <input class="control-input" id="screening-career-end-${index}" name="screening-career-end-${index}" type="text" inputmode="numeric" placeholder="YYYY-MM 또는 0" value="${isCurrent ? "" : inputValue(item.end)}" ${endDisabledAttr} />
+        </div>
+        <div class="field">
+          <label class="inline-check"><input type="checkbox" name="screening-career-current-${index}" ${isCurrent ? "checked" : ""} ${disabledAttr} /> 현재 재직 중</label>
+        </div>
+        <div class="field full">
+          <label for="screening-career-achievements-${index}">주요성과/실적</label>
+          <textarea class="control-textarea" id="screening-career-achievements-${index}" name="screening-career-achievements-${index}" ${disabledAttr}>${inputValue(item.achievements)}</textarea>
         </div>
       </div>
     </article>
@@ -12957,6 +13140,47 @@ function collectRegisterCareerFromForm(formElement, preserveBlank = false) {
   return preserveBlank ? records : records.filter(hasAnyRecordValue);
 }
 
+function collectScreeningEducationFromForm(formElement, preserveBlank = false) {
+  if (!formElement) {
+    return [];
+  }
+
+  const formData = new FormData(formElement);
+  const records = [...formElement.querySelectorAll("[data-screening-education-index]")]
+    .map((record) => Number(record.dataset.screeningEducationIndex))
+    .map((index) => ({
+      degree: (formData.get(`screening-education-degree-${index}`) || "").toString().trim(),
+      school: (formData.get(`screening-education-school-${index}`) || "").toString().trim(),
+      major: (formData.get(`screening-education-major-${index}`) || "").toString().trim(),
+      affiliation: (formData.get(`screening-education-affiliation-${index}`) || "").toString().trim(),
+      start: (formData.get(`screening-education-start-${index}`) || "").toString().trim(),
+      end: (formData.get(`screening-education-end-${index}`) || "").toString().trim()
+    }));
+
+  return preserveBlank ? records : records.filter(hasAnyRecordValue);
+}
+
+function collectScreeningCareerFromForm(formElement, preserveBlank = false) {
+  if (!formElement) {
+    return [];
+  }
+
+  const formData = new FormData(formElement);
+  const records = [...formElement.querySelectorAll("[data-screening-career-index]")]
+    .map((record) => Number(record.dataset.screeningCareerIndex))
+    .map((index) => ({
+      country: (formData.get(`screening-career-country-${index}`) || "").toString().trim(),
+      company: (formData.get(`screening-career-company-${index}`) || "").toString().trim(),
+      rank: (formData.get(`screening-career-rank-${index}`) || "").toString().trim(),
+      position: (formData.get(`screening-career-position-${index}`) || "").toString().trim(),
+      start: (formData.get(`screening-career-start-${index}`) || "").toString().trim(),
+      end: formData.get(`screening-career-current-${index}`) ? "현재" : (formData.get(`screening-career-end-${index}`) || "").toString().trim(),
+      achievements: (formData.get(`screening-career-achievements-${index}`) || "").toString().trim()
+    }));
+
+  return preserveBlank ? records : records.filter(hasAnyRecordValue);
+}
+
 function periodYear(value) {
   const formatted = String(value || "").trim();
 
@@ -12996,6 +13220,16 @@ function getRegisterCareerRecords() {
   return form ? collectRegisterCareerFromForm(form, true) : [];
 }
 
+function getScreeningEducationRecords() {
+  const form = $("#screening-applicant-form");
+  return form ? collectScreeningEducationFromForm(form, true) : [];
+}
+
+function getScreeningCareerRecords() {
+  const form = $("#screening-applicant-form");
+  return form ? collectScreeningCareerFromForm(form, true) : [];
+}
+
 function setRegisterEducationRecords(records) {
   const list = $("#register-education-list");
   const items = records.length ? records : [{}];
@@ -13011,6 +13245,24 @@ function setRegisterCareerRecords(records) {
 
   if (list) {
     list.innerHTML = items.map((item, index) => renderRegisterCareerRecord(item, index)).join("");
+  }
+}
+
+function setScreeningEducationRecords(records) {
+  const list = $("#screening-education-list");
+  const items = records.length ? records : [{}];
+
+  if (list) {
+    list.innerHTML = items.map((item, index) => renderScreeningEducationRecord(item, index)).join("");
+  }
+}
+
+function setScreeningCareerRecords(records) {
+  const list = $("#screening-career-list");
+  const items = records.length ? records : [{}];
+
+  if (list) {
+    list.innerHTML = items.map((item, index) => renderScreeningCareerRecord(item, index)).join("");
   }
 }
 
@@ -13040,6 +13292,14 @@ function addRegisterCareerRecord() {
   setRegisterCareerRecords([...getRegisterCareerRecords(), {}]);
 }
 
+function addScreeningEducationRecord() {
+  setScreeningEducationRecords([...getScreeningEducationRecords(), {}]);
+}
+
+function addScreeningCareerRecord() {
+  setScreeningCareerRecords([...getScreeningCareerRecords(), {}]);
+}
+
 function removeRegisterEducationRecord(index) {
   const records = getRegisterEducationRecords();
   records.splice(index, 1);
@@ -13052,8 +13312,20 @@ function removeRegisterCareerRecord(index) {
   setRegisterCareerRecords(records);
 }
 
+function removeScreeningEducationRecord(index) {
+  const records = getScreeningEducationRecords();
+  records.splice(index, 1);
+  setScreeningEducationRecords(records);
+}
+
+function removeScreeningCareerRecord(index) {
+  const records = getScreeningCareerRecords();
+  records.splice(index, 1);
+  setScreeningCareerRecords(records);
+}
+
 function updateCareerCurrentControl(checkbox) {
-  const record = checkbox.closest("[data-register-career-index], [data-career-index]");
+  const record = checkbox.closest("[data-register-career-index], [data-screening-career-index], [data-career-index]");
   const endField = record?.querySelector("[data-career-end-field]");
   const endInput = endField?.querySelector("input");
 
@@ -14266,6 +14538,51 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   }
 }
 
+function screeningApplicantFormHasEnteredValues() {
+  const form = $("#screening-applicant-form");
+
+  if (!form) {
+    return false;
+  }
+
+  const fields = [
+    "#screening-applicant-name",
+    "#screening-applicant-birth-year",
+    "#screening-applicant-nationality",
+    "#screening-applicant-email",
+    "#screening-applicant-phone"
+  ];
+  const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
+  const hasEducationValue = collectScreeningEducationFromForm(form, true).some(hasAnyRecordValue);
+  const hasCareerValue = collectScreeningCareerFromForm(form, true).some(hasAnyRecordValue);
+
+  return hasBasicValue || hasEducationValue || hasCareerValue;
+}
+
+function applyParsedResumeToScreeningApplicantForm(parsed, options = {}) {
+  const overwrite = options.overwrite !== false;
+  const education = (parsed.education || []).filter(hasAnyRecordValue);
+  const career = (parsed.career || []).filter(hasAnyRecordValue);
+  const form = $("#screening-applicant-form");
+  const currentEducationIsBlank = form ? !collectScreeningEducationFromForm(form, true).some(hasAnyRecordValue) : true;
+  const currentCareerIsBlank = form ? !collectScreeningCareerFromForm(form, true).some(hasAnyRecordValue) : true;
+
+  setFieldValue("#screening-applicant-name", parsed.name, overwrite);
+  setFieldValue("#screening-applicant-birth-year", parsed.birthYear, overwrite);
+  setFieldValue("#screening-applicant-nationality", parsed.nationality, overwrite);
+  setFieldValue("#screening-applicant-email", parsed.email, overwrite);
+  setFieldValue("#screening-applicant-phone", parsed.phone, overwrite);
+  updateAgeOutput("#screening-applicant-birth-year", "#screening-applicant-age");
+
+  if (education.length && (overwrite || currentEducationIsBlank)) {
+    setScreeningEducationRecords(education);
+  }
+
+  if (career.length && (overwrite || currentCareerIsBlank)) {
+    setScreeningCareerRecords(career);
+  }
+}
+
 function editFormHasEnteredValues() {
   const form = $("#candidate-edit-form");
 
@@ -14468,6 +14785,74 @@ async function parseResumeIntoRegisterForm(file) {
     }
 
     showToast(error.isResumeParseError ? "이력서 텍스트 추출이 중단되었습니다." : "이력서 파일을 읽지 못했습니다.");
+  }
+}
+
+async function parseResumeIntoScreeningApplicantForm(file) {
+  const status = $("#screening-resume-parse-status");
+
+  if (status) {
+    status.textContent = "이력서를 읽고 지원자 등록 정보를 구조화하는 중입니다.";
+  }
+
+  try {
+    const result = await readResumeText(file);
+
+    if (!result.text || result.text.length < 20) {
+      if (status) {
+        status.textContent = "읽을 수 있는 텍스트가 부족합니다. 이력서를 확인한 뒤 필요한 값을 직접 입력해주세요.";
+      }
+      showToast("이력서 텍스트를 충분히 읽지 못했습니다.");
+      return;
+    }
+
+    const deterministicParsed = normalizeParsedResumeForForm(parseResumeText(result.text, file.name));
+    let parsed = deterministicParsed;
+    let parserSource = "브라우저 기본 파서";
+
+    try {
+      if (status) {
+        status.textContent = "이력서 내용을 AI로 구조화하고 학력/경력 매핑을 보강하는 중입니다.";
+      }
+
+      const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
+      parsed = mergeParsedResumeResults(serverResult.parsed, deterministicParsed);
+      parserSource = serverResult.source === "openai-web" ? "AI 구조화 파서" : "AI 구조화 파서";
+    } catch (serverError) {
+      console.warn("Screening resume parser failed. Falling back to browser parser.", serverError);
+      parserSource = "브라우저 기본 파서";
+    }
+
+    if (!hasParsedResumeValues(parsed)) {
+      if (status) {
+        status.textContent = "이력서는 읽었지만 등록 필드에 매핑할 정보가 부족합니다. 내용을 확인해 직접 입력해주세요.";
+      }
+      showToast("매핑 가능한 이력서 정보를 찾지 못했습니다.");
+      return;
+    }
+
+    const overwrite = screeningApplicantFormHasEnteredValues()
+      ? window.confirm("현재 입력값을 이력서에서 읽은 정보로 덮어쓸까요?")
+      : true;
+
+    applyParsedResumeToScreeningApplicantForm(parsed, { overwrite });
+
+    if (status) {
+      const quality = result.meta?.textQuality ? ` 텍스트 신뢰도 ${Math.round(result.meta.textQuality)}점.` : "";
+      status.textContent = `${parserSource} 결과를 입력란에 반영했습니다.${quality} 실제 이력서와 비교 후 저장해주세요.`;
+    }
+
+    showToast("이력서 정보를 지원자 등록 입력란에 반영했습니다.");
+  } catch (error) {
+    console.warn("Screening resume parsing failed.", error);
+
+    if (status) {
+      status.textContent = error.isResumeParseError
+        ? error.message
+        : "이력서 파일을 읽지 못했습니다. 파일 형식을 확인해주세요.";
+    }
+
+    showToast(error.isResumeParseError ? "이력서 텍스트 추출을 중단했습니다." : "이력서 파일을 읽지 못했습니다.");
   }
 }
 
@@ -15416,6 +15801,17 @@ async function attachmentFromFile(file) {
   };
 }
 
+async function attachmentsFromFiles(fileList) {
+  return (await Promise.all([...(fileList || [])].map(attachmentFromFile))).filter(Boolean);
+}
+
+function applyScreeningApplicantDerivedProfile(applicant) {
+  const currentProfile = getScreeningCurrentProfileFromCareer(applicant.career || []);
+  applicant.company = currentProfile.company;
+  applicant.currentRole = currentProfile.currentRole;
+  applicant.age = calculateAge(applicant.birthYear);
+}
+
 function getScreeningFormBusinessUnit(value, member = getCurrentMember()) {
   const normalized = normalizeBusinessUnit(value);
 
@@ -15496,6 +15892,10 @@ async function registerScreeningApplicant(form) {
   }
 
   const resumeFile = form.elements.resumeFile?.files?.[0];
+  const otherAttachmentFiles = form.elements.otherAttachments?.files || [];
+  const birthYear = getFormText(form, "birthYear");
+  const education = collectScreeningEducationFromForm(form);
+  const career = collectScreeningCareerFromForm(form);
   const applicant = normalizeScreeningApplicant({
     id: createId("screening-applicant"),
     name,
@@ -15503,16 +15903,19 @@ async function registerScreeningApplicant(form) {
     searchFirmMemberId,
     registeredById: currentMember.id,
     registeredByName: currentMember.name,
-    company: getFormText(form, "company"),
-    currentRole: getFormText(form, "currentRole"),
+    birthYear,
+    nationality: getFormText(form, "nationality"),
     email: getFormText(form, "email"),
     phone: getFormText(form, "phone"),
-    summary: getFormText(form, "summary"),
+    education,
+    career,
     resumeAttachment: await attachmentFromFile(resumeFile),
+    attachments: await attachmentsFromFiles(otherAttachmentFiles),
     stage: "reception",
     createdAt: getTodayDate(),
     updatedAt: getTodayDate()
   });
+  applyScreeningApplicantDerivedProfile(applicant);
   const fit = evaluateApplicantFit(folder, applicant);
   applicant.fitGrade = fit.grade;
   applicant.fitComment = fit.comment;
@@ -15549,6 +15952,7 @@ async function updateScreeningApplicant(form) {
   const canEditCore = canEditScreeningApplicantCore(folder, applicant);
   const canEditContact = canEditScreeningApplicantContact(folder, applicant);
   const resumeFile = form.elements.resumeFile?.files?.[0];
+  const otherAttachmentFiles = form.elements.otherAttachments?.files || [];
 
   if (canEditCore) {
     const name = getFormText(form, "name");
@@ -15570,14 +15974,24 @@ async function updateScreeningApplicant(form) {
     applicant.name = name;
     applicant.sourceType = sourceType;
     applicant.searchFirmMemberId = searchFirmMemberId;
-    applicant.company = getFormText(form, "company");
-    applicant.currentRole = getFormText(form, "currentRole");
-    applicant.summary = getFormText(form, "summary");
+    applicant.birthYear = getFormText(form, "birthYear");
+    applicant.age = calculateAge(applicant.birthYear);
+    applicant.nationality = getFormText(form, "nationality");
+    applicant.education = normalizeScreeningEducationRecords(collectScreeningEducationFromForm(form));
+    applicant.career = normalizeScreeningCareerRecords(collectScreeningCareerFromForm(form));
 
     if (resumeFile) {
       applicant.resumeAttachment = await attachmentFromFile(resumeFile);
     }
 
+    if (otherAttachmentFiles.length) {
+      applicant.attachments = [
+        ...(Array.isArray(applicant.attachments) ? applicant.attachments : []),
+        ...await attachmentsFromFiles(otherAttachmentFiles)
+      ];
+    }
+
+    applyScreeningApplicantDerivedProfile(applicant);
     evaluateApplicantFit(folder, applicant);
   }
 
@@ -18263,6 +18677,18 @@ function bindEvents() {
       return;
     }
 
+    const addScreeningEducationButton = event.target.closest("[data-add-screening-education]");
+    if (addScreeningEducationButton) {
+      addScreeningEducationRecord();
+      return;
+    }
+
+    const addScreeningCareerButton = event.target.closest("[data-add-screening-career]");
+    if (addScreeningCareerButton) {
+      addScreeningCareerRecord();
+      return;
+    }
+
     const removeEducationButton = event.target.closest("[data-remove-education]");
     if (removeEducationButton) {
       removeEducationRecord(Number(removeEducationButton.dataset.removeEducation));
@@ -18284,6 +18710,18 @@ function bindEvents() {
     const removeRegisterCareerButton = event.target.closest("[data-remove-register-career]");
     if (removeRegisterCareerButton) {
       removeRegisterCareerRecord(Number(removeRegisterCareerButton.dataset.removeRegisterCareer));
+      return;
+    }
+
+    const removeScreeningEducationButton = event.target.closest("[data-remove-screening-education]");
+    if (removeScreeningEducationButton) {
+      removeScreeningEducationRecord(Number(removeScreeningEducationButton.dataset.removeScreeningEducation));
+      return;
+    }
+
+    const removeScreeningCareerButton = event.target.closest("[data-remove-screening-career]");
+    if (removeScreeningCareerButton) {
+      removeScreeningCareerRecord(Number(removeScreeningCareerButton.dataset.removeScreeningCareer));
       return;
     }
 
@@ -18538,6 +18976,10 @@ function bindEvents() {
       updateAgeOutput("#edit-birth-year", "#edit-age");
     }
 
+    if (event.target.id === "screening-applicant-birth-year") {
+      updateAgeOutput("#screening-applicant-birth-year", "#screening-applicant-age");
+    }
+
     if (event.target.matches("[data-screening-access-search]")) {
       updateScreeningAccessResults(event.target);
     }
@@ -18714,6 +19156,14 @@ function bindEvents() {
 
       if (file) {
         parseResumeIntoRegisterForm(file);
+      }
+    }
+
+    if (event.target.id === "screening-applicant-resume") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        parseResumeIntoScreeningApplicantForm(file);
       }
     }
 
