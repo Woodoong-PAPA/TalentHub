@@ -33,6 +33,7 @@ const MENU_CONFIG = [
 
 const DEFAULT_MENU_ORDER = MENU_CONFIG.map((item) => item.view);
 const DEFAULT_MENU_LABELS = Object.fromEntries(MENU_CONFIG.map((item) => [item.view, item.label]));
+const MENU_SETTING_KEY = "menu_order";
 
 const MEMBER_ROLES = {
   applicant: "지원자",
@@ -604,6 +605,7 @@ const state = {
   rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
   menuOrder: [...DEFAULT_MENU_ORDER],
   menuLabels: {},
+  menuSettingsUpdatedAt: "",
   memberFilters: {
     query: "",
     role: "all",
@@ -1783,6 +1785,15 @@ function getMenuLabel(view) {
   return labels[view] || DEFAULT_MENU_LABELS[view] || view || "";
 }
 
+function normalizeMenuSettingsUpdatedAt(value) {
+  const text = String(value || "").trim();
+  return Number.isNaN(Date.parse(text)) ? "" : text;
+}
+
+function markMenuSettingsChanged() {
+  state.menuSettingsUpdatedAt = new Date().toISOString();
+}
+
 function getOrderedMenuConfig() {
   const order = normalizeMenuOrder(state.menuOrder);
   const menuMap = new Map(MENU_CONFIG.map((item) => [item.view, item]));
@@ -1811,6 +1822,7 @@ function ensureMemberDefaults() {
   state.rolePermissions = normalizeRolePermissions(state.rolePermissions);
   state.menuOrder = normalizeMenuOrder(state.menuOrder);
   state.menuLabels = normalizeMenuLabels(state.menuLabels);
+  state.menuSettingsUpdatedAt = normalizeMenuSettingsUpdatedAt(state.menuSettingsUpdatedAt);
 
   if (state.memberFilters.role !== "all" && !MEMBER_ROLES[state.memberFilters.role]) {
     state.memberFilters.role = "all";
@@ -2242,6 +2254,7 @@ function persistState(options = {}) {
         rolePermissions: state.rolePermissions,
         menuOrder: state.menuOrder,
         menuLabels: state.menuLabels,
+        menuSettingsUpdatedAt: state.menuSettingsUpdatedAt,
         memberFilters: state.memberFilters,
         managementTab: state.managementTab,
         currentUserId: state.currentUserId,
@@ -2318,6 +2331,10 @@ function restorePersistedState() {
 
   if (persisted.menuLabels && typeof persisted.menuLabels === "object") {
     state.menuLabels = normalizeMenuLabels(persisted.menuLabels);
+  }
+
+  if (persisted.menuSettingsUpdatedAt) {
+    state.menuSettingsUpdatedAt = normalizeMenuSettingsUpdatedAt(persisted.menuSettingsUpdatedAt);
   }
 
   if (persisted.memberFilters && typeof persisted.memberFilters === "object") {
@@ -2899,9 +2916,52 @@ function appSettingToSupabaseRow(settingKey, payload) {
   };
 }
 
+function buildMenuSettingPayload() {
+  return {
+    menuOrder: normalizeMenuOrder(state.menuOrder),
+    menuLabels: normalizeMenuLabels(state.menuLabels),
+    menuSettingsUpdatedAt: state.menuSettingsUpdatedAt || new Date().toISOString()
+  };
+}
+
+function getRemoteMenuSettingsUpdatedAt(row) {
+  return normalizeMenuSettingsUpdatedAt(
+    row?.payload?.menuSettingsUpdatedAt ||
+    row?.payload?.menu_settings_updated_at ||
+    row?.payload?.updatedAt ||
+    row?.updated_at
+  );
+}
+
+async function syncMenuSettingsToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(MENU_SETTING_KEY, buildMenuSettingPayload())])
+  });
+
+  return true;
+}
+
 function applyAppSettingsFromSupabaseRows(rows = []) {
   const settings = Array.isArray(rows) ? rows : [];
-  const menuOrderSetting = settings.find((row) => row.setting_key === "menu_order");
+  const menuOrderSetting = settings.find((row) => row.setting_key === MENU_SETTING_KEY);
+
+  if (!menuOrderSetting) {
+    return;
+  }
+
+  const remoteUpdatedAt = getRemoteMenuSettingsUpdatedAt(menuOrderSetting);
+  const localUpdatedAt = normalizeMenuSettingsUpdatedAt(state.menuSettingsUpdatedAt);
+
+  if (localUpdatedAt && remoteUpdatedAt && dateSortValue(localUpdatedAt) > dateSortValue(remoteUpdatedAt)) {
+    return;
+  }
+
   const menuOrder = menuOrderSetting?.payload?.menuOrder || menuOrderSetting?.payload?.menu_order;
   const menuLabels = menuOrderSetting?.payload?.menuLabels || menuOrderSetting?.payload?.menu_labels;
 
@@ -2912,6 +2972,8 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   if (menuLabels && typeof menuLabels === "object") {
     state.menuLabels = normalizeMenuLabels(menuLabels);
   }
+
+  state.menuSettingsUpdatedAt = remoteUpdatedAt || localUpdatedAt;
 }
 
 let remoteSyncTimer = null;
@@ -2945,12 +3007,6 @@ async function syncStateToSupabase() {
     const memberRows = state.members.map(memberToSupabaseRow);
     const permissionRows = rolePermissionToSupabaseRows();
     const policySourceRows = state.policySources.map(policySourceToSupabaseRow);
-    const appSettingRows = [
-      appSettingToSupabaseRow("menu_order", {
-        menuOrder: normalizeMenuOrder(state.menuOrder),
-        menuLabels: normalizeMenuLabels(state.menuLabels)
-      })
-    ];
 
     if (candidateRows.length) {
       await supabaseRequest("candidates?on_conflict=id", {
@@ -3009,11 +3065,7 @@ async function syncStateToSupabase() {
     }
 
     try {
-      await supabaseRequest("app_settings?on_conflict=setting_key", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify(appSettingRows)
-      });
+      await syncMenuSettingsToSupabase();
     } catch (error) {
       console.warn("App settings could not be synced.", error);
     }
@@ -12540,6 +12592,7 @@ function renderMenuOrderPanel() {
           `).join("")}
         </div>
         <div class="menu-order-footer">
+          <button class="primary-button" type="button" data-save-menu-settings>저장</button>
           <button class="ghost-button" type="button" data-reset-menu-labels>기본 메뉴명 복원</button>
           <button class="ghost-button" type="button" data-reset-menu-order>기본 순서 복원</button>
         </div>
@@ -17015,6 +17068,7 @@ function moveMenuOrder(view, direction) {
 
   [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
   state.menuOrder = normalizeMenuOrder(order);
+  markMenuSettingsChanged();
   addAuditLog("좌측 메뉴 순서 변경", "Management", `${getMenuLabel(view)} ${direction === "up" ? "위로" : "아래로"}`);
   persistState();
   render();
@@ -17035,6 +17089,7 @@ function updateMenuLabel(view, label) {
   }
 
   state.menuLabels = labels;
+  markMenuSettingsChanged();
   persistState();
   applyMenuOrderToSidebar();
   syncActiveViewState();
@@ -17042,6 +17097,7 @@ function updateMenuLabel(view, label) {
 
 function resetMenuLabels() {
   state.menuLabels = {};
+  markMenuSettingsChanged();
   addAuditLog("좌측 메뉴명 초기화", "Management", "기본 메뉴명 복원");
   persistState();
   render();
@@ -17049,8 +17105,38 @@ function resetMenuLabels() {
 
 function resetMenuOrder() {
   state.menuOrder = [...DEFAULT_MENU_ORDER];
+  markMenuSettingsChanged();
   addAuditLog("좌측 메뉴 순서 초기화", "Management", "기본 순서 복원");
   persistState();
+  render();
+}
+
+async function saveMenuSettings() {
+  if (!isAdmin()) {
+    showToast("관리자만 메뉴 설정을 저장할 수 있습니다.");
+    return;
+  }
+
+  state.menuOrder = normalizeMenuOrder(state.menuOrder);
+  state.menuLabels = normalizeMenuLabels(state.menuLabels);
+  state.menuSettingsUpdatedAt = state.menuSettingsUpdatedAt || new Date().toISOString();
+  persistState({ skipRemoteSync: true });
+
+  if (REMOTE_SYNC_ENABLED) {
+    try {
+      await syncMenuSettingsToSupabase();
+      state.remoteSyncStatus = "Supabase 연결됨";
+    } catch (error) {
+      state.remoteSyncStatus = "Supabase 동기화 실패";
+      console.warn(error);
+      showToast("메뉴 설정은 로컬에 저장됐지만 원격 DB 저장에 실패했습니다.");
+      return;
+    }
+  }
+
+  addAuditLog("좌측 메뉴 설정 저장", "Management", "메뉴 순서 및 메뉴명 저장");
+  persistState({ skipRemoteSync: true });
+  showToast("메뉴 설정을 저장했습니다.");
   render();
 }
 
@@ -17140,6 +17226,14 @@ function bindEvents() {
 
     if (event.target.closest("[data-reset-menu-labels]")) {
       resetMenuLabels();
+      return;
+    }
+
+    if (event.target.closest("[data-save-menu-settings]")) {
+      saveMenuSettings().catch((error) => {
+        console.warn(error);
+        showToast("메뉴 설정 저장 중 오류가 발생했습니다.");
+      });
       return;
     }
 

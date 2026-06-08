@@ -25,7 +25,7 @@ with check (true);
 insert into public.app_settings (setting_key, payload, updated_at)
 values (
   'menu_order',
-  '{"menuOrder":["dashboard","pool","screening","interview","ai-search","job-fit","jd-enhance","policy-chat","trending","members"],"menuLabels":{}}'::jsonb,
+  '{"menuOrder":["dashboard","pool","screening","interview","ai-search","job-fit","jd-enhance","policy-chat","trending","members"],"menuLabels":{},"menuSettingsUpdatedAt":""}'::jsonb,
   now()
 )
 on conflict (setting_key) do nothing;
