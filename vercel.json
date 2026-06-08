@@ -45,6 +45,10 @@
       "dest": "/api/parse-resume.js"
     },
     {
+      "src": "/api/extract-text",
+      "dest": "/api/extract-text.js"
+    },
+    {
       "src": "/api/search-candidates",
       "dest": "/api/search-candidates.js"
     },
