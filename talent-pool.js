@@ -3711,7 +3711,7 @@ function syncActiveViewState() {
 }
 
 function trendingReportNeedsRefresh(report) {
-  if (!report || !Array.isArray(report.people) || !report.people.length) {
+  if (!report || !Array.isArray(report.people) || !getDisplayTrendingPeople(report).length) {
     return true;
   }
 
@@ -3720,6 +3720,28 @@ function trendingReportNeedsRefresh(report) {
   }
 
   return false;
+}
+
+function isDisplayableTrendingPerson(person) {
+  const name = String(person?.name || "").trim();
+  const blocked = new Set([
+    "원내", "선거", "선거일", "투표", "모바일", "주행", "행사장", "박람회",
+    "시장", "검토", "연기", "대표", "사장", "회장", "의장", "총괄", "최초"
+  ]);
+
+  if (!name || blocked.has(name)) {
+    return false;
+  }
+
+  if (/(대표|회장|사장|임원|회사|기업|그룹|뉴스|부문|사업부)$/i.test(name)) {
+    return false;
+  }
+
+  return /^[가-힣A-Za-z\s.'-]{2,40}$/.test(name);
+}
+
+function getDisplayTrendingPeople(report) {
+  return (Array.isArray(report?.people) ? report.people : []).filter(isDisplayableTrendingPerson);
 }
 
 function setView(view) {
@@ -10106,7 +10128,7 @@ function renderTrendingPeople() {
   }
 
   const report = state.trendingReport;
-  const people = report?.people || [];
+  const people = getDisplayTrendingPeople(report);
   const body = state.trendingLoading
     ? `<div class="empty-state">전일 한국 뉴스에서 DX 분야 화제 인물을 분석하는 중입니다.</div>`
     : state.trendingError
@@ -13322,11 +13344,16 @@ async function fetchTrendingPeople(options = {}) {
   } catch (error) {
     console.warn("Trending people report failed.", error);
     state.trendingLoading = false;
-    if (state.trendingReport?.people?.length) {
+    const hasDisplayableReport = getDisplayTrendingPeople(state.trendingReport).length > 0;
+
+    if (hasDisplayableReport && !options.force) {
       state.trendingError = "";
       showToast("Today's Talent 최신 갱신에 실패해 기존 리포트를 유지했습니다.");
     } else {
-      state.trendingError = "Today's Talent 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+      state.trendingReport = hasDisplayableReport ? state.trendingReport : null;
+      state.trendingError = /quota|insufficient_quota|OPENAI|OpenAI/i.test(error.message || "")
+        ? "OpenAI API 사용량 한도 또는 결제 설정 문제로 Today's Talent 리포트를 생성하지 못했습니다. API 크레딧/결제 설정을 확인한 뒤 다시 생성해주세요."
+        : "Today's Talent 리포트를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
     }
     renderTrendingPeople();
   }

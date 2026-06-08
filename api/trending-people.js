@@ -11,6 +11,29 @@ const DEFAULT_SEARCH_SETTINGS = {
 };
 const TOPIC_KEYWORDS = ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"];
 const EXCLUDE_KEYWORDS = ["반도체", "DS부문", "DS 부문", "HBM", "메모리", "파운드리", "웨이퍼", "낸드", "D램"];
+const NON_DX_CONTEXT_KEYWORDS = [
+  "원내대표",
+  "국민의힘",
+  "더불어민주당",
+  "민주당",
+  "국회",
+  "의원",
+  "대통령",
+  "선거",
+  "투표",
+  "정당",
+  "여수시장",
+  "시장 선거",
+  "모바일 투표",
+  "모바일투표"
+];
+const STRONG_DX_CONTEXT_PATTERNS = [
+  /AI|인공지능|피지컬\s*AI/i,
+  /로봇|로보틱스|휴머노이드|자율주행|스마트팩토리/i,
+  /스마트폰|갤럭시|모바일\s*(?:기기|디바이스|앱|플랫폼|서비스|사업|AI)/i,
+  /TV|디스플레이|생활가전|가전|냉장고|세탁기|에어컨/i,
+  /엔비디아|NVIDIA|애플|Apple|삼성전자|두산로보틱스|현대자동차|네이버|카카오|OpenAI|오픈AI/i
+];
 
 const TRENDING_SCHEMA = {
   type: "object",
@@ -369,8 +392,17 @@ function isKoreanNewsInTargetDate(article, targetDate) {
 
 function isDxArticle(article) {
   const text = `${article.title} ${article.snippet}`;
-  const hasTopic = TOPIC_KEYWORDS.some((keyword) => text.toLowerCase().includes(keyword.toLowerCase()));
-  const hasExcluded = EXCLUDE_KEYWORDS.some((keyword) => text.toLowerCase().includes(keyword.toLowerCase()));
+  const lowerText = text.toLowerCase();
+  const hasTopic = STRONG_DX_CONTEXT_PATTERNS.some((pattern) => pattern.test(text)) ||
+    TOPIC_KEYWORDS.some((keyword) => lowerText.includes(keyword.toLowerCase()));
+  const hasExcluded = EXCLUDE_KEYWORDS.some((keyword) => lowerText.includes(keyword.toLowerCase())) ||
+    NON_DX_CONTEXT_KEYWORDS.some((keyword) => lowerText.includes(keyword.toLowerCase()));
+  const hasStrongDxContext = STRONG_DX_CONTEXT_PATTERNS.some((pattern) => pattern.test(text));
+
+  if (/모바일/i.test(text) && !hasStrongDxContext) {
+    return false;
+  }
+
   return hasTopic && !hasExcluded;
 }
 
@@ -702,7 +734,7 @@ function buildInterestNewsQueries(searchSettings, baseFilter, personFilter) {
     `("생활가전" OR "가전" OR "냉장고" OR "에어컨") ${personFilter} ${baseFilter}`
   ];
 
-  return [...new Set([`${keywordExpression} ${personFilter} ${baseFilter}`, ...defaultQueries])].slice(0, 6);
+  return [...new Set([`${keywordExpression} ${personFilter} ${baseFilter}`, ...defaultQueries])].slice(0, 8);
 }
 
 async function fetchNewsArticles(targetDate, searchSettings = DEFAULT_SEARCH_SETTINGS) {
@@ -717,7 +749,7 @@ async function fetchNewsArticles(targetDate, searchSettings = DEFAULT_SEARCH_SET
     `("생활가전" OR "가전" OR "냉장고" OR "세탁기") ${personFilter} ${baseFilter}`
   ];
   const settings = normalizeSearchSettings(searchSettings);
-  const queries = buildInterestNewsQueries(settings, baseFilter, personFilter).concat(legacyQueries).slice(0, 6);
+  const queries = buildInterestNewsQueries(settings, baseFilter, personFilter).concat(legacyQueries).slice(0, 10);
   const batches = await Promise.all(queries.map(async (query, index) => {
     const topic = ["AI", "로보틱스", "모바일", "TV", "생활가전"][index];
     const effectiveTopic = settings.keywords[index] || topic || "DX";
@@ -872,6 +904,7 @@ async function loadReportHistory() {
   }
 
   return rows
+    .filter((row) => reportPassesQualityGate({ people: row.people }))
     .map((row) => ({
       reportDate: row.report_date || row.target_date || "",
       targetDate: row.target_date || row.report_date || "",
@@ -914,6 +947,14 @@ async function saveReport(report, options = {}) {
     profileCompletenessVersion: PROFILE_COMPLETENESS_VERSION
   };
   const peopleCount = people.length;
+  const invalidNames = people
+    .filter((person) => !isLikelyPersonName(person))
+    .map((person) => String(person.name || "").trim())
+    .filter(Boolean);
+
+  if (invalidNames.length) {
+    throw new Error(`Today's Talent report includes invalid person names: ${invalidNames.join(", ")}`);
+  }
 
   if (!options.allowShort && peopleCount > 0 && peopleCount < 5) {
     console.warn(`Skipped saving short Today's Talent report for ${normalizedReport.targetDate}: ${peopleCount} people.`);
@@ -1446,6 +1487,16 @@ function normalizePersonProfileBasics(person) {
     profileImageUrl: "",
     linkedinUrl: sanitizeUrl(person.linkedinUrl)
   };
+}
+
+function reportPassesQualityGate(report) {
+  const people = Array.isArray(report?.people) ? report.people : [];
+
+  if (!people.length) {
+    return false;
+  }
+
+  return people.every((person) => isLikelyPersonName(person));
 }
 
 function reportNeedsProfileRepair(report) {
@@ -2042,8 +2093,12 @@ async function repairReportProfiles(report) {
 function isLikelyPersonName(person) {
   const name = String(person.name || "").trim();
   const currentOrg = String(person.currentOrg || "").trim();
+  const blockedName = new Set([
+    "원내", "선거", "선거일", "투표", "모바일", "주행", "행사장", "박람회",
+    "시장", "검토", "연기", "대표", "사장", "회장", "의장", "총괄", "최초"
+  ]);
 
-  if (!name) {
+  if (!name || blockedName.has(name)) {
     return false;
   }
 
@@ -2056,6 +2111,10 @@ function isLikelyPersonName(person) {
   }
 
   if (/^[A-Za-z]+$/.test(name)) {
+    return false;
+  }
+
+  if (/[가-힣]/.test(name) && !isPlausibleKoreanPersonName(name)) {
     return false;
   }
 
@@ -2075,7 +2134,7 @@ function selectRankedCandidates(people, excludedNames) {
   const selected = [];
   const seen = new Set();
 
-  const addPass = ({ allowExcluded = false, requireLikelyName = true }) => {
+  const addPass = ({ allowExcluded = false }) => {
     source.forEach((person) => {
       const key = normalizePersonNameKey(person);
 
@@ -2087,7 +2146,7 @@ function selectRankedCandidates(people, excludedNames) {
         return;
       }
 
-      if (requireLikelyName && !isLikelyPersonName(person)) {
+      if (!isLikelyPersonName(person)) {
         return;
       }
 
@@ -2096,10 +2155,7 @@ function selectRankedCandidates(people, excludedNames) {
     });
   };
 
-  addPass({ allowExcluded: false, requireLikelyName: true });
-  addPass({ allowExcluded: false, requireLikelyName: false });
-  addPass({ allowExcluded: true, requireLikelyName: true });
-  addPass({ allowExcluded: true, requireLikelyName: false });
+  addPass({ allowExcluded: false });
 
   return selected.slice(0, 5);
 }
@@ -2120,7 +2176,9 @@ function isPlausibleKoreanPersonName(name) {
     "반도체", "모바일", "한국", "미국", "중국", "일본", "유럽", "정부", "업계",
     "대통령", "부회장", "대표이사", "전자신문", "연합뉴스", "아주경제", "머슴투데이",
     "국가", "가전", "학습플랫", "학습플랫폼", "미래", "비전", "동맹", "직원",
-    "연구원", "과학자", "개발자", "담당자", "관계자", "전문가", "신입사원"
+    "연구원", "과학자", "개발자", "담당자", "관계자", "전문가", "신입사원",
+    "원내", "선거", "선거일", "투표", "모바일", "주행", "행사장", "박람회",
+    "시장", "검토", "연기", "대표", "사장", "회장", "의장", "총괄", "최초"
   ]);
   const known = new Set(["젠슨 황", "팀 쿡", "사티아 나델라", "샘 알트먼", "알렉스 카프", "야오슌위", "김서준", "정재승"]);
   const commonSurname = /^[김이박최정강조윤장임한오서신권황안송전홍유고문양손배백허남심노하곽성차주우구민류나진지엄채원천방공현함여추도소석선설마길연위표명기반왕금옥육인맹제][가-힣]{1,3}$/;
@@ -2171,6 +2229,7 @@ function collectHeuristicPeopleFromArticles(articles, excludedNames) {
   const excluded = new Set((excludedNames || []).map((name) => String(name || "").trim()).filter(Boolean));
   const byName = new Map();
   const titleWords = "(?:대표이사|부회장|회장|사장|대표|CEO|CTO|CPO|의장|교수|원장|소장|상무|전무|부사장|총괄|창업자)";
+  const orgWords = "(?:해시드|엔씨소프트|엔씨|크래프톤|오픈AI|텐센트|NVIDIA|엔비디아|MS|마이크로소프트|KAIST|현대차|현대자동차|LG|두산|두산그룹|네이버|NAVER|카카오|삼성전자|애플)";
   const knownPeople = [
     { name: "젠슨 황", pattern: /젠슨\s*황|Jensen\s+Huang/i, org: "엔비디아", title: "CEO" },
     { name: "팀 쿡", pattern: /팀\s*쿡|Tim\s+Cook/i, org: "애플", title: "CEO" },
@@ -2186,10 +2245,8 @@ function collectHeuristicPeopleFromArticles(articles, excludedNames) {
     { name: "김형준", pattern: /김형준/i, org: "", title: "" }
   ];
   const patterns = [
-    new RegExp(`([가-힣]{2,4})\\s*${titleWords}`, "g"),
-    new RegExp(`${titleWords}\\s*([가-힣]{2,4})`, "g"),
-    /(?:해시드|엔씨|크래프톤|오픈AI|텐센트|NVIDIA|MS|마이크로소프트|KAIST|현대차|LG|두산|네이버|카카오)\s+([가-힣]{2,4})/g,
-    /([가-힣]{2,4})\s*(?:영입|출격|회동|선언|임명|발표|주목|참석|만난다)/g
+    new RegExp(`${orgWords}\\s+([가-힣]{2,4})(?:\\s*${titleWords})?`, "g"),
+    new RegExp(`([가-힣]{2,4})\\s+${orgWords}\\s*${titleWords}`, "g")
   ];
 
   function addCandidate(name, article, context, defaults = {}) {
@@ -2218,6 +2275,10 @@ function collectHeuristicPeopleFromArticles(articles, excludedNames) {
 
   (articles || []).forEach((article) => {
     const text = stripArticleText(`${article.title || ""} ${article.snippet || ""}`);
+
+    if (!isDxArticle(article)) {
+      return;
+    }
 
     knownPeople.forEach((person) => {
       if (person.pattern.test(text)) {
@@ -2283,20 +2344,11 @@ function fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedN
   }
 
   const seen = new Set(rankedCandidates.map(normalizePersonNameKey));
-  let supplemental = collectHeuristicPeopleFromArticles(articles, excludedNames)
+  const supplemental = collectHeuristicPeopleFromArticles(articles, excludedNames)
     .filter((person) => {
       const key = normalizePersonNameKey(person);
       return key && !seen.has(key);
     });
-
-  if (rankedCandidates.length + supplemental.length < 5) {
-    const relaxedSeen = new Set([...seen, ...supplemental.map(normalizePersonNameKey)]);
-    supplemental = supplemental.concat(collectHeuristicPeopleFromArticles(articles, [])
-      .filter((person) => {
-        const key = normalizePersonNameKey(person);
-        return key && !relaxedSeen.has(key);
-      }));
-  }
 
   return rankedCandidates.concat(supplemental).slice(0, 5);
 }
@@ -2329,36 +2381,20 @@ async function generateReport(targetDate) {
   }
 
   const articleById = new Map(articles.map((article) => [article.id, article]));
-  let rankedCandidates = [];
-  let rankingError = null;
-
-  try {
-    const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings);
-    rankedCandidates = selectRankedCandidates(ranked.people, excludedNames);
-  } catch (error) {
-    rankingError = error;
-    console.warn("OpenAI trending people ranking failed. Falling back to article heuristics.", error.message);
-  }
-
-  rankedCandidates = fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedNames);
+  const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings);
+  let rankedCandidates = selectRankedCandidates(ranked.people, excludedNames);
 
   if (rankedCandidates.length < 5) {
     try {
       const supplementalRanking = await callOpenAIForPeople(targetDate, articles, [], searchSettings);
       const supplementalCandidates = selectRankedCandidates(supplementalRanking.people, []);
-      rankedCandidates = fillRankedCandidatesWithHeuristic(
-        mergeRankedCandidateLists(rankedCandidates, supplementalCandidates),
-        articles,
-        []
-      );
+      rankedCandidates = mergeRankedCandidateLists(rankedCandidates, supplementalCandidates);
     } catch (error) {
-      console.warn("OpenAI supplemental trending people ranking failed.", error.message);
+      console.warn("OpenAI supplemental trending people ranking failed. Continuing with primary AI candidates only.", error.message);
     }
   }
 
-  if (!rankedCandidates.length && rankingError) {
-    throw rankingError;
-  }
+  rankedCandidates = fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedNames);
 
   if (!rankedCandidates.length) {
     throw new Error("No plausible people were found for the target date.");
@@ -2442,7 +2478,7 @@ module.exports = async function trendingPeople(request, response) {
     const targetDate = getTargetDate(request.url);
     const shouldForce = forceRefresh(request.url);
     const cached = shouldForce ? null : await loadCachedReport(targetDate);
-    const usedCached = Boolean(cached && Array.isArray(cached.people) && cached.people.length);
+    const usedCached = Boolean(cached && Array.isArray(cached.people) && cached.people.length && reportPassesQualityGate(cached));
     const report = usedCached
       ? {
         ...cached,
@@ -2487,7 +2523,7 @@ module.exports = async function trendingPeople(request, response) {
         }
       });
 
-      if (fallback?.people?.length) {
+      if (fallback?.people?.length && reportPassesQualityGate(fallback)) {
         sendJson(response, 200, {
           ok: true,
           cached: true,
