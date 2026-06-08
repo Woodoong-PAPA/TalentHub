@@ -43,6 +43,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/jd-enhance") {
+    const jdEnhance = require("./api/jd-enhance.js");
+    jdEnhance(request, response);
+    return;
+  }
+
   if (request.url.split("?")[0] === "/api/trending-people") {
     const trendingPeople = require("./api/trending-people.js");
     trendingPeople(request, response);

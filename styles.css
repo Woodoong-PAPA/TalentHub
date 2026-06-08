@@ -2741,6 +2741,117 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.jd-enhance-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.jd-enhance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.jd-guideline-panel,
+.jd-review-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.jd-review-summary {
+  margin: 0;
+  border-left: 3px solid var(--blue);
+  padding-left: 10px;
+  color: var(--text);
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.jd-review-list {
+  display: grid;
+  gap: 12px;
+}
+
+.jd-review-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface);
+}
+
+.jd-review-card.is-pass {
+  background: #fbfefc;
+}
+
+.jd-review-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.jd-review-card-header > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.jd-review-card-header strong {
+  color: var(--text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.jd-review-card-header small,
+.jd-review-rationale {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.jd-review-issue {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.jd-review-snippet,
+.jd-review-suggestion {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-soft);
+}
+
+.jd-review-snippet strong,
+.jd-review-suggestion strong {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.jd-review-snippet p,
+.jd-review-suggestion p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.65;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.jd-review-suggestion {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
 .screening-access-chip strong,
 .screening-access-chip small,
 .screening-access-result strong,
@@ -4901,6 +5012,7 @@ tr:last-child td {
   .form-grid,
   .ai-layout,
   .job-fit-upload-grid,
+  .jd-enhance-grid,
   .policy-chat-layout,
   .screening-layout,
   .interview-layout,

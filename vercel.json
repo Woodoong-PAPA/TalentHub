@@ -57,6 +57,10 @@
       "dest": "/api/job-fit-analysis.js"
     },
     {
+      "src": "/api/jd-enhance",
+      "dest": "/api/jd-enhance.js"
+    },
+    {
       "src": "/api/trending-people-cron",
       "dest": "/api/trending-people-cron.js"
     },

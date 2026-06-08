@@ -25,6 +25,7 @@ const MENU_CONFIG = [
   { view: "interview", label: "Interview", description: "면접 일정 조율, 제출자료, 결과 관리" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
   { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
+  { view: "jd-enhance", label: "JD 고도화", description: "작성 가이드라인 기반 JD 점검과 문구 개선" },
   { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
@@ -63,9 +64,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
   applicant: ["screening", "interview"],
   general: ["dashboard", "pool", "policy-chat", "trending"],
   search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
-  hiring_manager: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "policy-chat", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "policy-chat", "trending", "members"],
+  hiring_manager: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
+  division_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -88,6 +89,20 @@ const DEFAULT_TRENDING_SEARCH_SETTINGS = {
   updatedAt: "",
   updatedBy: ""
 };
+const DEFAULT_JD_GUIDELINE = [
+  "JD 작성 가이드라인",
+  "",
+  "1. 포지션명과 직무 목적을 명확히 작성한다.",
+  "2. 수행업무는 실제 담당할 업무 중심으로 4~7개 항목으로 구체화한다.",
+  "3. 필수 자격요건은 경력, 기술, 학위, 어학, 자격 등 반드시 필요한 기준만 작성한다.",
+  "4. 우대사항은 필수요건과 구분하고, 있으면 좋은 경험/역량만 작성한다.",
+  "5. 필요역량은 기술역량과 협업/리더십/문제해결 역량을 구분해 작성한다.",
+  "6. 모호한 표현(우수한, 능숙한, 열정적인 등)은 가능한 검증 가능한 기준으로 바꾼다.",
+  "7. 특정 성별, 연령, 국적 등 차별 소지가 있는 표현은 제외한다.",
+  "8. 채용 부서, 근무지, 직급/직책, 고용형태 등 운영상 필요한 정보를 빠뜨리지 않는다.",
+  "9. 문장은 간결한 보고서형 표현으로 작성하고 중복 내용을 줄인다.",
+  "10. 최종 JD는 현업과 지원자가 모두 이해할 수 있는 구조로 정리한다."
+].join("\n");
 const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
 const SCREENING_JOB_CATEGORIES = [
@@ -644,6 +659,20 @@ const state = {
     analysisStatus: "",
     hasAnalyzed: false
   },
+  jdEnhancement: {
+    guidelineText: DEFAULT_JD_GUIDELINE,
+    jdText: "",
+    jdFile: null,
+    finalText: "",
+    reviewItems: [],
+    score: 0,
+    summary: "",
+    loading: false,
+    fileLoading: false,
+    status: "",
+    fileStatus: "",
+    appliedSuggestionIds: []
+  },
   policySources: [],
   policyChatMessages: [],
   policyChatQuestion: "",
@@ -688,6 +717,7 @@ const viewTitles = {
   register: "Add Talent",
   "ai-search": "AI Search",
   "job-fit": "직무적합도 분석",
+  "jd-enhance": "JD 고도화",
   "policy-chat": "채용 AI 챗봇",
   trending: "Today's Talent",
   detail: "상세 프로필",
@@ -2160,6 +2190,7 @@ function persistState(options = {}) {
         managementTab: state.managementTab,
         currentUserId: state.currentUserId,
         jobFitAnalysis: state.jobFitAnalysis,
+        jdEnhancement: state.jdEnhancement,
         trendingReport: state.trendingReport,
         trendingHistory: state.trendingHistory,
         trendingSelectedDate: state.trendingSelectedDate,
@@ -2272,6 +2303,15 @@ function restorePersistedState() {
     state.jobFitAnalysis.analysisLoading = false;
     if (persisted.jobFitAnalysis.analysisLoading || persisted.jobFitAnalysis.loading) {
       state.jobFitAnalysis.analysisStatus = "이전 분석이 완료되지 않아 대기 상태로 복구했습니다. 평가 분석 시작 버튼을 다시 눌러 주세요.";
+    }
+  }
+
+  if (persisted.jdEnhancement && typeof persisted.jdEnhancement === "object") {
+    state.jdEnhancement = normalizeJdEnhancementState(persisted.jdEnhancement);
+    state.jdEnhancement.loading = false;
+    state.jdEnhancement.fileLoading = false;
+    if (persisted.jdEnhancement.loading || persisted.jdEnhancement.fileLoading) {
+      state.jdEnhancement.status = "이전 작업이 완료되지 않아 대기 상태로 복구했습니다. JD 점검 시작 버튼을 다시 눌러 주세요.";
     }
   }
 
@@ -3934,6 +3974,7 @@ function render() {
   renderRegister();
   renderAiSearch();
   renderJobFitAnalysis();
+  renderJdEnhancement();
   renderPolicyChat();
   renderTrendingPeople();
   renderDetail();
@@ -7052,6 +7093,60 @@ function getJobFitState() {
   return state.jobFitAnalysis;
 }
 
+function normalizeJdReviewItem(item = {}, index = 0) {
+  const status = ["pass", "needs_revision", "missing"].includes(item.status) ? item.status : "needs_revision";
+
+  return {
+    id: String(item.id || `jd-review-${index + 1}`).trim(),
+    section: String(item.section || "공통").trim(),
+    title: String(item.title || "검토 항목").trim(),
+    status,
+    issue: String(item.issue || "").trim(),
+    originalText: normalizeResumeText(item.originalText || ""),
+    suggestedText: normalizeResumeText(item.suggestedText || ""),
+    rationale: String(item.rationale || "").trim()
+  };
+}
+
+function normalizeJdEnhancementState(value = {}) {
+  return {
+    guidelineText: normalizeResumeText(value.guidelineText || DEFAULT_JD_GUIDELINE),
+    jdText: normalizeResumeText(value.jdText || ""),
+    jdFile: value.jdFile && typeof value.jdFile === "object"
+      ? {
+          name: String(value.jdFile.name || "").trim(),
+          size: Number(value.jdFile.size || 0),
+          type: String(value.jdFile.type || "").trim(),
+          dataUrl: String(value.jdFile.dataUrl || "").trim(),
+          uploadedAt: value.jdFile.uploadedAt || ""
+        }
+      : null,
+    finalText: normalizeResumeText(value.finalText || value.revisedText || value.jdText || ""),
+    reviewItems: Array.isArray(value.reviewItems)
+      ? value.reviewItems.map(normalizeJdReviewItem).filter((item) => item.title).slice(0, 20)
+      : [],
+    score: Math.max(0, Math.min(100, Math.round(Number(value.score || 0)))),
+    summary: String(value.summary || "").trim(),
+    revisedDocument: normalizeResumeText(value.revisedDocument || ""),
+    loading: Boolean(value.loading),
+    fileLoading: Boolean(value.fileLoading),
+    status: String(value.status || "").trim(),
+    fileStatus: String(value.fileStatus || "").trim(),
+    appliedSuggestionIds: Array.isArray(value.appliedSuggestionIds)
+      ? value.appliedSuggestionIds.map((id) => String(id || "")).filter(Boolean)
+      : []
+  };
+}
+
+function getJdEnhancementState() {
+  const current = state.jdEnhancement && typeof state.jdEnhancement === "object"
+    ? state.jdEnhancement
+    : {};
+  Object.assign(current, normalizeJdEnhancementState(current));
+  state.jdEnhancement = current;
+  return state.jdEnhancement;
+}
+
 function getCurrentUserSavedJobFitAnalyses() {
   return (getJobFitState().savedAnalyses || []).filter(belongsToCurrentAccount);
 }
@@ -7724,6 +7819,410 @@ function renderJobFitAnalysis() {
       </section>
     </div>
   `;
+}
+
+function jdReviewStatusLabel(status) {
+  return {
+    pass: "양호",
+    needs_revision: "수정 필요",
+    missing: "누락"
+  }[status] || "수정 필요";
+}
+
+function jdReviewStatusClass(status) {
+  return {
+    pass: "chip-green",
+    needs_revision: "chip-amber",
+    missing: "chip-red"
+  }[status] || "chip-amber";
+}
+
+function renderJdEnhanceFileLink(file) {
+  const fileName = String(file?.name || "").trim() || "업로드 파일";
+
+  if (!file?.dataUrl) {
+    return `<strong>${escapeHtml(fileName)}</strong>`;
+  }
+
+  return `<a class="job-fit-file-link" href="${escapeHtml(file.dataUrl)}" download="${escapeHtml(fileName)}">${escapeHtml(fileName)}</a>`;
+}
+
+function renderJdReviewItems() {
+  const jd = getJdEnhancementState();
+
+  if (jd.loading) {
+    return `<div class="empty-state">최신 JD 작성 가이드라인 기준으로 문서 품질을 점검하는 중입니다.</div>`;
+  }
+
+  if (!jd.reviewItems.length) {
+    return `<div class="empty-state">JD 파일 또는 본문을 입력한 뒤 JD 점검 시작 버튼을 눌러 주세요.</div>`;
+  }
+
+  return `
+    <div class="jd-review-list">
+      ${jd.reviewItems.map((item) => {
+        const applied = jd.appliedSuggestionIds.includes(item.id);
+        const canApply = item.suggestedText && item.status !== "pass";
+
+        return `
+          <article class="jd-review-card ${item.status === "pass" ? "is-pass" : ""}">
+            <div class="jd-review-card-header">
+              <div>
+                <span class="status-chip ${jdReviewStatusClass(item.status)}">${escapeHtml(jdReviewStatusLabel(item.status))}</span>
+                <strong>${escapeHtml(item.title)}</strong>
+                <small>${escapeHtml(item.section)}</small>
+              </div>
+              <button class="ghost-button compact-button" type="button" data-apply-jd-suggestion="${escapeHtml(item.id)}" ${canApply && !applied ? "" : "disabled"}>${applied ? "반영됨" : "제안 적용"}</button>
+            </div>
+            ${item.issue ? `<p class="jd-review-issue">${escapeHtml(item.issue)}</p>` : ""}
+            ${item.originalText ? `
+              <section class="jd-review-snippet">
+                <strong>기존 문구</strong>
+                <p>${escapeHtml(item.originalText)}</p>
+              </section>
+            ` : ""}
+            ${item.suggestedText ? `
+              <section class="jd-review-suggestion">
+                <strong>추천 수정문구</strong>
+                <p>${escapeHtml(item.suggestedText)}</p>
+              </section>
+            ` : ""}
+            ${item.rationale ? `<small class="jd-review-rationale">${escapeHtml(item.rationale)}</small>` : ""}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderJdEnhancement() {
+  const container = $("#jd-enhance-content");
+
+  if (!container) {
+    return;
+  }
+
+  const jd = getJdEnhancementState();
+  const canRun = Boolean(jd.guidelineText.trim() && jd.jdText.trim() && !jd.loading && !jd.fileLoading);
+  const canDownload = Boolean(jd.finalText.trim());
+
+  container.innerHTML = `
+    <div class="jd-enhance-workspace">
+      <section class="form-panel jd-guideline-panel">
+        <div class="job-fit-panel-header">
+          <div>
+            <strong>JD 작성 가이드라인</strong>
+            <span>가이드라인을 수정하면 다음 점검부터 즉시 반영됩니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-save-jd-guideline>가이드라인 저장</button>
+        </div>
+        <textarea class="control-textarea" id="jd-enhance-guideline" rows="8">${escapeHtml(jd.guidelineText)}</textarea>
+      </section>
+
+      <div class="jd-enhance-grid">
+        <section class="form-panel job-fit-upload-card">
+          <div class="job-fit-panel-header">
+            <div>
+              <strong>현업 작성 JD</strong>
+              <span>Word/PDF 파일을 업로드하거나 본문을 직접 입력합니다.</span>
+            </div>
+            <button class="ghost-button compact-button" type="button" data-clear-jd-enhance-input ${jd.jdText || jd.jdFile ? "" : "disabled"}>초기화</button>
+          </div>
+          <div class="dropzone compact-upload">
+            <input id="jd-enhance-file" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
+            <span class="form-help">JD 파일을 선택하거나 끌어놓으세요. DOCX 또는 텍스트 PDF를 권장합니다.</span>
+            ${jd.fileStatus ? `<strong class="job-fit-upload-status ${jd.fileLoading ? "is-loading" : ""}">${escapeHtml(jd.fileStatus)}</strong>` : ""}
+          </div>
+          ${jd.jdFile ? `
+            <div class="job-fit-file-list">
+              <div class="job-fit-file-row is-single">
+                <span>${renderJdEnhanceFileLink(jd.jdFile)}</span>
+              </div>
+            </div>
+          ` : ""}
+          <textarea class="control-textarea" id="jd-enhance-jd-text" rows="13" placeholder="현업에서 작성한 JD 원문을 입력하세요.">${escapeHtml(jd.jdText)}</textarea>
+        </section>
+
+        <section class="form-panel job-fit-upload-card">
+          <div class="job-fit-panel-header">
+            <div>
+              <strong>최종 완성본</strong>
+              <span>추천 문구를 적용하면 이 영역에 반영됩니다.</span>
+            </div>
+            <button class="ghost-button compact-button" type="button" data-download-jd-final ${canDownload ? "" : "disabled"}>Word 다운로드</button>
+          </div>
+          <textarea class="control-textarea" id="jd-enhance-final-text" rows="18" placeholder="점검 전에는 JD 원문이 표시되고, 제안 적용 후 최종본으로 정리됩니다.">${escapeHtml(jd.finalText || jd.jdText)}</textarea>
+        </section>
+      </div>
+
+      <section class="form-panel jd-review-panel">
+        <div class="job-fit-panel-header">
+          <div>
+            <strong>가이드라인 점검 결과</strong>
+            <span>${jd.reviewItems.length ? `점검 항목 ${jd.reviewItems.length}개 · 품질점수 ${jd.score || 0}점` : "JD 작성 품질과 수정 제안을 확인합니다."}</span>
+          </div>
+          <div class="job-fit-result-actions">
+            <button class="primary-button compact-button" type="button" data-run-jd-enhance ${canRun ? "" : "disabled"}>${jd.loading ? "점검 중" : "JD 점검 시작"}</button>
+            <button class="ghost-button compact-button" type="button" data-apply-all-jd-suggestions ${jd.reviewItems.some((item) => item.suggestedText && item.status !== "pass") ? "" : "disabled"}>제안 전체 적용</button>
+          </div>
+        </div>
+        ${jd.status ? `<div class="job-fit-inline-status">${escapeHtml(jd.status)}</div>` : ""}
+        ${jd.summary ? `<p class="jd-review-summary">${escapeHtml(jd.summary)}</p>` : ""}
+        ${renderJdReviewItems()}
+      </section>
+    </div>
+  `;
+}
+
+function rerenderJdEnhancement() {
+  persistState();
+  renderJdEnhancement();
+}
+
+function updateJdGuideline(value) {
+  const jd = getJdEnhancementState();
+  jd.guidelineText = value;
+  jd.status = "가이드라인이 수정되었습니다. 다음 JD 점검부터 최신 가이드라인이 반영됩니다.";
+  persistState();
+}
+
+function updateJdInputText(value) {
+  const jd = getJdEnhancementState();
+  jd.jdText = value;
+  jd.finalText = jd.finalText || value;
+  jd.reviewItems = [];
+  jd.score = 0;
+  jd.summary = "";
+  jd.appliedSuggestionIds = [];
+  jd.status = value.trim() ? "JD 원문이 수정되었습니다. JD 점검 시작 버튼을 눌러 다시 점검해 주세요." : "";
+  persistState();
+}
+
+function updateJdFinalText(value) {
+  const jd = getJdEnhancementState();
+  jd.finalText = value;
+  persistState();
+}
+
+async function handleJdEnhanceFileUpload(file) {
+  if (!file) {
+    return;
+  }
+
+  const jd = getJdEnhancementState();
+  jd.fileLoading = true;
+  jd.fileStatus = `${file.name} 파일을 읽는 중입니다.`;
+  jd.status = "";
+  renderJdEnhancement();
+
+  try {
+    const [result, dataUrl] = await Promise.all([
+      readResumeText(file),
+      readFileAsDataUrl(file)
+    ]);
+    jd.jdText = result.text;
+    jd.finalText = result.text;
+    jd.jdFile = {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      dataUrl,
+      uploadedAt: getTimestampText()
+    };
+    jd.reviewItems = [];
+    jd.score = 0;
+    jd.summary = "";
+    jd.appliedSuggestionIds = [];
+    jd.fileStatus = `${file.name} 내용을 JD 원문에 반영했습니다.`;
+    jd.status = "최신 가이드라인 기준으로 점검하려면 JD 점검 시작 버튼을 눌러 주세요.";
+  } catch (error) {
+    console.warn("JD enhancement file could not be read.", error);
+    jd.fileStatus = error.isResumeParseError ? error.message.replace(/이력서/g, "JD") : "JD 파일을 읽지 못했습니다.";
+  } finally {
+    jd.fileLoading = false;
+    rerenderJdEnhancement();
+  }
+}
+
+async function analyzeJdEnhancementWithServer(jdText, guidelineText) {
+  const response = await fetch("/api/jd-enhance", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jdText,
+      guidelineText,
+      fileName: getJdEnhancementState().jdFile?.name || ""
+    })
+  });
+  const payload = await readApiJson(response, "JD 고도화");
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || `JD enhancement failed: ${response.status}`);
+  }
+
+  return payload.result;
+}
+
+async function runJdEnhancementReview() {
+  const jd = getJdEnhancementState();
+  const jdText = normalizeResumeText(jd.jdText);
+  const guidelineText = normalizeResumeText(jd.guidelineText);
+
+  if (jd.fileLoading) {
+    jd.status = "파일을 읽는 중입니다. 업로드가 끝난 뒤 점검을 시작해 주세요.";
+    rerenderJdEnhancement();
+    return;
+  }
+
+  if (!guidelineText) {
+    jd.status = "JD 작성 가이드라인을 먼저 입력해 주세요.";
+    rerenderJdEnhancement();
+    return;
+  }
+
+  if (!jdText) {
+    jd.status = "점검할 JD 원문을 먼저 업로드하거나 입력해 주세요.";
+    rerenderJdEnhancement();
+    return;
+  }
+
+  jd.loading = true;
+  jd.status = "JD 작성 가이드라인 기준으로 점검 중입니다.";
+  renderJdEnhancement();
+
+  try {
+    const result = await analyzeJdEnhancementWithServer(jdText, guidelineText);
+    jd.reviewItems = Array.isArray(result.items)
+      ? result.items.map(normalizeJdReviewItem).filter((item) => item.title)
+      : [];
+    jd.score = Math.max(0, Math.min(100, Math.round(Number(result.score || 0))));
+    jd.summary = String(result.summary || "").trim();
+    jd.revisedDocument = normalizeResumeText(result.revisedDocument || "");
+    jd.finalText = jd.finalText || jdText;
+    jd.appliedSuggestionIds = [];
+    jd.status = jd.reviewItems.length
+      ? `JD 점검을 완료했습니다. 수정 제안 ${jd.reviewItems.filter((item) => item.status !== "pass").length}개를 확인해 주세요.`
+      : "JD 점검 결과 수정 제안이 없습니다.";
+    addAuditLog("JD 고도화 점검", jd.jdFile?.name || "JD 원문", `점검 항목 ${jd.reviewItems.length}개`);
+  } catch (error) {
+    console.warn("JD enhancement failed.", error);
+    jd.reviewItems = [];
+    jd.score = 0;
+    jd.summary = "";
+    jd.status = /quota|insufficient_quota|OpenAI/i.test(error.message || "")
+      ? "OpenAI API 사용량 한도 또는 결제 설정 문제로 AI 점검을 완료하지 못했습니다. API 설정 확인 후 다시 실행해 주세요."
+      : "JD 점검 중 오류가 발생했습니다. JD 원문과 가이드라인을 확인한 뒤 다시 실행해 주세요.";
+  } finally {
+    jd.loading = false;
+    rerenderJdEnhancement();
+  }
+}
+
+function applyJdSuggestedText(currentText, item) {
+  const text = normalizeResumeText(currentText);
+  const suggestion = normalizeResumeText(item.suggestedText);
+
+  if (!suggestion) {
+    return text;
+  }
+
+  if (item.originalText && text.includes(item.originalText)) {
+    return text.replace(item.originalText, suggestion);
+  }
+
+  return `${text}\n\n[${item.section || "JD 개선"} - ${item.title}]\n${suggestion}`.trim();
+}
+
+function applyJdSuggestion(itemId) {
+  const jd = getJdEnhancementState();
+  const item = jd.reviewItems.find((reviewItem) => reviewItem.id === itemId);
+
+  if (!item || !item.suggestedText || jd.appliedSuggestionIds.includes(item.id)) {
+    return;
+  }
+
+  jd.finalText = applyJdSuggestedText(jd.finalText || jd.jdText, item);
+  jd.appliedSuggestionIds.push(item.id);
+  jd.status = `${item.title} 추천 문구를 최종 완성본에 반영했습니다.`;
+  rerenderJdEnhancement();
+}
+
+function applyAllJdSuggestions() {
+  const jd = getJdEnhancementState();
+  const applicableItems = jd.reviewItems.filter((item) => item.suggestedText && item.status !== "pass");
+
+  if (!applicableItems.length) {
+    showToast("적용할 JD 수정 제안이 없습니다.");
+    return;
+  }
+
+  if (jd.revisedDocument) {
+    jd.finalText = jd.revisedDocument;
+    jd.appliedSuggestionIds = applicableItems.map((item) => item.id);
+  } else {
+    applicableItems.forEach((item) => {
+      if (!jd.appliedSuggestionIds.includes(item.id)) {
+        jd.finalText = applyJdSuggestedText(jd.finalText || jd.jdText, item);
+        jd.appliedSuggestionIds.push(item.id);
+      }
+    });
+  }
+
+  jd.status = `${applicableItems.length}개 추천 문구를 최종 완성본에 반영했습니다.`;
+  rerenderJdEnhancement();
+}
+
+function clearJdEnhancementInput() {
+  const jd = getJdEnhancementState();
+  jd.jdText = "";
+  jd.jdFile = null;
+  jd.finalText = "";
+  jd.reviewItems = [];
+  jd.score = 0;
+  jd.summary = "";
+  jd.revisedDocument = "";
+  jd.appliedSuggestionIds = [];
+  jd.fileStatus = "JD 입력을 초기화했습니다.";
+  jd.status = "";
+  rerenderJdEnhancement();
+}
+
+function saveJdGuideline() {
+  const jd = getJdEnhancementState();
+  jd.guidelineText = normalizeResumeText($("#jd-enhance-guideline")?.value || jd.guidelineText || DEFAULT_JD_GUIDELINE);
+  jd.status = "JD 작성 가이드라인을 저장했습니다. 다음 점검부터 최신 가이드라인이 반영됩니다.";
+  addAuditLog("JD 가이드라인 저장", "JD 고도화", getCurrentActorName());
+  rerenderJdEnhancement();
+}
+
+function downloadJdFinalDocument() {
+  const jd = getJdEnhancementState();
+  const finalText = normalizeResumeText(jd.finalText || jd.jdText);
+
+  if (!finalText) {
+    showToast("다운로드할 최종 완성본이 없습니다.");
+    return;
+  }
+
+  const title = (jd.jdFile?.name || "JD_최종완성본").replace(/\.[^.]+$/, "");
+  const html = [
+    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    "<style>body{font-family:'Malgun Gothic',Arial,sans-serif;line-height:1.65;color:#111827;} h1{font-size:20px;} p{white-space:pre-wrap;}</style>",
+    "</head><body>",
+    `<h1>${escapeHtml(title)} 최종 완성본</h1>`,
+    `<p>${escapeHtml(finalText)}</p>`,
+    "</body></html>"
+  ].join("");
+  const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${title}_최종완성본.doc`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  addAuditLog("JD 최종본 다운로드", title, "Word 호환 문서 다운로드");
 }
 
 function rerenderJobFitWorkspace(options = {}) {
@@ -16710,6 +17209,43 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-run-jd-enhance]")) {
+      runJdEnhancementReview().catch((error) => {
+        console.warn("JD enhancement review failed.", error);
+        const jd = getJdEnhancementState();
+        jd.loading = false;
+        jd.status = "JD 점검 중 오류가 발생했습니다.";
+        rerenderJdEnhancement();
+      });
+      return;
+    }
+
+    if (event.target.closest("[data-save-jd-guideline]")) {
+      saveJdGuideline();
+      return;
+    }
+
+    if (event.target.closest("[data-clear-jd-enhance-input]")) {
+      clearJdEnhancementInput();
+      return;
+    }
+
+    if (event.target.closest("[data-apply-all-jd-suggestions]")) {
+      applyAllJdSuggestions();
+      return;
+    }
+
+    const applyJdSuggestionButton = event.target.closest("[data-apply-jd-suggestion]");
+    if (applyJdSuggestionButton) {
+      applyJdSuggestion(applyJdSuggestionButton.dataset.applyJdSuggestion);
+      return;
+    }
+
+    if (event.target.closest("[data-download-jd-final]")) {
+      downloadJdFinalDocument();
+      return;
+    }
+
     if (event.target.closest("[data-close-policy-citation]")) {
       closePolicyCitation();
       return;
@@ -17162,6 +17698,18 @@ function bindEvents() {
     if (event.target.id === "job-fit-jd-text") {
       updateJobFitJdText(event.target.value);
     }
+
+    if (event.target.id === "jd-enhance-guideline") {
+      updateJdGuideline(event.target.value);
+    }
+
+    if (event.target.id === "jd-enhance-jd-text") {
+      updateJdInputText(event.target.value);
+    }
+
+    if (event.target.id === "jd-enhance-final-text") {
+      updateJdFinalText(event.target.value);
+    }
   });
 
   document.addEventListener("dragover", (event) => {
@@ -17324,6 +17872,15 @@ function bindEvents() {
 
       if (files?.length) {
         handleJobFitResumeUpload(files);
+        event.target.value = "";
+      }
+    }
+
+    if (event.target.id === "jd-enhance-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        handleJdEnhanceFileUpload(file);
         event.target.value = "";
       }
     }
