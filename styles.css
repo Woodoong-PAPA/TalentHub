@@ -1104,6 +1104,64 @@ tr:last-child td {
   accent-color: var(--blue);
 }
 
+.menu-order-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.menu-order-list {
+  display: grid;
+  gap: 8px;
+}
+
+.menu-order-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.menu-order-rank {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius);
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-weight: 900;
+}
+
+.menu-order-info {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.menu-order-info strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.menu-order-info span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.menu-order-actions,
+.menu-order-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .management-tabs {
   display: inline-flex;
   flex-wrap: wrap;
@@ -5129,6 +5187,19 @@ tr:last-child td {
 
   .policy-source-card {
     grid-template-columns: 1fr;
+  }
+
+  .menu-order-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .menu-order-actions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+
+  .menu-order-actions .compact-button {
+    flex: 1 1 0;
   }
 
   .section-heading {

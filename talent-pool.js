@@ -31,6 +31,8 @@ const MENU_CONFIG = [
   { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
 ];
 
+const DEFAULT_MENU_ORDER = MENU_CONFIG.map((item) => item.view);
+
 const MEMBER_ROLES = {
   applicant: "지원자",
   general: "일반회원",
@@ -599,6 +601,7 @@ const state = {
   memberProfileModalOpen: false,
   members: structuredClone(DEFAULT_MEMBERS),
   rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
+  menuOrder: [...DEFAULT_MENU_ORDER],
   memberFilters: {
     query: "",
     role: "all",
@@ -1749,6 +1752,28 @@ function normalizeRolePermissions(permissions = {}) {
   return normalized;
 }
 
+function normalizeMenuOrder(order = []) {
+  const knownViews = new Set(DEFAULT_MENU_ORDER);
+  const ordered = Array.isArray(order)
+    ? order.map((view) => String(view || "").trim()).filter((view) => knownViews.has(view))
+    : [];
+  const unique = [...new Set(ordered)];
+  const missing = DEFAULT_MENU_ORDER.filter((view) => !unique.includes(view));
+
+  return unique.concat(missing);
+}
+
+function getOrderedMenuConfig() {
+  const order = normalizeMenuOrder(state.menuOrder);
+  const menuMap = new Map(MENU_CONFIG.map((item) => [item.view, item]));
+
+  return order.map((view) => menuMap.get(view)).filter(Boolean);
+}
+
+function getMenuConfigItem(view) {
+  return MENU_CONFIG.find((item) => item.view === view) || null;
+}
+
 function ensureMemberDefaults() {
   state.members = state.members.map(normalizeMember);
 
@@ -1757,6 +1782,7 @@ function ensureMemberDefaults() {
   }
 
   state.rolePermissions = normalizeRolePermissions(state.rolePermissions);
+  state.menuOrder = normalizeMenuOrder(state.menuOrder);
 
   if (state.memberFilters.role !== "all" && !MEMBER_ROLES[state.memberFilters.role]) {
     state.memberFilters.role = "all";
@@ -2059,7 +2085,7 @@ function canDeleteScreeningApplicant(folder, applicant, member = getCurrentMembe
 }
 
 function getDefaultView(member = getCurrentMember()) {
-  return MENU_CONFIG
+  return getOrderedMenuConfig()
     .map((item) => item.view)
     .find((view) => canAccessView(view, member)) || "";
 }
@@ -2186,6 +2212,7 @@ function persistState(options = {}) {
         screeningFilters: state.screeningFilters,
         members: state.members.map(sanitizeMemberForStorage),
         rolePermissions: state.rolePermissions,
+        menuOrder: state.menuOrder,
         memberFilters: state.memberFilters,
         managementTab: state.managementTab,
         currentUserId: state.currentUserId,
@@ -2256,11 +2283,15 @@ function restorePersistedState() {
     state.rolePermissions = normalizeRolePermissions(persisted.rolePermissions);
   }
 
+  if (Array.isArray(persisted.menuOrder)) {
+    state.menuOrder = normalizeMenuOrder(persisted.menuOrder);
+  }
+
   if (persisted.memberFilters && typeof persisted.memberFilters === "object") {
     state.memberFilters = { ...state.memberFilters, ...persisted.memberFilters };
   }
 
-  if (["members", "logs"].includes(persisted.managementTab)) {
+  if (["members", "create", "menu-order", "logs"].includes(persisted.managementTab)) {
     state.managementTab = persisted.managementTab;
   }
 
@@ -2827,6 +2858,24 @@ function rolePermissionsFromSupabaseRows(rows) {
   return normalizeRolePermissions(permissions);
 }
 
+function appSettingToSupabaseRow(settingKey, payload) {
+  return {
+    setting_key: settingKey,
+    payload,
+    updated_at: new Date().toISOString()
+  };
+}
+
+function applyAppSettingsFromSupabaseRows(rows = []) {
+  const settings = Array.isArray(rows) ? rows : [];
+  const menuOrderSetting = settings.find((row) => row.setting_key === "menu_order");
+  const menuOrder = menuOrderSetting?.payload?.menuOrder || menuOrderSetting?.payload?.menu_order;
+
+  if (Array.isArray(menuOrder)) {
+    state.menuOrder = normalizeMenuOrder(menuOrder);
+  }
+}
+
 let remoteSyncTimer = null;
 let remoteSyncInFlight = false;
 
@@ -2858,6 +2907,9 @@ async function syncStateToSupabase() {
     const memberRows = state.members.map(memberToSupabaseRow);
     const permissionRows = rolePermissionToSupabaseRows();
     const policySourceRows = state.policySources.map(policySourceToSupabaseRow);
+    const appSettingRows = [
+      appSettingToSupabaseRow("menu_order", { menuOrder: normalizeMenuOrder(state.menuOrder) })
+    ];
 
     if (candidateRows.length) {
       await supabaseRequest("candidates?on_conflict=id", {
@@ -2915,6 +2967,16 @@ async function syncStateToSupabase() {
       }
     }
 
+    try {
+      await supabaseRequest("app_settings?on_conflict=setting_key", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(appSettingRows)
+      });
+    } catch (error) {
+      console.warn("App settings could not be synced.", error);
+    }
+
     state.remoteSyncStatus = "Supabase 연결됨";
   } catch (error) {
     state.remoteSyncStatus = "Supabase 동기화 실패";
@@ -2931,7 +2993,7 @@ async function loadStateFromSupabase() {
 
   try {
     state.remoteSyncStatus = "Supabase 불러오는 중";
-    const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows] = await Promise.all([
+    const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows] = await Promise.all([
       supabaseRequest("candidates?select=*&order=updated_at.desc"),
       supabaseRequest("screening_folders?select=*&order=updated_at.desc").catch((error) => {
         console.warn("Screening folders could not be loaded.", error);
@@ -2942,6 +3004,10 @@ async function loadStateFromSupabase() {
       supabaseRequest("app_role_permissions?select=*"),
       supabaseRequest("recruiting_policy_sources?select=*&order=updated_at.desc").catch((error) => {
         console.warn("Policy sources could not be loaded.", error);
+        return [];
+      }),
+      supabaseRequest("app_settings?select=*&setting_key=eq.menu_order&limit=1").catch((error) => {
+        console.warn("App settings could not be loaded.", error);
         return [];
       })
     ]);
@@ -2976,6 +3042,10 @@ async function loadStateFromSupabase() {
 
     if (Array.isArray(policySourceRows) && policySourceRows.length) {
       state.policySources = policySourceRows.map(policySourceFromSupabaseRow).filter((source) => source.content);
+    }
+
+    if (Array.isArray(appSettingRows) && appSettingRows.length) {
+      applyAppSettingsFromSupabaseRows(appSettingRows);
     }
 
     await mergeCurrentUserJobFitAnalysesFromSupabase();
@@ -3722,9 +3792,29 @@ function renderMemberProfileModal(member) {
 }
 
 function applyAccessControls() {
+  applyMenuOrderToSidebar();
+
   document.querySelectorAll("[data-view]").forEach((element) => {
     const view = element.dataset.view;
     element.hidden = !canAccessView(view);
+  });
+}
+
+function applyMenuOrderToSidebar() {
+  const navList = document.querySelector(".nav-list");
+
+  if (!navList) {
+    return;
+  }
+
+  const navItems = new Map([...navList.querySelectorAll(".nav-item[data-view]")].map((item) => [item.dataset.view, item]));
+
+  getOrderedMenuConfig().forEach((menu) => {
+    const item = navItems.get(menu.view);
+
+    if (item) {
+      navList.appendChild(item);
+    }
   });
 }
 
@@ -12108,13 +12198,15 @@ function memberTable(members) {
 }
 
 function renderRolePermissionMatrix() {
+  const menus = getOrderedMenuConfig();
+
   return `
     <div class="table-wrap">
       <table class="permission-table">
         <thead>
           <tr>
             <th>회원등급</th>
-            ${MENU_CONFIG.map((menu) => `<th>${escapeHtml(menu.label)}</th>`).join("")}
+            ${menus.map((menu) => `<th>${escapeHtml(menu.label)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
@@ -12126,7 +12218,7 @@ function renderRolePermissionMatrix() {
                   <span>${escapeHtml(rolePermissionDescription(role))}</span>
                 </div>
               </th>
-              ${MENU_CONFIG.map((menu) => {
+              ${menus.map((menu) => {
                 const checked = getAllowedViewsForRole(role).includes(menu.view);
                 const locked = role === "admin";
 
@@ -12274,6 +12366,7 @@ function getAvailableManagementTabs(member = getCurrentMember()) {
 
   if (isAdmin(member)) {
     tabs.push({ id: "members", label: "회원 관리" });
+    tabs.push({ id: "menu-order", label: "메뉴 순서" });
   }
 
   if (canCreateMemberAccounts(member)) {
@@ -12370,6 +12463,40 @@ function renderMemberCreatePanel() {
   `;
 }
 
+function renderMenuOrderPanel() {
+  const orderedMenus = getOrderedMenuConfig();
+
+  return `
+    <section class="content-panel span-12">
+      <div class="panel-header">
+        <h4>좌측 메뉴 순서</h4>
+        <span class="small-pill">관리자 전용</span>
+      </div>
+      <div class="menu-order-panel">
+        <p class="section-note">저장된 순서는 모든 회원의 좌측 메뉴 표시 순서에 적용됩니다. 권한이 없는 메뉴는 기존처럼 숨겨집니다.</p>
+        <div class="menu-order-list">
+          ${orderedMenus.map((menu, index) => `
+            <div class="menu-order-row">
+              <div class="menu-order-rank">${index + 1}</div>
+              <div class="menu-order-info">
+                <strong>${escapeHtml(menu.label)}</strong>
+                <span>${escapeHtml(menu.description)}</span>
+              </div>
+              <div class="menu-order-actions">
+                <button class="ghost-button compact-button" type="button" data-move-menu-order="${escapeHtml(menu.view)}" data-menu-order-direction="up" ${index === 0 ? "disabled" : ""}>위로</button>
+                <button class="ghost-button compact-button" type="button" data-move-menu-order="${escapeHtml(menu.view)}" data-menu-order-direction="down" ${index === orderedMenus.length - 1 ? "disabled" : ""}>아래로</button>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+        <div class="menu-order-footer">
+          <button class="ghost-button" type="button" data-reset-menu-order>기본 순서 복원</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderMembers() {
   const content = $("#members-content");
 
@@ -12396,6 +12523,16 @@ function renderMembers() {
       ${renderedTabs}
       <div class="dashboard-grid member-dashboard">
         ${renderMemberCreatePanel()}
+      </div>
+    `;
+    return;
+  }
+
+  if (state.managementTab === "menu-order" && isAdmin()) {
+    content.innerHTML = `
+      ${renderedTabs}
+      <div class="dashboard-grid member-dashboard">
+        ${renderMenuOrderPanel()}
       </div>
     `;
     return;
@@ -16815,6 +16952,30 @@ function updateRolePermission(role, view, enabled) {
   render();
 }
 
+function moveMenuOrder(view, direction) {
+  const order = normalizeMenuOrder(state.menuOrder);
+  const index = order.indexOf(view);
+  const delta = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  const nextIndex = index + delta;
+
+  if (index < 0 || delta === 0 || nextIndex < 0 || nextIndex >= order.length) {
+    return;
+  }
+
+  [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+  state.menuOrder = normalizeMenuOrder(order);
+  addAuditLog("좌측 메뉴 순서 변경", "Management", `${getMenuConfigItem(view)?.label || view} ${direction === "up" ? "위로" : "아래로"}`);
+  persistState();
+  render();
+}
+
+function resetMenuOrder() {
+  state.menuOrder = [...DEFAULT_MENU_ORDER];
+  addAuditLog("좌측 메뉴 순서 초기화", "Management", "기본 순서 복원");
+  persistState();
+  render();
+}
+
 function bindEvents() {
   document.addEventListener("click", (event) => {
     const authViewButton = event.target.closest("[data-auth-view]");
@@ -16885,6 +17046,17 @@ function bindEvents() {
     const managementTabButton = event.target.closest("[data-management-tab]");
     if (managementTabButton) {
       setManagementTab(managementTabButton.dataset.managementTab);
+      return;
+    }
+
+    const moveMenuOrderButton = event.target.closest("[data-move-menu-order]");
+    if (moveMenuOrderButton) {
+      moveMenuOrder(moveMenuOrderButton.dataset.moveMenuOrder, moveMenuOrderButton.dataset.menuOrderDirection);
+      return;
+    }
+
+    if (event.target.closest("[data-reset-menu-order]")) {
+      resetMenuOrder();
       return;
     }
 

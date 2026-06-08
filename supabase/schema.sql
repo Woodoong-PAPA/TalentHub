@@ -180,6 +180,12 @@ create table if not exists public.trending_mail_events (
 create index if not exists trending_mail_events_created_at_idx on public.trending_mail_events (created_at desc);
 create index if not exists trending_mail_events_report_date_idx on public.trending_mail_events (report_date desc);
 
+create table if not exists public.app_settings (
+  setting_key text primary key,
+  payload jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 alter table public.candidates enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.app_members enable row level security;
@@ -191,6 +197,7 @@ alter table public.trending_people_reports enable row level security;
 alter table public.trending_search_settings enable row level security;
 alter table public.trending_mail_settings enable row level security;
 alter table public.trending_mail_events enable row level security;
+alter table public.app_settings enable row level security;
 
 drop policy if exists "demo candidates read" on public.candidates;
 drop policy if exists "demo candidates write" on public.candidates;
@@ -214,6 +221,8 @@ drop policy if exists "demo trending mail settings read" on public.trending_mail
 drop policy if exists "demo trending mail settings write" on public.trending_mail_settings;
 drop policy if exists "demo trending mail events read" on public.trending_mail_events;
 drop policy if exists "demo trending mail events write" on public.trending_mail_events;
+drop policy if exists "demo app settings read" on public.app_settings;
+drop policy if exists "demo app settings write" on public.app_settings;
 
 create policy "demo candidates read"
 on public.candidates
@@ -358,6 +367,19 @@ to anon, authenticated
 using (true)
 with check (true);
 
+create policy "demo app settings read"
+on public.app_settings
+for select
+to anon, authenticated
+using (true);
+
+create policy "demo app settings write"
+on public.app_settings
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
 insert into public.app_role_permissions (role, view, enabled)
 values
   ('applicant', 'screening', true),
@@ -456,6 +478,14 @@ values (
   )
 )
 on conflict (id) do nothing;
+
+insert into public.app_settings (setting_key, payload, updated_at)
+values (
+  'menu_order',
+  '{"menuOrder":["dashboard","pool","screening","interview","ai-search","job-fit","jd-enhance","policy-chat","trending","members"]}'::jsonb,
+  now()
+)
+on conflict (setting_key) do nothing;
 
 insert into public.app_members (
   id,
