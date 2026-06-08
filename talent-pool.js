@@ -32,6 +32,7 @@ const MENU_CONFIG = [
 ];
 
 const DEFAULT_MENU_ORDER = MENU_CONFIG.map((item) => item.view);
+const DEFAULT_MENU_LABELS = Object.fromEntries(MENU_CONFIG.map((item) => [item.view, item.label]));
 
 const MEMBER_ROLES = {
   applicant: "지원자",
@@ -602,6 +603,7 @@ const state = {
   members: structuredClone(DEFAULT_MEMBERS),
   rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
   menuOrder: [...DEFAULT_MENU_ORDER],
+  menuLabels: {},
   memberFilters: {
     query: "",
     role: "all",
@@ -1763,11 +1765,36 @@ function normalizeMenuOrder(order = []) {
   return unique.concat(missing);
 }
 
+function normalizeMenuLabels(labels = {}) {
+  if (!labels || typeof labels !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(labels)
+      .map(([view, label]) => [String(view || "").trim(), String(label || "").trim()])
+      .filter(([view, label]) => DEFAULT_MENU_ORDER.includes(view) && label)
+      .map(([view, label]) => [view, label.slice(0, 40)])
+  );
+}
+
+function getMenuLabel(view) {
+  const labels = normalizeMenuLabels(state.menuLabels);
+  return labels[view] || DEFAULT_MENU_LABELS[view] || view || "";
+}
+
 function getOrderedMenuConfig() {
   const order = normalizeMenuOrder(state.menuOrder);
   const menuMap = new Map(MENU_CONFIG.map((item) => [item.view, item]));
 
-  return order.map((view) => menuMap.get(view)).filter(Boolean);
+  return order
+    .map((view) => menuMap.get(view))
+    .filter(Boolean)
+    .map((item) => ({
+      ...item,
+      label: getMenuLabel(item.view),
+      defaultLabel: DEFAULT_MENU_LABELS[item.view] || item.label
+    }));
 }
 
 function getMenuConfigItem(view) {
@@ -1783,6 +1810,7 @@ function ensureMemberDefaults() {
 
   state.rolePermissions = normalizeRolePermissions(state.rolePermissions);
   state.menuOrder = normalizeMenuOrder(state.menuOrder);
+  state.menuLabels = normalizeMenuLabels(state.menuLabels);
 
   if (state.memberFilters.role !== "all" && !MEMBER_ROLES[state.memberFilters.role]) {
     state.memberFilters.role = "all";
@@ -2213,6 +2241,7 @@ function persistState(options = {}) {
         members: state.members.map(sanitizeMemberForStorage),
         rolePermissions: state.rolePermissions,
         menuOrder: state.menuOrder,
+        menuLabels: state.menuLabels,
         memberFilters: state.memberFilters,
         managementTab: state.managementTab,
         currentUserId: state.currentUserId,
@@ -2285,6 +2314,10 @@ function restorePersistedState() {
 
   if (Array.isArray(persisted.menuOrder)) {
     state.menuOrder = normalizeMenuOrder(persisted.menuOrder);
+  }
+
+  if (persisted.menuLabels && typeof persisted.menuLabels === "object") {
+    state.menuLabels = normalizeMenuLabels(persisted.menuLabels);
   }
 
   if (persisted.memberFilters && typeof persisted.memberFilters === "object") {
@@ -2870,9 +2903,14 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   const settings = Array.isArray(rows) ? rows : [];
   const menuOrderSetting = settings.find((row) => row.setting_key === "menu_order");
   const menuOrder = menuOrderSetting?.payload?.menuOrder || menuOrderSetting?.payload?.menu_order;
+  const menuLabels = menuOrderSetting?.payload?.menuLabels || menuOrderSetting?.payload?.menu_labels;
 
   if (Array.isArray(menuOrder)) {
     state.menuOrder = normalizeMenuOrder(menuOrder);
+  }
+
+  if (menuLabels && typeof menuLabels === "object") {
+    state.menuLabels = normalizeMenuLabels(menuLabels);
   }
 }
 
@@ -2908,7 +2946,10 @@ async function syncStateToSupabase() {
     const permissionRows = rolePermissionToSupabaseRows();
     const policySourceRows = state.policySources.map(policySourceToSupabaseRow);
     const appSettingRows = [
-      appSettingToSupabaseRow("menu_order", { menuOrder: normalizeMenuOrder(state.menuOrder) })
+      appSettingToSupabaseRow("menu_order", {
+        menuOrder: normalizeMenuOrder(state.menuOrder),
+        menuLabels: normalizeMenuLabels(state.menuLabels)
+      })
     ];
 
     if (candidateRows.length) {
@@ -3813,6 +3854,12 @@ function applyMenuOrderToSidebar() {
     const item = navItems.get(menu.view);
 
     if (item) {
+      const labelElement = [...item.querySelectorAll("span")].find((span) => !span.classList.contains("nav-icon"));
+
+      if (labelElement) {
+        labelElement.textContent = menu.label;
+      }
+
       navList.appendChild(item);
     }
   });
@@ -3836,7 +3883,7 @@ function syncActiveViewState() {
   const pageTitle = $("#page-title");
 
   if (pageTitle) {
-    pageTitle.textContent = viewTitles[state.view] || "Talent Pool";
+    pageTitle.textContent = getMenuConfigItem(state.view) ? getMenuLabel(state.view) : viewTitles[state.view] || "Talent Pool";
   }
 }
 
@@ -12473,14 +12520,17 @@ function renderMenuOrderPanel() {
         <span class="small-pill">관리자 전용</span>
       </div>
       <div class="menu-order-panel">
-        <p class="section-note">저장된 순서는 모든 회원의 좌측 메뉴 표시 순서에 적용됩니다. 권한이 없는 메뉴는 기존처럼 숨겨집니다.</p>
+        <p class="section-note">저장된 순서와 메뉴명은 모든 회원의 좌측 메뉴에 적용됩니다. 권한이 없는 메뉴는 기존처럼 숨겨집니다.</p>
         <div class="menu-order-list">
           ${orderedMenus.map((menu, index) => `
             <div class="menu-order-row">
               <div class="menu-order-rank">${index + 1}</div>
               <div class="menu-order-info">
-                <strong>${escapeHtml(menu.label)}</strong>
-                <span>${escapeHtml(menu.description)}</span>
+                <label class="menu-order-name-field">
+                  <span>메뉴명</span>
+                  <input class="control-input" type="text" value="${inputValue(menu.label)}" data-menu-label-input="${escapeHtml(menu.view)}" />
+                </label>
+                <span>기본명: ${escapeHtml(menu.defaultLabel)} · ${escapeHtml(menu.description)}</span>
               </div>
               <div class="menu-order-actions">
                 <button class="ghost-button compact-button" type="button" data-move-menu-order="${escapeHtml(menu.view)}" data-menu-order-direction="up" ${index === 0 ? "disabled" : ""}>위로</button>
@@ -12490,6 +12540,7 @@ function renderMenuOrderPanel() {
           `).join("")}
         </div>
         <div class="menu-order-footer">
+          <button class="ghost-button" type="button" data-reset-menu-labels>기본 메뉴명 복원</button>
           <button class="ghost-button" type="button" data-reset-menu-order>기본 순서 복원</button>
         </div>
       </div>
@@ -16947,7 +16998,7 @@ function updateRolePermission(role, view, enabled) {
     .map((item) => item.view)
     .filter((menuView) => permissions.has(menuView));
 
-  addAuditLog("등급 메뉴 권한 변경", getRoleLabel(role), `${MENU_CONFIG.find((item) => item.view === view)?.label || view} ${enabled ? "허용" : "차단"}`);
+  addAuditLog("등급 메뉴 권한 변경", getRoleLabel(role), `${getMenuLabel(view)} ${enabled ? "허용" : "차단"}`);
   persistState();
   render();
 }
@@ -16964,7 +17015,34 @@ function moveMenuOrder(view, direction) {
 
   [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
   state.menuOrder = normalizeMenuOrder(order);
-  addAuditLog("좌측 메뉴 순서 변경", "Management", `${getMenuConfigItem(view)?.label || view} ${direction === "up" ? "위로" : "아래로"}`);
+  addAuditLog("좌측 메뉴 순서 변경", "Management", `${getMenuLabel(view)} ${direction === "up" ? "위로" : "아래로"}`);
+  persistState();
+  render();
+}
+
+function updateMenuLabel(view, label) {
+  if (!DEFAULT_MENU_ORDER.includes(view)) {
+    return;
+  }
+
+  const normalizedLabel = String(label || "").trim().slice(0, 40);
+  const labels = normalizeMenuLabels(state.menuLabels);
+
+  if (normalizedLabel && normalizedLabel !== DEFAULT_MENU_LABELS[view]) {
+    labels[view] = normalizedLabel;
+  } else {
+    delete labels[view];
+  }
+
+  state.menuLabels = labels;
+  persistState();
+  applyMenuOrderToSidebar();
+  syncActiveViewState();
+}
+
+function resetMenuLabels() {
+  state.menuLabels = {};
+  addAuditLog("좌측 메뉴명 초기화", "Management", "기본 메뉴명 복원");
   persistState();
   render();
 }
@@ -17057,6 +17135,11 @@ function bindEvents() {
 
     if (event.target.closest("[data-reset-menu-order]")) {
       resetMenuOrder();
+      return;
+    }
+
+    if (event.target.closest("[data-reset-menu-labels]")) {
+      resetMenuLabels();
       return;
     }
 
@@ -18068,6 +18151,10 @@ function bindEvents() {
 
     if (event.target.id === "job-fit-jd-text") {
       updateJobFitJdText(event.target.value);
+    }
+
+    if (event.target.matches("[data-menu-label-input]")) {
+      updateMenuLabel(event.target.dataset.menuLabelInput, event.target.value);
     }
 
     if (event.target.id === "jd-enhance-guideline") {

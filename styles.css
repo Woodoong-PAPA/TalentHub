@@ -1138,8 +1138,25 @@ tr:last-child td {
 
 .menu-order-info {
   display: grid;
-  gap: 3px;
+  gap: 8px;
   min-width: 0;
+}
+
+.menu-order-name-field {
+  display: grid;
+  gap: 6px;
+}
+
+.menu-order-name-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.menu-order-name-field .control-input {
+  min-height: 38px;
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .menu-order-info strong {
