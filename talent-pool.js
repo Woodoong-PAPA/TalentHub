@@ -15217,9 +15217,12 @@ function bindEvents() {
     const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
     if (refreshTrendingButton) {
       const mode = refreshTrendingButton.dataset.refreshTrending;
+      if (mode === "force") {
+        state.trendingSelectedDate = "";
+      }
       fetchTrendingPeople({
         force: mode === "force",
-        forceLatest: mode === "latest"
+        forceLatest: mode === "force" || mode === "latest"
       });
       return;
     }

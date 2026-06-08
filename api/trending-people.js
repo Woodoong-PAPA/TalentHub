@@ -914,6 +914,13 @@ async function loadExcludedNames(targetDate) {
 }
 
 async function saveReport(report) {
+  const peopleCount = Array.isArray(report.people) ? report.people.length : 0;
+
+  if (peopleCount > 0 && peopleCount < 5) {
+    console.warn(`Skipped saving short Today's Talent report for ${report.targetDate}: ${peopleCount} people.`);
+    return;
+  }
+
   await supabaseRequest("trending_people_reports?on_conflict=report_date", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -2031,6 +2038,203 @@ function selectRankedCandidates(people, excludedNames) {
   return selected.slice(0, 5);
 }
 
+function stripArticleText(value) {
+  return String(value || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z0-9#]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPlausibleKoreanPersonName(name) {
+  const text = String(name || "").trim();
+  const normalized = text.replace(/\s+/g, " ");
+  const blocked = new Set([
+    "삼성전자", "현대차", "기아차", "네이버", "카카오", "로보틱스", "인공지능", "생활가전",
+    "반도체", "모바일", "한국", "미국", "중국", "일본", "유럽", "정부", "업계",
+    "대통령", "부회장", "대표이사", "전자신문", "연합뉴스", "아주경제", "머슴투데이",
+    "국가", "가전", "학습플랫", "학습플랫폼", "미래", "비전", "동맹", "직원",
+    "연구원", "과학자", "개발자", "담당자", "관계자", "전문가", "신입사원"
+  ]);
+  const known = new Set(["젠슨 황", "팀 쿡", "사티아 나델라", "샘 알트먼", "알렉스 카프", "야오슌위", "김서준", "정재승"]);
+  const commonSurname = /^[김이박최정강조윤장임한오서신권황안송전홍유고문양손배백허남심노하곽성차주우구민류나진지엄채원천방공현함여추도소석선설마길연위표명기반왕금옥육인맹제][가-힣]{1,3}$/;
+
+  if (known.has(normalized)) {
+    return true;
+  }
+
+  if (normalized.includes(" ")) {
+    return /^[가-힣]{1,4}\s+[가-힣]{1,4}$/.test(normalized) && !blocked.has(normalized);
+  }
+
+  return commonSurname.test(normalized) && !blocked.has(normalized) && !/(전자|그룹|뉴스|경제|일보|방송|신문|산업|기업|플랫|가전|연구원|과학자|개발자)$/.test(normalized);
+}
+
+function inferTitleFromContext(context) {
+  const titles = ["대표이사", "부회장", "회장", "사장", "대표", "CEO", "CTO", "CPO", "의장", "교수", "원장", "소장", "상무", "전무", "부사장", "총괄", "창업자"];
+  return titles.find((title) => context.includes(title)) || "";
+}
+
+function inferOrgFromContext(context) {
+  const mappings = [
+    [/두산|로보틱스/i, "두산그룹"],
+    [/현대차|현대자동차|기아/i, "현대자동차그룹"],
+    [/네이버|NAVER/i, "네이버"],
+    [/카카오|Kakao/i, "카카오"],
+    [/LG|엘지/i, "LG"],
+    [/SK|에스케이/i, "SK"],
+    [/삼성|Samsung/i, "삼성전자"],
+    [/엔비디아|NVIDIA/i, "엔비디아"],
+    [/애플|Apple/i, "애플"],
+    [/팔란티어|Palantir/i, "팔란티어"],
+    [/오픈AI|OpenAI/i, "OpenAI"],
+    [/구글|Google/i, "구글"],
+    [/마이크로소프트|Microsoft/i, "마이크로소프트"]
+  ];
+  const found = mappings.find(([pattern]) => pattern.test(context));
+  return found ? found[1] : "";
+}
+
+function summarizeArticleForReason(article) {
+  const text = stripArticleText(article.snippet || article.title || "");
+  const trimmed = text.replace(/\s*[-|]\s*[^-|]{2,20}$/g, "").trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117).trim()}...` : trimmed;
+}
+
+function collectHeuristicPeopleFromArticles(articles, excludedNames) {
+  const excluded = new Set((excludedNames || []).map((name) => String(name || "").trim()).filter(Boolean));
+  const byName = new Map();
+  const titleWords = "(?:대표이사|부회장|회장|사장|대표|CEO|CTO|CPO|의장|교수|원장|소장|상무|전무|부사장|총괄|창업자)";
+  const knownPeople = [
+    { name: "젠슨 황", pattern: /젠슨\s*황|Jensen\s+Huang/i, org: "엔비디아", title: "CEO" },
+    { name: "팀 쿡", pattern: /팀\s*쿡|Tim\s+Cook/i, org: "애플", title: "CEO" },
+    { name: "사티아 나델라", pattern: /사티아\s*나델라|Satya\s+Nadella|MS\s*CEO|마이크로소프트\s*CEO/i, org: "마이크로소프트", title: "CEO" },
+    { name: "샘 알트먼", pattern: /샘\s*알트먼|Sam\s+Altman/i, org: "OpenAI", title: "CEO" },
+    { name: "알렉스 카프", pattern: /알렉스\s*카프|Alex\s+Karp/i, org: "팔란티어", title: "CEO" },
+    { name: "야오슌위", pattern: /야오슌위/i, org: "텐센트", title: "최고 AI 과학자" },
+    { name: "김서준", pattern: /김서준/i, org: "해시드", title: "대표" },
+    { name: "정재승", pattern: /정재승/i, org: "KAIST", title: "교수" },
+    { name: "정의선", pattern: /정의선/i, org: "현대자동차그룹", title: "회장" },
+    { name: "박정원", pattern: /박정원/i, org: "두산그룹", title: "회장" },
+    { name: "최태원", pattern: /최태원/i, org: "SK", title: "회장" },
+    { name: "김형준", pattern: /김형준/i, org: "", title: "" }
+  ];
+  const patterns = [
+    new RegExp(`([가-힣]{2,4})\\s*${titleWords}`, "g"),
+    new RegExp(`${titleWords}\\s*([가-힣]{2,4})`, "g"),
+    /(?:해시드|엔씨|크래프톤|오픈AI|텐센트|NVIDIA|MS|마이크로소프트|KAIST|현대차|LG|두산|네이버|카카오)\s+([가-힣]{2,4})/g,
+    /([가-힣]{2,4})\s*(?:영입|출격|회동|선언|임명|발표|주목|참석|만난다)/g
+  ];
+
+  function addCandidate(name, article, context, defaults = {}) {
+    const normalizedName = String(name || "").replace(/\s+/g, " ").trim();
+
+    if (!isPlausibleKoreanPersonName(normalizedName) || excluded.has(normalizedName)) {
+      return;
+    }
+
+    const current = byName.get(normalizedName) || {
+      name: normalizedName,
+      mentionCount: 0,
+      articles: [],
+      contexts: [],
+      defaultOrg: defaults.org || "",
+      defaultTitle: defaults.title || ""
+    };
+
+    current.mentionCount += 1;
+    current.articles.push(article);
+    current.contexts.push(context);
+    current.defaultOrg = current.defaultOrg || defaults.org || "";
+    current.defaultTitle = current.defaultTitle || defaults.title || "";
+    byName.set(normalizedName, current);
+  }
+
+  (articles || []).forEach((article) => {
+    const text = stripArticleText(`${article.title || ""} ${article.snippet || ""}`);
+
+    knownPeople.forEach((person) => {
+      if (person.pattern.test(text)) {
+        addCandidate(person.name, article, text, person);
+      }
+    });
+
+    patterns.forEach((pattern) => {
+      for (const match of text.matchAll(pattern)) {
+        const name = String(match[1] || "").trim();
+        const index = match.index || 0;
+        const context = text.slice(Math.max(0, index - 50), index + 90);
+
+        addCandidate(name, article, context);
+      }
+    });
+  });
+
+  return [...byName.values()]
+    .sort((a, b) => b.mentionCount - a.mentionCount || b.articles.length - a.articles.length)
+    .slice(0, 5)
+    .map((record) => {
+      const primaryArticle = record.articles[0] || {};
+      const context = record.contexts.join(" ");
+      const org = record.defaultOrg || inferOrgFromContext(context);
+      const title = record.defaultTitle || inferTitleFromContext(context);
+      const topic = primaryArticle.topic || "DX";
+
+      return {
+        name: record.name,
+        birthYear: "",
+        currentOrg: org,
+        currentTitle: title,
+        education: [],
+        career: org || title ? [{
+          country: inferCareerCountry({ company: org }),
+          company: org,
+          rank: "",
+          title,
+          department: "",
+          start: "",
+          end: "현재"
+        }] : [],
+        achievements: [summarizeArticleForReason(primaryArticle)].filter(Boolean).slice(0, 3),
+        selectionReasons: [{
+          text: `${[org, title].filter(Boolean).join(" ")} 관련 보도가 다수 확인됨`.trim(),
+          articleIds: [primaryArticle.id].filter(Boolean)
+        }, {
+          text: summarizeArticleForReason(primaryArticle),
+          articleIds: [primaryArticle.id].filter(Boolean)
+        }],
+        linkedinUrl: "",
+        profileImageUrl: "",
+        topics: [topic].filter(Boolean),
+        mentionCount: record.mentionCount
+      };
+    });
+}
+
+function fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedNames) {
+  if (rankedCandidates.length >= 5) {
+    return rankedCandidates.slice(0, 5);
+  }
+
+  const seen = new Set(rankedCandidates.map(normalizePersonNameKey));
+  let supplemental = collectHeuristicPeopleFromArticles(articles, excludedNames)
+    .filter((person) => {
+      const key = normalizePersonNameKey(person);
+      return key && !seen.has(key);
+    });
+
+  if (rankedCandidates.length + supplemental.length < 5) {
+    const relaxedSeen = new Set([...seen, ...supplemental.map(normalizePersonNameKey)]);
+    supplemental = supplemental.concat(collectHeuristicPeopleFromArticles(articles, [])
+      .filter((person) => {
+        const key = normalizePersonNameKey(person);
+        return key && !relaxedSeen.has(key);
+      }));
+  }
+
+  return rankedCandidates.concat(supplemental).slice(0, 5);
+}
+
 async function generateReport(targetDate) {
   const searchSettings = await loadSearchSettings();
   const excludedNames = await loadExcludedNames(targetDate);
@@ -2041,8 +2245,27 @@ async function generateReport(targetDate) {
   }
 
   const articleById = new Map(articles.map((article) => [article.id, article]));
-  const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings);
-  const rankedCandidates = selectRankedCandidates(ranked.people, excludedNames);
+  let rankedCandidates = [];
+  let rankingError = null;
+
+  try {
+    const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings);
+    rankedCandidates = selectRankedCandidates(ranked.people, excludedNames);
+  } catch (error) {
+    rankingError = error;
+    console.warn("OpenAI trending people ranking failed. Falling back to article heuristics.", error.message);
+  }
+
+  rankedCandidates = fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedNames);
+
+  if (!rankedCandidates.length && rankingError) {
+    throw rankingError;
+  }
+
+  if (!rankedCandidates.length) {
+    throw new Error("No plausible people were found for the target date.");
+  }
+
   await resolveReferencedArticleUrls(articleById, rankedCandidates);
 
   const articlesWithResolvedLinks = articles.map((article) => articleById.get(article.id) || article);
