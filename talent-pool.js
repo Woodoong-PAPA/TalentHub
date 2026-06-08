@@ -2422,6 +2422,10 @@ async function upsertScreeningFolderToSupabase(folder) {
   });
 }
 
+async function deleteScreeningFolderFromSupabase(folderId) {
+  await deleteSupabaseRecord("screening_folders", folderId);
+}
+
 function auditLogToSupabaseRow(log) {
   return {
     id: log.id,
@@ -4387,6 +4391,48 @@ function replaceScreeningFolder(folder) {
   return nextFolder;
 }
 
+async function deleteScreeningFolder(folderId) {
+  const folder = getScreeningFolder(folderId);
+
+  if (!folder || !canManageScreeningFolder(folder)) {
+    showToast("현재 권한으로 삭제할 수 없는 포지션입니다.");
+    return;
+  }
+
+  const applicantCount = folder.applicants?.length || 0;
+  const message = applicantCount
+    ? `${folder.title} 포지션과 등록된 지원자 ${applicantCount}명을 삭제할까요? 삭제 후에는 복구할 수 없습니다.`
+    : `${folder.title} 포지션을 삭제할까요? 삭제 후에는 복구할 수 없습니다.`;
+
+  if (!window.confirm(message)) {
+    return;
+  }
+
+  state.screeningFolders = state.screeningFolders.filter((item) => item.id !== folder.id);
+
+  if (state.selectedScreeningFolderId === folder.id) {
+    state.selectedScreeningFolderId = getAccessibleScreeningFolders(getCurrentMember(), { applyFilters: false })[0]?.id || "";
+    state.screeningPage = "list";
+    state.screeningApplicantModalOpen = false;
+    state.screeningJdModalOpen = false;
+    state.screeningAccessModalOpen = false;
+    state.screeningApplicantDetailId = "";
+    state.screeningResultPanelOpen = false;
+  }
+
+  addAuditLog("Screening 포지션 삭제", folder.title, `${folder.businessUnit || "사업부 미입력"} · 지원자 ${applicantCount}명`);
+  persistState();
+  renderScreening();
+
+  try {
+    await deleteScreeningFolderFromSupabase(folder.id);
+    showToast(`${folder.title} 포지션을 삭제했습니다.`);
+  } catch (error) {
+    console.warn("Screening folder remote delete failed.", error);
+    showToast("포지션은 화면에서 삭제됐지만 원격 DB 삭제 확인에 실패했습니다.");
+  }
+}
+
 function tokenizeScreeningText(value) {
   return [...new Set(String(value || "")
     .toLowerCase()
@@ -4783,14 +4829,18 @@ function renderScreeningFolderList(folders) {
         const active = folder.id === state.selectedScreeningFolderId;
         const visibleApplicants = folder.applicants.filter((item) => canViewScreeningApplicant(item));
         const passed = visibleApplicants.filter((item) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(item.stage)).length;
+        const canDelete = canManageScreeningFolder(folder);
 
         return `
-          <button class="screening-folder-card ${active ? "is-active" : ""}" type="button" data-select-screening-folder="${escapeHtml(folder.id)}">
-            <strong>${escapeHtml(folder.title)}</strong>
-            <span>${escapeHtml(folder.department || "채용 부서 미입력")} · ${escapeHtml(folder.positionName || "포지션 미입력")}</span>
-            <small>${escapeHtml(folder.businessUnit || "사업부 미입력")} · 담당자 ${escapeHtml(getScreeningFolderCreatorName(folder))}</small>
-            <small>지원자 ${visibleApplicants.length}명 · 2차 통과 ${passed}명</small>
-          </button>
+          <div class="screening-folder-row ${active ? "is-active" : ""}">
+            <button class="screening-folder-card ${active ? "is-active" : ""}" type="button" data-select-screening-folder="${escapeHtml(folder.id)}">
+              <strong>${escapeHtml(folder.title)}</strong>
+              <span>${escapeHtml(folder.department || "채용 부서 미입력")} · ${escapeHtml(folder.positionName || "포지션 미입력")}</span>
+              <small>${escapeHtml(folder.businessUnit || "사업부 미입력")} · 담당자 ${escapeHtml(getScreeningFolderCreatorName(folder))}</small>
+              <small>지원자 ${visibleApplicants.length}명 · 2차 통과 ${passed}명</small>
+            </button>
+            ${canDelete ? `<button class="ghost-button danger-button compact-button screening-folder-delete" type="button" data-delete-screening-folder="${escapeHtml(folder.id)}">삭제</button>` : ""}
+          </div>
         `;
       }).join("")}
     </div>
@@ -9204,8 +9254,53 @@ function renderDashList(items) {
   return `<ul class="dash-list">${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
+function parseSerializedNewsLink(value) {
+  const text = String(value || "").trim();
+
+  if (!text.startsWith("@{") || !text.endsWith("}")) {
+    return null;
+  }
+
+  const pairs = {};
+  text.slice(2, -1).split(";").forEach((part) => {
+    const separatorIndex = part.indexOf("=");
+
+    if (separatorIndex <= 0) {
+      return;
+    }
+
+    const key = part.slice(0, separatorIndex).trim();
+    const pairValue = part.slice(separatorIndex + 1).trim();
+
+    if (key) {
+      pairs[key] = pairValue;
+    }
+  });
+
+  return pairs.url ? pairs : null;
+}
+
+function normalizeNewsLink(link) {
+  const source = typeof link === "string" ? parseSerializedNewsLink(link) : link;
+
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  return {
+    url: String(source.url || "").trim(),
+    title: String(source.title || "").trim(),
+    source: String(source.source || "").trim(),
+    snippet: String(source.snippet || source.description || "").trim()
+  };
+}
+
+function normalizeNewsLinks(links) {
+  return (links || []).map(normalizeNewsLink).filter((link) => link?.url);
+}
+
 function renderNewsLinks(reason) {
-  const links = (reason.links || []).filter((link) => link.url).slice(0, 1);
+  const links = normalizeNewsLinks(reason.links).slice(0, 1);
 
   if (!links.length) {
     return "";
@@ -9304,12 +9399,14 @@ function trendingReasonLines(reasons) {
   const links = (reasons || [])
     .filter((reason) => typeof reason === "object")
     .flatMap((reason) => reason.links || [])
+    .map(normalizeNewsLink)
+    .filter(Boolean)
     .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
     .slice(0, 1);
 
   (reasons || []).forEach((reason) => {
     const rawText = typeof reason === "object" ? reason.text : reason;
-    const link = typeof reason === "object" ? (reason.links || []).find((item) => item.url) : null;
+    const link = typeof reason === "object" ? normalizeNewsLinks(reason.links).find((item) => item.url) : null;
     const cleanedRaw = normalizeReasonText(rawText);
     const cleanedTitle = normalizeReasonText(cleanNewsTitle(link?.title || "", link?.source || ""));
     const displayText = (
@@ -9348,6 +9445,8 @@ function renderSelectionReasons(reasons) {
   const links = (reasons || [])
     .filter((reason) => typeof reason === "object")
     .flatMap((reason) => reason.links || [])
+    .map(normalizeNewsLink)
+    .filter(Boolean)
     .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
     .slice(0, 1);
 
@@ -13204,7 +13303,8 @@ async function sendTrendingMailTest() {
     }
 
     state.trendingMailSettings = normalizeTrendingMailSettings(payload.settings || settings);
-    state.trendingMailStatus = payload.message || "테스트 메일 발송을 요청했습니다.";
+    const recipientCount = Number(payload.recipientCount || settings.recipients.length || 0);
+    state.trendingMailStatus = `${payload.message || "테스트 메일 발송을 요청했습니다."}${recipientCount ? ` · 수신처 ${recipientCount}명` : ""}`;
     addAuditLog("Today's Talent 테스트 메일", "Today's Talent", `${settings.recipients.length}명`);
     persistState();
     showToast(state.trendingMailStatus);
@@ -15846,6 +15946,15 @@ function bindEvents() {
 
     if (event.target.closest("[data-save-trending-profile]")) {
       saveTrendingProfileEdit();
+      return;
+    }
+
+    const deleteScreeningFolderButton = event.target.closest("[data-delete-screening-folder]");
+    if (deleteScreeningFolderButton) {
+      deleteScreeningFolder(deleteScreeningFolderButton.dataset.deleteScreeningFolder).catch((error) => {
+        console.warn(error);
+        showToast("포지션 삭제 중 오류가 발생했습니다.");
+      });
       return;
     }
 

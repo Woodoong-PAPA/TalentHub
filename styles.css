@@ -1646,6 +1646,13 @@ tr:last-child td {
   grid-template-columns: 1fr;
 }
 
+.screening-folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
 .screening-folder-card {
   display: grid;
   gap: 5px;
@@ -1656,6 +1663,12 @@ tr:last-child td {
   color: var(--text);
   background: var(--surface);
   text-align: left;
+}
+
+.screening-folder-delete {
+  align-self: center;
+  min-height: 42px;
+  white-space: nowrap;
 }
 
 .screening-list-page .screening-folder-card {
@@ -4869,6 +4882,14 @@ tr:last-child td {
     align-items: start;
   }
 
+  .screening-folder-row {
+    grid-template-columns: 1fr;
+  }
+
+  .screening-folder-delete {
+    justify-self: stretch;
+  }
+
   .screening-folder-side {
     min-width: 0;
     width: 100%;
@@ -5022,6 +5043,14 @@ tr:last-child td {
   .screening-file-preview {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .screening-folder-row {
+    grid-template-columns: 1fr;
+  }
+
+  .screening-folder-delete {
+    justify-self: stretch;
   }
 
   .job-fit-panel-header,

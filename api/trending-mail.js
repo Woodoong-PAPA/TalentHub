@@ -465,6 +465,47 @@ function formatNewsLinkLabel(link) {
   return `[${source}] ${title}`;
 }
 
+function parseSerializedNewsLink(value) {
+  const text = String(value || "").trim();
+
+  if (!text.startsWith("@{") || !text.endsWith("}")) {
+    return null;
+  }
+
+  const pairs = {};
+  text.slice(2, -1).split(";").forEach((part) => {
+    const separatorIndex = part.indexOf("=");
+
+    if (separatorIndex <= 0) {
+      return;
+    }
+
+    const key = part.slice(0, separatorIndex).trim();
+    const pairValue = part.slice(separatorIndex + 1).trim();
+
+    if (key) {
+      pairs[key] = pairValue;
+    }
+  });
+
+  return pairs.url ? pairs : null;
+}
+
+function normalizeNewsLink(link) {
+  const source = typeof link === "string" ? parseSerializedNewsLink(link) : link;
+
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  return {
+    url: String(source.url || "").trim(),
+    title: String(source.title || "").trim(),
+    source: String(source.source || "").trim(),
+    snippet: String(source.snippet || source.description || "").trim()
+  };
+}
+
 function cleanArticleSummary(value, source = "") {
   return cleanNewsTitle(value, source)
     .replace(/^근거\s*기사\s*핵심\s*[:：]?\s*/i, "")
@@ -510,6 +551,8 @@ function collectReasonLinks(reasons) {
   return (reasons || [])
     .filter((reason) => typeof reason === "object")
     .flatMap((reason) => reason.links || [])
+    .map(normalizeNewsLink)
+    .filter(Boolean)
     .filter((link, index, array) => link.url && array.findIndex((item) => item.url === link.url) === index)
     .slice(0, 1);
 }
@@ -520,7 +563,7 @@ function trendingReasonLines(reasons) {
 
   (reasons || []).forEach((reason) => {
     const rawText = typeof reason === "object" ? reason.text : reason;
-    const link = typeof reason === "object" ? (reason.links || []).find((item) => item.url) : null;
+    const link = typeof reason === "object" ? (reason.links || []).map(normalizeNewsLink).find((item) => item?.url) : null;
     const cleanedRaw = normalizeReasonText(rawText);
     const cleanedTitle = normalizeReasonText(cleanNewsTitle(link?.title || "", link?.source || ""));
     const displayText = (
@@ -573,7 +616,7 @@ function buildReportText(report) {
 }
 
 function renderSourceLinks(reason) {
-  const links = (reason?.links || []).filter((link) => link.url).slice(0, 1);
+  const links = (reason?.links || []).map(normalizeNewsLink).filter((link) => link?.url).slice(0, 1);
 
   if (!links.length) {
     return "";
@@ -818,6 +861,11 @@ async function sendReport({ request, settings, report, eventType }) {
   return {
     settings: savedSettings,
     report: finalReport,
+    eventType,
+    recipients: settings.recipients,
+    recipientCount: settings.recipients.length,
+    sentAt: new Date().toISOString(),
+    providerConfigured: true,
     message: "메일 발송을 완료했습니다."
   };
 }
