@@ -37,6 +37,22 @@ const DEFAULT_MENU_ORDER = MENU_CONFIG.map((item) => item.view);
 const DEFAULT_MENU_LABELS = Object.fromEntries(MENU_CONFIG.map((item) => [item.view, item.label]));
 const MENU_SETTING_KEY = "menu_order";
 const SCREENING_DELETED_FOLDERS_SETTING_KEY = "screening_deleted_folder_ids";
+const ROLE_PERMISSIONS_SETTING_KEY = "role_permissions";
+const INTERVIEW_CASES_SETTING_KEY = "interview_cases";
+const RECRUITING_METRICS_SETTING_KEY = "recruiting_metrics";
+const ROLE_PERMISSION_TABLE_VIEWS = new Set([
+  "dashboard",
+  "pool",
+  "screening",
+  "interview",
+  "register",
+  "ai-search",
+  "job-fit",
+  "policy-chat",
+  "trending",
+  "audit",
+  "members"
+]);
 
 const MEMBER_ROLES = {
   applicant: "지원자",
@@ -2797,6 +2813,7 @@ function memberToSupabaseRow(member) {
     name: normalized.name,
     role: normalized.role,
     status: normalized.status,
+    business_unit: normalized.businessUnit || null,
     department: normalized.department || null,
     position: normalized.position || null,
     phone: normalized.phone || null,
@@ -2828,6 +2845,24 @@ function memberFromSupabaseRow(row) {
     approvedBy: row.approved_by || row.profile?.approvedBy || "",
     lastLoginAt: row.profile?.lastLoginAt || row.last_login_at || "",
     note: row.note || row.profile?.note || ""
+  });
+}
+
+async function upsertMemberToSupabase(member) {
+  if (!REMOTE_SYNC_ENABLED || !member?.id) {
+    return;
+  }
+
+  await supabaseRequest("app_members?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([memberToSupabaseRow(member)])
+  });
+}
+
+function queueMemberRemoteSave(member) {
+  upsertMemberToSupabase(member).catch((error) => {
+    console.warn("Member remote save failed.", error);
   });
 }
 
@@ -3039,12 +3074,14 @@ function mergeMembers(localMembers, remoteMembers) {
 
 function rolePermissionToSupabaseRows() {
   return MEMBER_ROLE_ORDER.flatMap((role) =>
-    MENU_CONFIG.map((menu) => ({
-      role,
-      view: menu.view,
-      enabled: getAllowedViewsForRole(role).includes(menu.view),
-      updated_at: new Date().toISOString()
-    }))
+    MENU_CONFIG
+      .filter((menu) => ROLE_PERMISSION_TABLE_VIEWS.has(menu.view))
+      .map((menu) => ({
+        role,
+        view: menu.view,
+        enabled: getAllowedViewsForRole(role).includes(menu.view),
+        updated_at: new Date().toISOString()
+      }))
   );
 }
 
@@ -3057,7 +3094,24 @@ function rolePermissionsFromSupabaseRows(rows) {
     }
   });
 
-  return normalizeRolePermissions(permissions);
+  const normalized = normalizeRolePermissions(permissions);
+
+  MEMBER_ROLE_ORDER.forEach((role) => {
+    const merged = new Set(normalized[role] || []);
+
+    (DEFAULT_ROLE_PERMISSIONS[role] || []).forEach((view) => {
+      if (!ROLE_PERMISSION_TABLE_VIEWS.has(view)) {
+        merged.add(view);
+      }
+    });
+
+    normalized[role] = MENU_CONFIG
+      .map((item) => item.view)
+      .filter((view) => merged.has(view));
+  });
+
+  normalized.admin = MENU_CONFIG.map((item) => item.view);
+  return normalized;
 }
 
 function appSettingToSupabaseRow(settingKey, payload) {
@@ -3073,6 +3127,32 @@ function buildMenuSettingPayload() {
     menuOrder: normalizeMenuOrder(state.menuOrder),
     menuLabels: normalizeMenuLabels(state.menuLabels),
     menuSettingsUpdatedAt: state.menuSettingsUpdatedAt || new Date().toISOString()
+  };
+}
+
+function buildRolePermissionsPayload() {
+  return {
+    permissions: normalizeRolePermissions(state.rolePermissions),
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentActorName()
+  };
+}
+
+function buildInterviewCasesPayload() {
+  return {
+    cases: state.interviewCases.map(normalizeInterviewCase),
+    selectedInterviewCaseId: state.selectedInterviewCaseId || "",
+    selectedInterviewStage: state.selectedInterviewStage || "phone",
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentActorName()
+  };
+}
+
+function buildRecruitingMetricsPayload() {
+  return {
+    metrics: normalizeRecruitingMetricsState(state.recruitingMetrics),
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentActorName()
   };
 }
 
@@ -3146,10 +3226,55 @@ async function syncScreeningDeletedFoldersToSupabase() {
   return true;
 }
 
+async function syncRolePermissionsToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(ROLE_PERMISSIONS_SETTING_KEY, buildRolePermissionsPayload())])
+  });
+
+  return true;
+}
+
+async function syncInterviewCasesToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(INTERVIEW_CASES_SETTING_KEY, buildInterviewCasesPayload())])
+  });
+
+  return true;
+}
+
+async function syncRecruitingMetricsToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(RECRUITING_METRICS_SETTING_KEY, buildRecruitingMetricsPayload())])
+  });
+
+  return true;
+}
+
 function applyAppSettingsFromSupabaseRows(rows = []) {
   const settings = Array.isArray(rows) ? rows : [];
   const menuOrderSetting = settings.find((row) => row.setting_key === MENU_SETTING_KEY);
   const deletedFoldersSetting = settings.find((row) => row.setting_key === SCREENING_DELETED_FOLDERS_SETTING_KEY);
+  const rolePermissionsSetting = settings.find((row) => row.setting_key === ROLE_PERMISSIONS_SETTING_KEY);
+  const interviewCasesSetting = settings.find((row) => row.setting_key === INTERVIEW_CASES_SETTING_KEY);
+  const recruitingMetricsSetting = settings.find((row) => row.setting_key === RECRUITING_METRICS_SETTING_KEY);
 
   if (deletedFoldersSetting?.payload) {
     const remoteDeletedIds = normalizeIdList(
@@ -3163,6 +3288,34 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
       state.screeningDeletedFolderIds = normalizeIdList([...(state.screeningDeletedFolderIds || []), ...remoteDeletedIds]);
       state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
     }
+  }
+
+  if (rolePermissionsSetting?.payload?.permissions) {
+    state.rolePermissions = normalizeRolePermissions(rolePermissionsSetting.payload.permissions);
+  }
+
+  if (interviewCasesSetting?.payload) {
+    const cases = interviewCasesSetting.payload.cases || interviewCasesSetting.payload.interviewCases || [];
+
+    if (Array.isArray(cases)) {
+      state.interviewCases = mergeByLatest(state.interviewCases, cases, normalizeInterviewCase)
+        .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || String(b.id).localeCompare(String(a.id)));
+    }
+
+    const selectedCaseId = String(interviewCasesSetting.payload.selectedInterviewCaseId || "").trim();
+    const selectedStage = String(interviewCasesSetting.payload.selectedInterviewStage || "").trim();
+
+    if (selectedCaseId && state.interviewCases.some((item) => item.id === selectedCaseId)) {
+      state.selectedInterviewCaseId = selectedCaseId;
+    }
+
+    if (INTERVIEW_STAGE_IDS.includes(selectedStage)) {
+      state.selectedInterviewStage = selectedStage;
+    }
+  }
+
+  if (recruitingMetricsSetting?.payload?.metrics) {
+    state.recruitingMetrics = normalizeRecruitingMetricsState(recruitingMetricsSetting.payload.metrics);
   }
 
   if (!menuOrderSetting) {
@@ -3283,6 +3436,9 @@ async function syncStateToSupabase() {
     try {
       await syncMenuSettingsToSupabase();
       await syncScreeningDeletedFoldersToSupabase();
+      await syncRolePermissionsToSupabase();
+      await syncInterviewCasesToSupabase();
+      await syncRecruitingMetricsToSupabase();
     } catch (error) {
       console.warn("App settings could not be synced.", error);
     }
@@ -3304,6 +3460,13 @@ async function loadStateFromSupabase() {
   try {
     remoteSyncReady = false;
     state.remoteSyncStatus = "Supabase 불러오는 중";
+    const settingKeys = [
+      MENU_SETTING_KEY,
+      SCREENING_DELETED_FOLDERS_SETTING_KEY,
+      ROLE_PERMISSIONS_SETTING_KEY,
+      INTERVIEW_CASES_SETTING_KEY,
+      RECRUITING_METRICS_SETTING_KEY
+    ].join(",");
     const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows] = await Promise.all([
       supabaseRequest("candidates?select=*&order=updated_at.desc"),
       supabaseRequest("screening_folders?select=*&order=updated_at.desc").catch((error) => {
@@ -3317,11 +3480,12 @@ async function loadStateFromSupabase() {
         console.warn("Policy sources could not be loaded.", error);
         return [];
       }),
-      supabaseRequest("app_settings?select=*&setting_key=in.(menu_order,screening_deleted_folder_ids)").catch((error) => {
+      supabaseRequest(`app_settings?select=*&setting_key=in.(${settingKeys})`).catch((error) => {
         console.warn("App settings could not be loaded.", error);
         return [];
       })
     ]);
+    const hasRolePermissionsSetting = Array.isArray(appSettingRows) && appSettingRows.some((row) => row.setting_key === ROLE_PERMISSIONS_SETTING_KEY);
 
     if (Array.isArray(appSettingRows) && appSettingRows.length) {
       applyAppSettingsFromSupabaseRows(appSettingRows);
@@ -3353,7 +3517,7 @@ async function loadStateFromSupabase() {
       );
     }
 
-    if (Array.isArray(permissionRows) && permissionRows.length) {
+    if (!hasRolePermissionsSetting && Array.isArray(permissionRows) && permissionRows.length) {
       state.rolePermissions = rolePermissionsFromSupabaseRows(permissionRows);
     }
 
@@ -3368,6 +3532,13 @@ async function loadStateFromSupabase() {
     ensurePolicySourceDefaults();
     state.remoteSyncStatus = "Supabase 연결됨";
     remoteSyncReady = true;
+    Promise.allSettled([
+      syncRolePermissionsToSupabase(),
+      syncInterviewCasesToSupabase(),
+      syncRecruitingMetricsToSupabase()
+    ]).catch((error) => {
+      console.warn("App settings warm sync failed.", error);
+    });
     persistState({ skipRemoteSync: true });
     render();
   } catch (error) {
@@ -7011,6 +7182,9 @@ function mutateInterviewCase(interviewCaseId, updater, options = {}) {
 
   if (options.persist !== false) {
     persistState();
+    syncInterviewCasesToSupabase().catch((error) => {
+      console.warn("Interview cases remote save failed.", error);
+    });
   }
 
   return saved;
@@ -18591,6 +18765,7 @@ async function saveCurrentMemberProfile(form) {
   );
   state.memberProfileModalOpen = false;
   persistState();
+  queueMemberRemoteSave(member);
   render();
   showToast("내 정보를 저장했습니다.");
 }
@@ -18623,6 +18798,7 @@ async function handleLoginSubmit(form) {
   await mergeCurrentUserJobFitAnalysesFromSupabase();
   addAuditLog("로그인", member.name, "시스템 접속", member.name);
   persistState();
+  queueMemberRemoteSave(member);
   render();
   showToast(`${member.name}님, 로그인되었습니다.`);
 }
@@ -18673,6 +18849,7 @@ async function handleSignupSubmit(form) {
   });
 
   state.members.unshift(member);
+  queueMemberRemoteSave(member);
   state.authView = "login";
   state.authMessage = "가입 신청이 접수되었습니다. 관리자가 승인하면 로그인할 수 있습니다.";
   addAuditLog("회원가입 신청", member.name, `${getRoleLabel(member.role)} 권한 요청`, "가입 신청자");
@@ -18787,6 +18964,7 @@ async function createMemberAccountFromForm(form) {
   state.memberFilters.role = "all";
   state.memberFilters.status = "all";
   state.memberFilters.query = "";
+  queueMemberRemoteSave(member);
   addAuditLog("회원 계정 생성", member.name, `${getRoleLabel(member.role)} 계정 생성`, getCurrentActorName());
   persistState();
   showToast(`${member.name} 계정을 생성했습니다.`);
@@ -18894,6 +19072,7 @@ function approveMember(memberId) {
   member.status = "active";
   member.approvedAt = getTodayDate();
   member.approvedBy = getCurrentActorName();
+  queueMemberRemoteSave(member);
   addAuditLog("회원 승인", member.name, `${getRoleLabel(member.role)} 등급 활성화`);
   persistState();
   render();
@@ -18908,6 +19087,7 @@ function rejectMember(memberId) {
   }
 
   member.status = "rejected";
+  queueMemberRemoteSave(member);
   addAuditLog("회원 반려", member.name, "가입 신청 반려");
   persistState();
   render();
@@ -18922,6 +19102,7 @@ function suspendMember(memberId) {
   }
 
   member.status = "suspended";
+  queueMemberRemoteSave(member);
   addAuditLog("회원 정지", member.name, "시스템 접속 차단");
   persistState();
   render();
@@ -18938,6 +19119,7 @@ function activateMember(memberId) {
   member.status = "active";
   member.approvedAt = member.approvedAt || getTodayDate();
   member.approvedBy = member.approvedBy || getCurrentActorName();
+  queueMemberRemoteSave(member);
   addAuditLog("회원 재활성", member.name, "시스템 접속 재허용");
   persistState();
   render();
@@ -18953,6 +19135,7 @@ async function resetMemberPassword(memberId) {
 
   member.password = "";
   member.passwordHash = await hashPassword(member.email, TEMP_PASSWORD);
+  queueMemberRemoteSave(member);
   addAuditLog("회원 비밀번호 초기화", member.name, "임시 비밀번호 발급");
   persistState();
   renderMembers();
@@ -19004,6 +19187,7 @@ function updateMemberRole(memberId, role) {
   }
 
   member.role = role;
+  queueMemberRemoteSave(member);
   addAuditLog("회원 등급 변경", member.name, getRoleLabel(role));
   persistState();
   render();
@@ -19018,6 +19202,7 @@ function updateMemberBusinessUnit(memberId, businessUnit) {
   }
 
   member.businessUnit = normalizeBusinessUnit(businessUnit);
+  queueMemberRemoteSave(member);
   addAuditLog("회원 사업부 변경", member.name, member.businessUnit || "미지정");
   persistState();
   showToast(`${member.name} 회원의 사업부를 ${member.businessUnit || "미지정"}으로 변경했습니다.`);
@@ -19041,6 +19226,9 @@ function updateRolePermission(role, view, enabled) {
   state.rolePermissions[role] = MENU_CONFIG
     .map((item) => item.view)
     .filter((menuView) => permissions.has(menuView));
+  syncRolePermissionsToSupabase().catch((error) => {
+    console.warn("Role permissions remote save failed.", error);
+  });
 
   addAuditLog("등급 메뉴 권한 변경", getRoleLabel(role), `${getMenuLabel(view)} ${enabled ? "허용" : "차단"}`);
   persistState();

@@ -65,7 +65,7 @@ create index if not exists app_members_business_unit_idx on public.app_members (
 
 create table if not exists public.app_role_permissions (
   role text not null check (role in ('applicant', 'general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
-  view text not null check (view in ('dashboard', 'pool', 'screening', 'interview', 'register', 'ai-search', 'job-fit', 'policy-chat', 'trending', 'audit', 'members')),
+  view text not null check (view in ('dashboard', 'pool', 'screening', 'interview', 'interview-report', 'recruiting-metrics', 'register', 'ai-search', 'job-fit', 'jd-enhance', 'policy-chat', 'trending', 'audit', 'members')),
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   primary key (role, view)
@@ -398,26 +398,35 @@ values
   ('hiring_manager', 'pool', true),
   ('hiring_manager', 'screening', true),
   ('hiring_manager', 'interview', true),
+  ('hiring_manager', 'interview-report', true),
   ('hiring_manager', 'ai-search', true),
   ('hiring_manager', 'job-fit', true),
+  ('hiring_manager', 'jd-enhance', true),
   ('hiring_manager', 'policy-chat', true),
   ('hiring_manager', 'trending', true),
   ('business_recruiter', 'dashboard', true),
   ('business_recruiter', 'pool', true),
   ('business_recruiter', 'screening', true),
   ('business_recruiter', 'interview', true),
+  ('business_recruiter', 'interview-report', true),
+  ('business_recruiter', 'recruiting-metrics', true),
   ('business_recruiter', 'register', true),
   ('business_recruiter', 'ai-search', true),
   ('business_recruiter', 'job-fit', true),
+  ('business_recruiter', 'jd-enhance', true),
   ('business_recruiter', 'policy-chat', true),
   ('business_recruiter', 'trending', true),
+  ('business_recruiter', 'members', true),
   ('division_recruiter', 'dashboard', true),
   ('division_recruiter', 'pool', true),
   ('division_recruiter', 'screening', true),
   ('division_recruiter', 'interview', true),
+  ('division_recruiter', 'interview-report', true),
+  ('division_recruiter', 'recruiting-metrics', true),
   ('division_recruiter', 'register', true),
   ('division_recruiter', 'ai-search', true),
   ('division_recruiter', 'job-fit', true),
+  ('division_recruiter', 'jd-enhance', true),
   ('division_recruiter', 'policy-chat', true),
   ('division_recruiter', 'trending', true),
   ('division_recruiter', 'audit', true),
@@ -425,9 +434,12 @@ values
   ('admin', 'pool', true),
   ('admin', 'screening', true),
   ('admin', 'interview', true),
+  ('admin', 'interview-report', true),
+  ('admin', 'recruiting-metrics', true),
   ('admin', 'register', true),
   ('admin', 'ai-search', true),
   ('admin', 'job-fit', true),
+  ('admin', 'jd-enhance', true),
   ('admin', 'policy-chat', true),
   ('admin', 'trending', true),
   ('admin', 'audit', true),
@@ -482,9 +494,40 @@ on conflict (id) do nothing;
 insert into public.app_settings (setting_key, payload, updated_at)
 values (
   'menu_order',
-  '{"menuOrder":["dashboard","pool","screening","interview","ai-search","job-fit","jd-enhance","policy-chat","trending","members"],"menuLabels":{},"menuSettingsUpdatedAt":""}'::jsonb,
+  '{"menuOrder":["dashboard","pool","screening","interview","interview-report","recruiting-metrics","ai-search","job-fit","jd-enhance","policy-chat","trending","members"],"menuLabels":{},"menuSettingsUpdatedAt":""}'::jsonb,
   now()
 )
+on conflict (setting_key) do nothing;
+
+insert into public.app_settings (setting_key, payload, updated_at)
+values
+  (
+    'role_permissions',
+    '{
+      "permissions": {
+        "applicant": ["screening","interview"],
+        "general": ["dashboard","pool","policy-chat","trending"],
+        "search_firm": ["dashboard","pool","screening","ai-search","policy-chat"],
+        "hiring_manager": ["dashboard","pool","screening","interview","interview-report","ai-search","job-fit","jd-enhance","policy-chat","trending"],
+        "business_recruiter": ["dashboard","pool","screening","interview","interview-report","recruiting-metrics","ai-search","job-fit","jd-enhance","policy-chat","trending","members"],
+        "division_recruiter": ["dashboard","pool","screening","interview","interview-report","recruiting-metrics","ai-search","job-fit","jd-enhance","policy-chat","trending","members"],
+        "admin": ["dashboard","pool","screening","interview","interview-report","recruiting-metrics","ai-search","job-fit","jd-enhance","policy-chat","trending","members"]
+      },
+      "updatedAt": "",
+      "updatedBy": "schema"
+    }'::jsonb,
+    now()
+  ),
+  (
+    'interview_cases',
+    '{"cases":[],"selectedInterviewCaseId":"","selectedInterviewStage":"phone","updatedAt":"","updatedBy":"schema"}'::jsonb,
+    now()
+  ),
+  (
+    'recruiting_metrics',
+    '{"metrics":{},"updatedAt":"","updatedBy":"schema"}'::jsonb,
+    now()
+  )
 on conflict (setting_key) do nothing;
 
 insert into public.app_members (
