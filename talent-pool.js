@@ -23,6 +23,8 @@ const MENU_CONFIG = [
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
   { view: "interview", label: "Interview", description: "면접 일정 조율, 제출자료, 결과 관리" },
+  { view: "interview-report", label: "면담록 생성", description: "면담 스크립트 기반 보고서 생성" },
+  { view: "recruiting-metrics", label: "채용 지표", description: "사업부별 채용 실적 취합과 보고" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
   { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
   { view: "jd-enhance", label: "JD 고도화", description: "작성 가이드라인 기반 JD 점검과 문구 개선" },
@@ -69,9 +71,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
   applicant: ["screening", "interview"],
   general: ["dashboard", "pool", "policy-chat", "trending"],
   search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
-  hiring_manager: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "interview", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
+  hiring_manager: ["dashboard", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
+  division_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -110,6 +112,14 @@ const DEFAULT_JD_GUIDELINE = [
 ].join("\n");
 const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
+const DEFAULT_RECRUITING_METRICS_TARGETS = Object.fromEntries(BUSINESS_UNITS.map((unit) => [unit, {
+  hiringTarget: 0,
+  keyTalentTarget: 0,
+  weeklyNote: "",
+  completed: false,
+  completedAt: "",
+  completedBy: ""
+}]));
 const SCREENING_JOB_CATEGORIES = [
   "연구개발",
   "SW연구개발",
@@ -669,6 +679,24 @@ const state = {
     analysisStatus: "",
     hasAnalyzed: false
   },
+  interviewReport: {
+    scriptText: "",
+    scriptFileName: "",
+    templateText: "",
+    templateFileName: "",
+    prompt: "",
+    reportText: "",
+    status: ""
+  },
+  recruitingMetrics: {
+    weekOf: getTodayDate(),
+    targets: structuredClone(DEFAULT_RECRUITING_METRICS_TARGETS),
+    recipients: [],
+    subject: "[TalentHub] 주간 채용 지표 취합",
+    mailStatus: "",
+    autoSendOnComplete: false,
+    lastAutoSentWeek: ""
+  },
   jdEnhancement: {
     guidelineText: DEFAULT_JD_GUIDELINE,
     jdText: "",
@@ -724,6 +752,8 @@ const viewTitles = {
   pool: "Talent Pool",
   screening: "Screening",
   interview: "Interview",
+  "interview-report": "면담록 생성",
+  "recruiting-metrics": "채용 지표",
   register: "Add Talent",
   "ai-search": "AI Search",
   "job-fit": "직무적합도 분석",
@@ -1506,6 +1536,10 @@ function normalizeInterviewCase(interviewCase = {}) {
     status,
     stages,
     finalDecision: String(interviewCase.finalDecision || "").trim(),
+    offerSignedAt: String(interviewCase.offerSignedAt || interviewCase.offer_signed_at || "").trim(),
+    offerSignedBy: String(interviewCase.offerSignedBy || interviewCase.offer_signed_by || "").trim(),
+    joinedAt: String(interviewCase.joinedAt || interviewCase.joined_at || "").trim(),
+    joinedBy: String(interviewCase.joinedBy || interviewCase.joined_by || "").trim(),
     createdAt: interviewCase.createdAt || getTodayDate(),
     updatedAt: interviewCase.updatedAt || interviewCase.createdAt || getTodayDate()
   };
@@ -1536,6 +1570,44 @@ function normalizePolicySource(source = {}) {
     createdAt,
     updatedAt: source.updatedAt || source.updated_at || createdAt,
     createdBy: String(source.createdBy || source.created_by || "").trim()
+  };
+}
+
+function normalizeInterviewReportState(value = {}) {
+  return {
+    scriptText: String(value.scriptText || "").trim(),
+    scriptFileName: String(value.scriptFileName || "").trim(),
+    templateText: String(value.templateText || "").trim(),
+    templateFileName: String(value.templateFileName || "").trim(),
+    prompt: String(value.prompt || "").trim(),
+    reportText: String(value.reportText || "").trim(),
+    status: String(value.status || "").trim()
+  };
+}
+
+function normalizeRecruitingMetricsState(value = {}) {
+  const sourceTargets = value.targets && typeof value.targets === "object" ? value.targets : {};
+  const targets = Object.fromEntries(BUSINESS_UNITS.map((unit) => {
+    const target = sourceTargets[unit] || {};
+
+    return [unit, {
+      hiringTarget: Number(target.hiringTarget || 0) || 0,
+      keyTalentTarget: Number(target.keyTalentTarget || 0) || 0,
+      weeklyNote: String(target.weeklyNote || "").trim(),
+      completed: Boolean(target.completed),
+      completedAt: String(target.completedAt || "").trim(),
+      completedBy: String(target.completedBy || "").trim()
+    }];
+  }));
+
+  return {
+    weekOf: String(value.weekOf || getTodayDate()).trim(),
+    targets,
+    recipients: normalizeEmailList(value.recipients || []),
+    subject: String(value.subject || "[TalentHub] 주간 채용 지표 취합").trim(),
+    mailStatus: String(value.mailStatus || "").trim(),
+    autoSendOnComplete: Boolean(value.autoSendOnComplete),
+    lastAutoSentWeek: String(value.lastAutoSentWeek || "").trim()
   };
 }
 
@@ -2324,6 +2396,8 @@ function persistState(options = {}) {
         managementTab: state.managementTab,
         currentUserId: state.currentUserId,
         jobFitAnalysis: state.jobFitAnalysis,
+        interviewReport: state.interviewReport,
+        recruitingMetrics: state.recruitingMetrics,
         jdEnhancement: state.jdEnhancement,
         trendingReport: state.trendingReport,
         trendingHistory: state.trendingHistory,
@@ -2455,6 +2529,14 @@ function restorePersistedState() {
     if (persisted.jobFitAnalysis.analysisLoading || persisted.jobFitAnalysis.loading) {
       state.jobFitAnalysis.analysisStatus = "이전 분석이 완료되지 않아 대기 상태로 복구했습니다. 평가 분석 시작 버튼을 다시 눌러 주세요.";
     }
+  }
+
+  if (persisted.interviewReport && typeof persisted.interviewReport === "object") {
+    state.interviewReport = normalizeInterviewReportState(persisted.interviewReport);
+  }
+
+  if (persisted.recruitingMetrics && typeof persisted.recruitingMetrics === "object") {
+    state.recruitingMetrics = normalizeRecruitingMetricsState(persisted.recruitingMetrics);
   }
 
   if (persisted.jdEnhancement && typeof persisted.jdEnhancement === "object") {
@@ -4355,6 +4437,8 @@ function render() {
   renderPool();
   renderScreening();
   renderInterviewView();
+  renderInterviewReport();
+  renderRecruitingMetrics();
   renderRegister();
   renderAiSearch();
   renderJobFitAnalysis();
@@ -7166,12 +7250,27 @@ function renderInterviewFinalPanel(interviewCase) {
       ? "인터뷰 프로세스가 불합격으로 종료되었습니다."
       : "HR면접 종료 후 최종 면접 합격 여부를 확정할 수 있습니다.";
 
+  const offerActions = interviewCase.status === "passed"
+    ? `
+      <div class="interview-offer-actions">
+        <button class="soft-button compact-button" type="button" data-mark-offer-signed="${escapeHtml(interviewCase.id)}">
+          ${interviewCase.offerSignedAt ? "오퍼서명 완료됨" : "오퍼서명(확보) 완료"}
+        </button>
+        <button class="ghost-button compact-button" type="button" data-mark-joined="${escapeHtml(interviewCase.id)}" ${interviewCase.offerSignedAt ? "" : "disabled"}>
+          ${interviewCase.joinedAt ? "입사 완료됨" : "입사 완료"}
+        </button>
+        ${interviewCase.offerSignedAt ? `<span>${escapeHtml(interviewCase.offerSignedAt)} · ${escapeHtml(interviewCase.offerSignedBy || "-")}</span>` : ""}
+      </div>
+    `
+    : "";
+
   return `
     <section class="profile-panel interview-final-panel">
       <div>
         <strong>최종 결과</strong>
         <span>${escapeHtml(statusText)}</span>
       </div>
+      ${offerActions}
       <div class="member-actions">
         <button class="primary-button compact-button" type="button" data-finalize-interview-case="passed" data-interview-case-id="${escapeHtml(interviewCase.id)}">면접 합격 확정</button>
         <button class="ghost-button danger-button compact-button" type="button" data-finalize-interview-case="failed" data-interview-case-id="${escapeHtml(interviewCase.id)}">면접 불합격 확정</button>
@@ -7243,6 +7342,527 @@ function renderInterviewView() {
       ${renderInterviewDetail(selectedCase)}
     </div>
   `;
+}
+
+function getInterviewReportState() {
+  state.interviewReport = normalizeInterviewReportState(state.interviewReport);
+  return state.interviewReport;
+}
+
+function summarizeInterviewScriptText(text) {
+  const normalized = normalizePolicyText(text);
+  const sentences = normalized
+    .split(/(?<=[.!?。！？])\s+|\n+/)
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+  const topSentences = sentences.slice(0, 6);
+  const longLines = sentences.filter((line) => line.length >= 24).slice(0, 4);
+
+  return {
+    summary: (topSentences.length ? topSentences : [normalized]).slice(0, 4),
+    keyPoints: (longLines.length ? longLines : topSentences).slice(0, 4),
+    followUps: sentences
+      .filter((line) => /확인|검토|리스크|보완|우려|추가|질문|필요|희망|조건/.test(line))
+      .slice(0, 4)
+  };
+}
+
+function buildInterviewReportText() {
+  const report = getInterviewReportState();
+  const summary = summarizeInterviewScriptText(report.scriptText);
+  const templateNote = report.templateText
+    ? "참고 양식의 구성과 톤을 반영하여 면담 핵심 내용, 판단 근거, 후속 확인 사항 순으로 정리했습니다."
+    : "일반 면담록 양식 기준으로 면담 핵심 내용, 판단 근거, 후속 확인 사항 순으로 정리했습니다.";
+  const promptNote = report.prompt
+    ? `작성 지시사항: ${report.prompt}`
+    : "작성 지시사항: C-level 및 채용 의사결정자가 빠르게 검토할 수 있는 보고서 형태";
+
+  return [
+    "면담록 보고서",
+    "",
+    `작성 기준: ${templateNote}`,
+    promptNote,
+    "",
+    "1. 면담 요약",
+    ...(summary.summary.length ? summary.summary : ["면담 스크립트 내 핵심 내용을 확인할 수 없습니다."]).map((line) => `- ${line}`),
+    "",
+    "2. 핵심 확인 사항",
+    ...(summary.keyPoints.length ? summary.keyPoints : ["추가 확인 사항 없음"]).map((line) => `- ${line}`),
+    "",
+    "3. 후속 검토 필요 사항",
+    ...(summary.followUps.length ? summary.followUps : ["면담 내용상 즉시 확인이 필요한 특이 리스크는 제한적입니다."]).map((line) => `- ${line}`),
+    "",
+    "4. 종합 의견",
+    "면담 내용은 후보자의 경험, 관심사, 조건, 리스크를 중심으로 검토 가능한 형태로 정리되었습니다. 최종 판단 전에는 이력서, 직무 요건, 면접 평가 결과와 함께 교차 확인하는 것이 적절합니다."
+  ].join("\n");
+}
+
+function renderInterviewReport() {
+  const container = $("#interview-report-content");
+
+  if (!container) {
+    return;
+  }
+
+  const report = getInterviewReportState();
+
+  container.innerHTML = `
+    <div class="report-workspace">
+      <section class="content-panel report-input-panel">
+        <div class="panel-header">
+          <div>
+            <h4>면담 스크립트</h4>
+            <span>텍스트 입력 또는 파일 업로드로 면담 원문을 등록합니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-reset-interview-report>초기화</button>
+        </div>
+        <div class="interview-report-grid">
+          <label class="dropzone report-upload-box" for="interview-report-script-file">
+            <input id="interview-report-script-file" type="file" accept=".txt,.pdf,.doc,.docx,.hwp,.hwpx" />
+            <strong>스크립트 파일 업로드</strong>
+            <span>${escapeHtml(report.scriptFileName || "파일을 선택하거나 드래그앤드랍")}</span>
+          </label>
+          <label class="dropzone report-upload-box" for="interview-report-template-file">
+            <input id="interview-report-template-file" type="file" accept=".txt,.pdf,.doc,.docx,.hwp,.hwpx" />
+            <strong>참고 양식 업로드</strong>
+            <span>${escapeHtml(report.templateFileName || "선택 사항")}</span>
+          </label>
+        </div>
+        <label class="field">
+          <span>스크립트 원문</span>
+          <textarea id="interview-report-script" class="control-textarea" rows="8" placeholder="면담록 스크립트를 입력하세요.">${escapeHtml(report.scriptText)}</textarea>
+        </label>
+        <label class="field">
+          <span>보고서 작성 프롬프트</span>
+          <textarea id="interview-report-prompt" class="control-textarea compact-textarea" rows="3" placeholder="예: 임원 보고용으로 리스크와 활용 가능성을 중심으로 정리">${escapeHtml(report.prompt)}</textarea>
+        </label>
+        <label class="field">
+          <span>참고 양식 내용</span>
+          <textarea id="interview-report-template" class="control-textarea compact-textarea" rows="4" placeholder="참고 양식 파일을 업로드하거나 양식 기준을 직접 입력">${escapeHtml(report.templateText)}</textarea>
+        </label>
+        <div class="member-actions">
+          <button class="primary-button" type="button" data-generate-interview-report ${report.scriptText ? "" : "disabled"}>면담록 보고서 생성</button>
+          <button class="ghost-button" type="button" data-download-interview-report ${report.reportText ? "" : "disabled"}>Word 다운로드</button>
+        </div>
+        ${report.status ? `<p class="job-fit-inline-status">${escapeHtml(report.status)}</p>` : ""}
+      </section>
+      <section class="content-panel generated-report-panel">
+        <div class="panel-header">
+          <div>
+            <h4>생성된 면담록 보고서</h4>
+            <span>필요 시 문구를 직접 다듬은 후 다운로드할 수 있습니다.</span>
+          </div>
+        </div>
+        <textarea id="interview-report-output" class="control-textarea report-output-textarea" rows="22" placeholder="면담록 보고서 생성 결과가 여기에 표시됩니다.">${escapeHtml(report.reportText)}</textarea>
+      </section>
+    </div>
+  `;
+}
+
+async function loadInterviewReportFile(file, field) {
+  if (!file) {
+    return;
+  }
+
+  const report = getInterviewReportState();
+  report.status = `${file.name} 파일을 읽는 중입니다.`;
+  renderInterviewReport();
+
+  try {
+    const result = await readResumeText(file);
+    report[field === "script" ? "scriptText" : "templateText"] = result.text || "";
+    report[field === "script" ? "scriptFileName" : "templateFileName"] = file.name;
+    report.status = `${file.name} 파일을 불러왔습니다.`;
+    persistState();
+  } catch (error) {
+    console.warn(error);
+    report.status = "파일을 읽는 중 오류가 발생했습니다.";
+  }
+
+  renderInterviewReport();
+}
+
+function updateInterviewReportField(field, value) {
+  const report = getInterviewReportState();
+  report[field] = String(value || "");
+  persistState({ skipRemoteSync: true });
+}
+
+function generateInterviewReport() {
+  const report = getInterviewReportState();
+
+  if (!report.scriptText.trim()) {
+    showToast("면담 스크립트를 먼저 입력해 주세요.");
+    return;
+  }
+
+  report.reportText = buildInterviewReportText();
+  report.status = "면담록 보고서를 생성했습니다.";
+  persistState();
+  addAuditLog("면담록 보고서 생성", "면담록 생성", "스크립트 기반 보고서 생성");
+  renderInterviewReport();
+}
+
+function buildInterviewReportWordHtml() {
+  const report = getInterviewReportState();
+  const generatedAt = getTimestampText();
+  const paragraphs = normalizePolicyText(report.reportText)
+    .split("\n")
+    .map((line) => line.trim())
+    .map((line) => {
+      if (!line) {
+        return "<br>";
+      }
+
+      if (/^\d+\./.test(line)) {
+        return `<h2>${escapeHtml(line)}</h2>`;
+      }
+
+      if (line === "면담록 보고서") {
+        return `<h1>${escapeHtml(line)}</h1>`;
+      }
+
+      return `<p>${escapeHtml(line)}</p>`;
+    })
+    .join("");
+
+  return [
+    "<!doctype html><html><head><meta charset=\"utf-8\"><style>",
+    "@page { size: A4; margin: 18mm 18mm; }",
+    "body { font-family:'Malgun Gothic',Arial,sans-serif; color:#111827; font-size:10.5pt; line-height:1.6; }",
+    "h1 { font-size:20pt; margin:0 0 12px; border-bottom:2px solid #111827; padding-bottom:10px; }",
+    "h2 { font-size:13pt; margin:18px 0 8px; color:#111827; }",
+    "p { margin:0 0 6px; }",
+    ".meta { color:#6b7280; font-size:9pt; margin-bottom:16px; }",
+    "</style></head><body>",
+    `<div class=\"meta\">생성 시각 ${escapeHtml(generatedAt)} KST</div>`,
+    paragraphs,
+    "</body></html>"
+  ].join("");
+}
+
+function downloadInterviewReportDocument() {
+  const report = getInterviewReportState();
+
+  if (!report.reportText.trim()) {
+    showToast("다운로드할 면담록 보고서가 없습니다.");
+    return;
+  }
+
+  const blob = new Blob([buildInterviewReportWordHtml()], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `면담록_보고서_${getTodayDate()}.doc`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  addAuditLog("면담록 보고서 다운로드", "면담록 생성", "Word 문서 다운로드");
+}
+
+function resetInterviewReport() {
+  state.interviewReport = normalizeInterviewReportState();
+  persistState();
+  renderInterviewReport();
+}
+
+function getRecruitingMetricsState() {
+  state.recruitingMetrics = normalizeRecruitingMetricsState(state.recruitingMetrics);
+  return state.recruitingMetrics;
+}
+
+function canEditRecruitingMetricsUnit(unit) {
+  const member = getCurrentMember();
+
+  if (isAdmin(member) || member?.role === "division_recruiter") {
+    return true;
+  }
+
+  return member?.role === "business_recruiter" && normalizeBusinessUnit(member.department) === unit;
+}
+
+function getRecruitingMetricInterviewCases(unit) {
+  return state.interviewCases
+    .map(normalizeInterviewCase)
+    .filter((interviewCase) => normalizeBusinessUnit(interviewCase.businessUnit) === unit);
+}
+
+function getRecruitingMetricsRows() {
+  const metrics = getRecruitingMetricsState();
+
+  return BUSINESS_UNITS.map((unit) => {
+    const target = metrics.targets[unit] || {};
+    const cases = getRecruitingMetricInterviewCases(unit);
+    const offerSigned = cases.filter((item) => item.offerSignedAt).length;
+    const joined = cases.filter((item) => item.joinedAt).length;
+    const hiringTarget = Number(target.hiringTarget || 0) || 0;
+    const ratio = hiringTarget ? Math.round((offerSigned / hiringTarget) * 1000) / 10 : 0;
+
+    return {
+      unit,
+      hiringTarget,
+      keyTalentTarget: Number(target.keyTalentTarget || 0) || 0,
+      offerSigned,
+      joined,
+      ratio,
+      weeklyNote: target.weeklyNote || "",
+      completed: Boolean(target.completed),
+      completedAt: target.completedAt || "",
+      completedBy: target.completedBy || ""
+    };
+  });
+}
+
+function renderRecruitingMetrics() {
+  const container = $("#recruiting-metrics-content");
+
+  if (!container) {
+    return;
+  }
+
+  const metrics = getRecruitingMetricsState();
+  const rows = getRecruitingMetricsRows();
+  const recipientsText = metrics.recipients.join("\n");
+
+  container.innerHTML = `
+    <div class="metrics-workspace">
+      <section class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h4>주간 채용 지표 취합</h4>
+            <span>오퍼서명 완료 인원은 Interview 메뉴에서 자동 반영됩니다.</span>
+          </div>
+          <div class="job-fit-result-actions">
+            <button class="ghost-button compact-button" type="button" data-download-recruiting-metrics>엑셀 다운로드</button>
+            <button class="primary-button compact-button" type="button" data-send-recruiting-metrics>취합 메일 발송</button>
+          </div>
+        </div>
+        <div class="metrics-control-grid">
+          <label class="field">
+            <span>취합 기준 주</span>
+            <input id="recruiting-metrics-week" class="control-input" type="date" value="${inputValue(metrics.weekOf)}" />
+          </label>
+          <label class="field">
+            <span>메일 제목</span>
+            <input id="recruiting-metrics-subject" class="control-input" value="${inputValue(metrics.subject)}" />
+          </label>
+          <label class="field">
+            <span>부문 담당자 메일 수신처</span>
+            <textarea id="recruiting-metrics-recipients" class="control-textarea compact-textarea" rows="3" placeholder="여러 명은 줄바꿈 또는 쉼표로 입력">${escapeHtml(recipientsText)}</textarea>
+          </label>
+          <label class="compact-check metrics-auto-send-check">
+            <input id="recruiting-metrics-auto-send" type="checkbox" ${metrics.autoSendOnComplete ? "checked" : ""} />
+            <span>전체 취합 완료 시 자동 발송</span>
+          </label>
+        </div>
+        ${metrics.mailStatus ? `<p class="job-fit-inline-status">${escapeHtml(metrics.mailStatus)}</p>` : ""}
+        <div class="table-scroll metrics-table-wrap">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th>사업부</th>
+                <th>당해 채용 목표</th>
+                <th>핵심인력 목표</th>
+                <th>확보 수</th>
+                <th>입사 완료 수</th>
+                <th>달성률</th>
+                <th>작성 완료</th>
+                <th>비고</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => {
+                const editable = canEditRecruitingMetricsUnit(row.unit);
+
+                return `
+                  <tr>
+                    <th>${escapeHtml(row.unit)}</th>
+                    <td><input class="control-input compact-input" type="number" min="0" value="${inputValue(row.hiringTarget)}" data-recruiting-target-field="hiringTarget" data-recruiting-unit="${escapeHtml(row.unit)}" ${editable ? "" : "disabled"} /></td>
+                    <td><input class="control-input compact-input" type="number" min="0" value="${inputValue(row.keyTalentTarget)}" data-recruiting-target-field="keyTalentTarget" data-recruiting-unit="${escapeHtml(row.unit)}" ${editable ? "" : "disabled"} /></td>
+                    <td><strong>${escapeHtml(row.offerSigned)}</strong></td>
+                    <td><strong>${escapeHtml(row.joined)}</strong></td>
+                    <td><span class="status-chip chip-blue">${escapeHtml(row.ratio)}%</span></td>
+                    <td>
+                      <label class="compact-check">
+                        <input type="checkbox" data-recruiting-complete="${escapeHtml(row.unit)}" ${row.completed ? "checked" : ""} ${editable ? "" : "disabled"} />
+                        <span>${row.completed ? "완료" : "진행 중"}</span>
+                      </label>
+                      ${row.completedAt ? `<small>${escapeHtml(row.completedAt)} · ${escapeHtml(row.completedBy || "-")}</small>` : ""}
+                    </td>
+                    <td><textarea class="control-textarea compact-textarea metrics-note-input" rows="2" data-recruiting-target-field="weeklyNote" data-recruiting-unit="${escapeHtml(row.unit)}" ${editable ? "" : "disabled"}>${escapeHtml(row.weeklyNote)}</textarea></td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function updateRecruitingMetricsField(field, value) {
+  const metrics = getRecruitingMetricsState();
+
+  if (field === "recipients") {
+    metrics.recipients = normalizeEmailList(value);
+  } else {
+    metrics[field] = String(value || "").trim();
+  }
+
+  if (field === "weekOf") {
+    metrics.lastAutoSentWeek = "";
+  }
+
+  persistState({ skipRemoteSync: true });
+}
+
+function updateRecruitingTargetField(input) {
+  const metrics = getRecruitingMetricsState();
+  const unit = normalizeBusinessUnit(input.dataset.recruitingUnit);
+  const field = input.dataset.recruitingTargetField;
+
+  if (!unit || !metrics.targets[unit] || !canEditRecruitingMetricsUnit(unit)) {
+    return;
+  }
+
+  metrics.targets[unit][field] = field === "weeklyNote" ? input.value : Number(input.value || 0) || 0;
+  persistState({ skipRemoteSync: true });
+}
+
+function toggleRecruitingMetricsComplete(input) {
+  const metrics = getRecruitingMetricsState();
+  const unit = normalizeBusinessUnit(input.dataset.recruitingComplete);
+
+  if (!unit || !metrics.targets[unit] || !canEditRecruitingMetricsUnit(unit)) {
+    return;
+  }
+
+  metrics.targets[unit].completed = input.checked;
+  metrics.targets[unit].completedAt = input.checked ? getTimestampText() : "";
+  metrics.targets[unit].completedBy = input.checked ? getCurrentMember()?.name || "시스템" : "";
+  persistState();
+  renderRecruitingMetrics();
+  maybeAutoSendRecruitingMetrics();
+}
+
+function buildRecruitingMetricsExcelHtml() {
+  const rows = getRecruitingMetricsRows();
+  const metrics = getRecruitingMetricsState();
+
+  return [
+    "<html><head><meta charset=\"utf-8\"><style>",
+    "table{border-collapse:collapse;font-family:'Malgun Gothic',Arial,sans-serif;font-size:11pt}th,td{border:1px solid #d1d5db;padding:8px;text-align:left}th{background:#eef4ff;font-weight:700}.num{text-align:right}",
+    "</style></head><body>",
+    `<h2>주간 채용 지표 취합 (${escapeHtml(metrics.weekOf)})</h2>`,
+    "<table>",
+    "<thead><tr><th>사업부</th><th>당해 채용 목표</th><th>핵심인력 목표</th><th>확보 수</th><th>입사 완료 수</th><th>달성률</th><th>작성 완료</th><th>비고</th></tr></thead>",
+    "<tbody>",
+    rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.unit)}</td>
+        <td class="num">${escapeHtml(row.hiringTarget)}</td>
+        <td class="num">${escapeHtml(row.keyTalentTarget)}</td>
+        <td class="num">${escapeHtml(row.offerSigned)}</td>
+        <td class="num">${escapeHtml(row.joined)}</td>
+        <td class="num">${escapeHtml(row.ratio)}%</td>
+        <td>${row.completed ? "완료" : "진행 중"}</td>
+        <td>${escapeHtml(row.weeklyNote)}</td>
+      </tr>
+    `).join(""),
+    "</tbody></table></body></html>"
+  ].join("");
+}
+
+function downloadRecruitingMetricsExcel() {
+  const metrics = getRecruitingMetricsState();
+  const blob = new Blob([buildRecruitingMetricsExcelHtml()], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `채용지표_${metrics.weekOf || getTodayDate()}.xls`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  addAuditLog("채용 지표 엑셀 다운로드", "채용 지표", metrics.weekOf || getTodayDate());
+}
+
+async function sendRecruitingMetricsMail() {
+  const metrics = getRecruitingMetricsState();
+  metrics.mailStatus = "채용 지표 메일을 발송 중입니다.";
+  renderRecruitingMetrics();
+
+  try {
+    const recipients = normalizeEmailList(metrics.recipients);
+
+    if (!recipients.length) {
+      throw new Error("부문 담당자 메일 수신처를 입력해 주세요.");
+    }
+
+    const response = await fetch("/api/recruiting-metrics-mail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipients,
+        subject: metrics.subject || "[TalentHub] 주간 채용 지표 취합",
+        weekOf: metrics.weekOf,
+        html: buildRecruitingMetricsExcelHtml(),
+        rows: getRecruitingMetricsRows()
+      })
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "메일 발송에 실패했습니다.");
+    }
+
+    metrics.mailStatus = `채용 지표 메일을 발송했습니다. (${recipients.length}명)`;
+    metrics.lastAutoSentWeek = metrics.weekOf || getTodayDate();
+    addAuditLog("채용 지표 메일 발송", "채용 지표", recipients.join(", "));
+  } catch (error) {
+    console.warn(error);
+    metrics.mailStatus = error.message || "채용 지표 메일 발송 중 오류가 발생했습니다.";
+  }
+
+  persistState();
+  renderRecruitingMetrics();
+}
+
+function maybeAutoSendRecruitingMetrics() {
+  const metrics = getRecruitingMetricsState();
+
+  if (!metrics.autoSendOnComplete || metrics.lastAutoSentWeek === metrics.weekOf) {
+    return;
+  }
+
+  const rows = getRecruitingMetricsRows();
+  const allCompleted = rows.length > 0 && rows.every((row) => row.completed);
+
+  if (!allCompleted) {
+    return;
+  }
+
+  sendRecruitingMetricsMail();
+}
+
+function markInterviewOfferSigned(interviewCaseId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    interviewCase.offerSignedAt = getTimestampText();
+    interviewCase.offerSignedBy = getCurrentMember()?.name || "시스템";
+  });
+  showToast("오퍼서명(확보) 완료로 반영했습니다.");
+  render();
+}
+
+function markInterviewJoined(interviewCaseId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    interviewCase.joinedAt = getTimestampText();
+    interviewCase.joinedBy = getCurrentMember()?.name || "시스템";
+  });
+  showToast("입사 완료로 반영했습니다.");
+  render();
 }
 
 function renderRegister() {
@@ -11728,7 +12348,6 @@ function renderDetailHero(candidate) {
     formatDetailEducationLine(candidate)
   ].filter(Boolean);
   const linkedin = normalizeExternalUrl(candidate.linkedinUrl);
-  const attachment = candidate.resumeAttachment?.dataUrl;
   const birthAge = formatBirthAge(candidate);
 
   return `
@@ -11751,7 +12370,7 @@ function renderDetailHero(candidate) {
           <div class="detail-hero-side">
             <div class="detail-hero-actions">
               ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
-              ${attachment ? `<a class="icon-link-button" href="${escapeHtml(attachment)}" download="${escapeHtml(candidate.resumeAttachment.name || `${candidate.name}_resume`)}" title="첨부 파일 다운로드">⇩</a>` : ""}
+              <button class="icon-link-button" type="button" data-download-profile-report="${escapeHtml(candidate.id)}" title="프로필 보고서 생성 및 다운로드">DOC</button>
               ${canManageCandidateProfile(candidate) ? `<button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>` : ""}
             </div>
             ${renderDetailStatusControl(candidate)}
@@ -11765,6 +12384,179 @@ function renderDetailHero(candidate) {
       </div>
     </section>
   `;
+}
+
+function compactText(value, limit = 24) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const chars = Array.from(text);
+  return chars.length > limit ? `${chars.slice(0, limit).join("")}` : text;
+}
+
+function safeDownloadName(value, fallback = "document") {
+  return String(value || fallback)
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, "_")
+    .slice(0, 80) || fallback;
+}
+
+function collectProfileReportAchievementSources(candidate) {
+  const careerAchievements = (candidate.career || [])
+    .flatMap((item) => splitNonEmptyLines(item.achievements).map((line) => ({
+      title: compactText(line.replace(/^[-•\s]+/, ""), 20),
+      detail: `${[item.company, item.rank, item.position].filter(Boolean).join(", ")}: ${line}`
+    })));
+  const summaryAchievements = splitNonEmptyLines(candidate.summary)
+    .map((line) => ({
+      title: compactText(line.replace(/^[-•\s]+/, ""), 20),
+      detail: line
+    }));
+  const fallback = [
+    candidate.role ? {
+      title: compactText(`${candidate.role} 전문성`, 20),
+      detail: `${candidate.company || "최근 경력"}에서 ${candidate.role} 관련 전문성을 보유한 프로필입니다.`
+    } : null,
+    (candidate.skills || []).length ? {
+      title: compactText(`${candidate.skills.slice(0, 2).join(", ")} 역량`, 20),
+      detail: `${candidate.skills.slice(0, 6).join(", ")} 중심의 핵심 키워드가 확인됩니다.`
+    } : null
+  ].filter(Boolean);
+
+  return [...careerAchievements, ...summaryAchievements, ...fallback]
+    .filter((item) => item.title || item.detail)
+    .slice(0, 2);
+}
+
+function collectProfileReportReferenceNotes(candidate) {
+  const notes = [];
+  const primaryEducation = getPrimaryEducation(candidate);
+  const primaryCareer = getPrimaryCareer(candidate);
+
+  if (candidate.recommended) {
+    notes.push("채용담당자 추천 프로필");
+  }
+
+  if (primaryEducation?.school) {
+    notes.push(compactText(`${primaryEducation.school} 학력 보유`, 20));
+  }
+
+  if (primaryCareer?.company) {
+    notes.push(compactText(`${primaryCareer.company} 최근 경력`, 20));
+  }
+
+  if (candidate.linkedinUrl) {
+    notes.push("LinkedIn 검증 가능");
+  }
+
+  if ((candidate.tags || []).length) {
+    notes.push(compactText(candidate.tags.slice(0, 2).join(", "), 20));
+  }
+
+  return [...new Set(notes)].slice(0, 2);
+}
+
+function buildProfileReportHtml(candidate) {
+  const generatedAt = getTimestampText();
+  const educationLines = (candidate.education || []).map(formatEducationMainLine).filter(Boolean).slice(0, 3);
+  const careerLines = (candidate.career || []).map(formatCareerMainLine).filter(Boolean).slice(0, 4);
+  const achievements = [
+    ...collectProfileReportAchievementSources(candidate),
+    { title: "주요 성과 보완 필요", detail: "프로필 내 핵심 성과 정보가 제한적이어서 추가 확인이 필요합니다." },
+    { title: "전문성 검토 필요", detail: "학력, 경력, 키워드 정보를 기반으로 세부 전문성을 추가 검증해야 합니다." }
+  ].slice(0, 2);
+  const references = [
+    ...collectProfileReportReferenceNotes(candidate),
+    "추가 참고사항 확인 필요",
+    "수상/언론 이력 확인 필요"
+  ].slice(0, 2);
+  const keywords = [
+    candidate.role,
+    ...(candidate.skills || []),
+    ...(candidate.tags || [])
+  ].filter(Boolean).slice(0, 8);
+  const achievementItems = [
+    ...achievements,
+    { title: "주요 성과 보완 필요", detail: "프로필 내 핵심 성과 정보가 제한적이어서 추가 확인이 필요합니다." },
+    { title: "전문성 검토 필요", detail: "학력, 경력, 키워드 정보를 기반으로 세부 전문성을 추가 검증해야 합니다." }
+  ].slice(0, 2);
+  const referenceItems = [
+    ...references,
+    "추가 참고사항 확인 필요",
+    "수상/언론 이력 확인 필요"
+  ].slice(0, 2);
+
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head>",
+    "<meta charset=\"utf-8\" />",
+    `<title>${escapeHtml(candidate.name)} 프로필 보고서</title>`,
+    "<style>",
+    "@page { size: A4; margin: 15mm 15mm 14mm; }",
+    "body { font-family: 'Malgun Gothic', Arial, sans-serif; color: #111827; font-size: 10pt; line-height: 1.45; }",
+    "h1 { margin: 0; font-size: 20pt; }",
+    "h2 { margin: 14px 0 7px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; font-size: 12pt; }",
+    "p { margin: 0 0 6px; }",
+    ".top { display: flex; justify-content: space-between; gap: 18px; border-bottom: 2px solid #111827; padding-bottom: 10px; }",
+    ".meta { color: #6b7280; font-size: 8.5pt; }",
+    ".summary { display: grid; grid-template-columns: 74px 1fr; gap: 4px 10px; margin-top: 12px; }",
+    ".summary b { color: #374151; }",
+    ".section { margin-top: 12px; }",
+    ".achievement { margin: 0 0 9px; padding: 8px 10px; border-left: 4px solid #3182f6; background: #f8fafc; }",
+    ".achievement strong { display: block; margin-bottom: 3px; font-size: 10.5pt; }",
+    ".notes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }",
+    ".note { padding: 8px 10px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: 700; }",
+    ".keywords { margin-top: 8px; color: #374151; font-size: 9pt; }",
+    "ul { margin: 0; padding-left: 18px; }",
+    "li { margin: 0 0 3px; }",
+    "</style>",
+    "</head>",
+    "<body>",
+    "<div class=\"top\">",
+    `<div><p class=\"meta\">Executive Profile Report</p><h1>${escapeHtml(candidate.name)}</h1></div>`,
+    `<div class=\"meta\">생성시각 ${escapeHtml(generatedAt)}<br/>Pool 등록자 ${escapeHtml(candidate.owner || "-")}</div>`,
+    "</div>",
+    "<div class=\"summary\">",
+    `<b>이름</b><span>${escapeHtml([candidate.name, candidate.englishName].filter(Boolean).join(" / ") || "-")}</span>`,
+    `<b>출생/나이</b><span>${escapeHtml(formatBirthAge(candidate))}</span>`,
+    `<b>학력</b><span>${educationLines.length ? `<ul>${educationLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "-"}</span>`,
+    `<b>경력</b><span>${careerLines.length ? `<ul>${careerLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "-"}</span>`,
+    "</div>",
+    `<p class=\"keywords\"><b>핵심 키워드</b> ${escapeHtml(keywords.join(", ") || "-")}</p>`,
+    "<div class=\"section\">",
+    "<h2>핵심 성과/실적</h2>",
+    (achievements.length ? achievements : [{ title: "주요 성과 확인 필요", detail: "프로필 내 주요성과/실적 정보를 추가 확인해야 합니다." }])
+      .slice(0, 2)
+      .map((item) => `<div class=\"achievement\"><strong>${escapeHtml(item.title || "핵심 성과")}</strong><p>${escapeHtml(item.detail || "-")}</p></div>`)
+      .join(""),
+    "</div>",
+    "<div class=\"section\">",
+    "<h2>참고사항</h2>",
+    `<div class=\"notes\">${(references.length ? references : ["추가 참고사항 확인 필요", "수상/언론 이력 확인 필요"]).slice(0, 2).map((note) => `<div class=\"note\">${escapeHtml(compactText(note, 24))}</div>`).join("")}</div>`,
+    "</div>",
+    "</body>",
+    "</html>"
+  ].join("");
+}
+
+function downloadProfileReport(candidateId = state.selectedCandidateId) {
+  const candidate = findCandidate(candidateId);
+
+  if (!candidate) {
+    showToast("프로필 보고서를 생성할 후보자를 찾지 못했습니다.");
+    return;
+  }
+
+  const html = buildProfileReportHtml(candidate);
+  const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${safeDownloadName(candidate.name, "profile")}_프로필_보고서.doc`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  addAuditLog("프로필 보고서 다운로드", candidate.name, "C-level 보고용 Word 문서");
 }
 
 function formatDetailCareerLine(candidate) {
@@ -18878,6 +19670,18 @@ function bindEvents() {
       return;
     }
 
+    const markOfferSignedButton = event.target.closest("[data-mark-offer-signed]");
+    if (markOfferSignedButton) {
+      markInterviewOfferSigned(markOfferSignedButton.dataset.markOfferSigned);
+      return;
+    }
+
+    const markJoinedButton = event.target.closest("[data-mark-joined]");
+    if (markJoinedButton) {
+      markInterviewJoined(markJoinedButton.dataset.markJoined);
+      return;
+    }
+
     const sendInterviewOperationMailButton = event.target.closest("[data-send-interview-mail]");
     if (sendInterviewOperationMailButton) {
       sendInterviewOperationMail(
@@ -19004,6 +19808,31 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-generate-interview-report]")) {
+      generateInterviewReport();
+      return;
+    }
+
+    if (event.target.closest("[data-download-interview-report]")) {
+      downloadInterviewReportDocument();
+      return;
+    }
+
+    if (event.target.closest("[data-reset-interview-report]")) {
+      resetInterviewReport();
+      return;
+    }
+
+    if (event.target.closest("[data-download-recruiting-metrics]")) {
+      downloadRecruitingMetricsExcel();
+      return;
+    }
+
+    if (event.target.closest("[data-send-recruiting-metrics]")) {
+      sendRecruitingMetricsMail();
+      return;
+    }
+
     if (event.target.closest("[data-close-policy-citation]")) {
       closePolicyCitation();
       return;
@@ -19067,6 +19896,12 @@ function bindEvents() {
     const recommendCandidateButton = event.target.closest("[data-toggle-recommend-candidate]");
     if (recommendCandidateButton) {
       toggleCandidateRecommendation(recommendCandidateButton.dataset.toggleRecommendCandidate);
+      return;
+    }
+
+    const profileReportButton = event.target.closest("[data-download-profile-report]");
+    if (profileReportButton) {
+      downloadProfileReport(profileReportButton.dataset.downloadProfileReport);
       return;
     }
 
@@ -19506,6 +20341,34 @@ function bindEvents() {
     if (event.target.id === "jd-enhance-final-text") {
       updateJdFinalText(event.target.value);
     }
+
+    if (event.target.id === "interview-report-script") {
+      updateInterviewReportField("scriptText", event.target.value);
+    }
+
+    if (event.target.id === "interview-report-template") {
+      updateInterviewReportField("templateText", event.target.value);
+    }
+
+    if (event.target.id === "interview-report-prompt") {
+      updateInterviewReportField("prompt", event.target.value);
+    }
+
+    if (event.target.id === "interview-report-output") {
+      updateInterviewReportField("reportText", event.target.value);
+    }
+
+    if (event.target.id === "recruiting-metrics-subject") {
+      updateRecruitingMetricsField("subject", event.target.value);
+    }
+
+    if (event.target.id === "recruiting-metrics-recipients") {
+      updateRecruitingMetricsField("recipients", event.target.value);
+    }
+
+    if (event.target.matches("[data-recruiting-target-field]")) {
+      updateRecruitingTargetField(event.target);
+    }
   });
 
   document.addEventListener("dragover", (event) => {
@@ -19547,6 +20410,43 @@ function bindEvents() {
   document.addEventListener("change", (event) => {
     if (event.target.id === "dashboard-organization-filter") {
       updateDashboardFilters();
+    }
+
+    if (event.target.id === "interview-report-script-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        loadInterviewReportFile(file, "script");
+        event.target.value = "";
+      }
+    }
+
+    if (event.target.id === "interview-report-template-file") {
+      const file = event.target.files?.[0];
+
+      if (file) {
+        loadInterviewReportFile(file, "template");
+        event.target.value = "";
+      }
+    }
+
+    if (event.target.id === "recruiting-metrics-week") {
+      updateRecruitingMetricsField("weekOf", event.target.value);
+      renderRecruitingMetrics();
+      return;
+    }
+
+    if (event.target.id === "recruiting-metrics-auto-send") {
+      const metrics = getRecruitingMetricsState();
+      metrics.autoSendOnComplete = event.target.checked;
+      persistState();
+      renderRecruitingMetrics();
+      return;
+    }
+
+    if (event.target.matches("[data-recruiting-complete]")) {
+      toggleRecruitingMetricsComplete(event.target);
+      return;
     }
 
     if (event.target.id === "screening-business-unit-filter") {

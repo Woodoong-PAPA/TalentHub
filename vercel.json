@@ -81,6 +81,10 @@
       "dest": "/api/screening-mail.js"
     },
     {
+      "src": "/api/recruiting-metrics-mail",
+      "dest": "/api/recruiting-metrics-mail.js"
+    },
+    {
       "handle": "filesystem"
     },
     {
