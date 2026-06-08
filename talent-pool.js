@@ -612,8 +612,8 @@ const state = {
     status: "all"
   },
   managementTab: "members",
-  candidates: structuredClone(ENRICHED_CANDIDATES),
-  selectedCandidateId: "cand-001",
+  candidates: REMOTE_SYNC_ENABLED ? [] : structuredClone(ENRICHED_CANDIDATES),
+  selectedCandidateId: REMOTE_SYNC_ENABLED ? "" : "cand-001",
   isEditingCandidate: false,
   editSnapshot: null,
   detailTab: "profile",
@@ -3022,9 +3022,10 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
 let remoteSyncTimer = null;
 let remoteSyncInFlight = false;
+let remoteSyncReady = !REMOTE_SYNC_ENABLED;
 
 function scheduleRemoteSync() {
-  if (!REMOTE_SYNC_ENABLED) {
+  if (!REMOTE_SYNC_ENABLED || !remoteSyncReady) {
     return;
   }
 
@@ -3129,6 +3130,7 @@ async function loadStateFromSupabase() {
   }
 
   try {
+    remoteSyncReady = false;
     state.remoteSyncStatus = "Supabase 불러오는 중";
     const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows] = await Promise.all([
       supabaseRequest("candidates?select=*&order=updated_at.desc"),
@@ -3149,10 +3151,12 @@ async function loadStateFromSupabase() {
       })
     ]);
 
-    if (Array.isArray(candidateRows) && candidateRows.length) {
+    if (Array.isArray(candidateRows)) {
       const remoteCandidates = candidateRows.map(candidateFromSupabaseRow).filter(Boolean);
-      state.candidates = sortPoolCandidates(mergeByLatest(state.candidates, remoteCandidates, normalizeCandidate));
-      state.selectedCandidateId = state.candidates[0]?.id || state.selectedCandidateId;
+      state.candidates = sortPoolCandidates(remoteCandidates);
+      state.selectedCandidateId = state.candidates.some((candidate) => candidate.id === state.selectedCandidateId)
+        ? state.selectedCandidateId
+        : state.candidates[0]?.id || "";
     }
 
     if (Array.isArray(screeningFolderRows) && screeningFolderRows.length) {
@@ -3191,10 +3195,11 @@ async function loadStateFromSupabase() {
     ensureScreeningDefaults();
     ensurePolicySourceDefaults();
     state.remoteSyncStatus = "Supabase 연결됨";
+    remoteSyncReady = true;
     persistState({ skipRemoteSync: true });
     render();
-    scheduleRemoteSync();
   } catch (error) {
+    remoteSyncReady = false;
     state.remoteSyncStatus = "Supabase 불러오기 실패";
     console.warn(error);
     showToast("Supabase 연결을 확인해주세요. 로컬 데이터로 표시합니다.");
@@ -19254,6 +19259,12 @@ async function initializeApp() {
     }
   } catch (error) {
     console.warn("Member password hashes could not be migrated.", error);
+  }
+
+  if (REMOTE_SYNC_ENABLED) {
+    state.candidates = [];
+    state.selectedCandidateId = "";
+    state.aiResults = [];
   }
 
   render();
