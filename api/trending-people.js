@@ -221,6 +221,10 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function modelSupportsTemperature(model) {
+  return !/^gpt-5(?:[.\-]|$)/i.test(String(model || ""));
+}
+
 function getKstDateParts(date = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul",
@@ -996,9 +1000,12 @@ async function requestOpenAIJson({ apiKey, model, prompt, schema, schemaName, er
         schema,
         strict: true
       }
-    },
-    temperature: 0.1
+    }
   };
+
+  if (modelSupportsTemperature(model)) {
+    body.temperature = 0.1;
+  }
 
   if (useWebSearch) {
     body.tools = [
@@ -1080,6 +1087,7 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames, searchSe
     "",
     `최근 1개월 제외 이름: ${excludedNames.join(", ") || "없음"}`,
     "",
+    "Return exactly 5 distinct people whenever the article list contains at least 5 plausible person names. If fewer than 5 highly mentioned people exist, include the next-best relevant public figures from the same article set rather than returning a short list.",
     "기사 목록 JSON:",
     JSON.stringify(articlePromptBlock(articles), null, 2)
   ].join("\n");
@@ -1981,6 +1989,48 @@ function isLikelyPersonName(person) {
   return /^[가-힣A-Za-z\s.'-]{2,40}$/.test(name);
 }
 
+function normalizePersonNameKey(person) {
+  return String(person?.name || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function selectRankedCandidates(people, excludedNames) {
+  const source = Array.isArray(people) ? people : [];
+  const excluded = new Set((excludedNames || []).map((name) => String(name || "").trim()).filter(Boolean));
+  const selected = [];
+  const seen = new Set();
+
+  const addPass = ({ allowExcluded = false, requireLikelyName = true }) => {
+    source.forEach((person) => {
+      const key = normalizePersonNameKey(person);
+
+      if (!key || seen.has(key)) {
+        return;
+      }
+
+      if (!allowExcluded && excluded.has(String(person.name || "").trim())) {
+        return;
+      }
+
+      if (requireLikelyName && !isLikelyPersonName(person)) {
+        return;
+      }
+
+      selected.push(person);
+      seen.add(key);
+    });
+  };
+
+  addPass({ allowExcluded: false, requireLikelyName: true });
+  addPass({ allowExcluded: false, requireLikelyName: false });
+  addPass({ allowExcluded: true, requireLikelyName: true });
+  addPass({ allowExcluded: true, requireLikelyName: false });
+
+  return selected.slice(0, 5);
+}
+
 async function generateReport(targetDate) {
   const searchSettings = await loadSearchSettings();
   const excludedNames = await loadExcludedNames(targetDate);
@@ -1992,9 +2042,7 @@ async function generateReport(targetDate) {
 
   const articleById = new Map(articles.map((article) => [article.id, article]));
   const ranked = await callOpenAIForPeople(targetDate, articles, excludedNames, searchSettings);
-  const rankedCandidates = (ranked.people || [])
-    .filter((person) => person.name && !excludedNames.includes(person.name) && isLikelyPersonName(person))
-    .slice(0, 5);
+  const rankedCandidates = selectRankedCandidates(ranked.people, excludedNames);
   await resolveReferencedArticleUrls(articleById, rankedCandidates);
 
   const articlesWithResolvedLinks = articles.map((article) => articleById.get(article.id) || article);

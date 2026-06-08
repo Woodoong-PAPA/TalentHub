@@ -47,6 +47,10 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function modelSupportsTemperature(model) {
+  return !/^gpt-5(?:[.\-]|$)/i.test(String(model || ""));
+}
+
 function extractOutputText(responseJson) {
   if (typeof responseJson.output_text === "string") {
     return responseJson.output_text;
@@ -121,34 +125,39 @@ async function callOpenAI(question, contexts) {
     "사용 가능한 소스:",
     sourceText
   ].join("\n");
+  const requestBody = {
+    model,
+    input: [
+      {
+        role: "system",
+        content: "You are a grounded HR policy Q&A assistant. Return only schema-valid JSON. Never use facts outside the provided sources."
+      },
+      {
+        role: "user",
+        content: prompt
+      }
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "recruiting_policy_answer",
+        schema: POLICY_CHAT_SCHEMA,
+        strict: true
+      }
+    }
+  };
+
+  if (modelSupportsTemperature(model)) {
+    requestBody.temperature = 0.2;
+  }
+
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: "system",
-          content: "You are a grounded HR policy Q&A assistant. Return only schema-valid JSON. Never use facts outside the provided sources."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "recruiting_policy_answer",
-          schema: POLICY_CHAT_SCHEMA,
-          strict: true
-        }
-      },
-      temperature: 0.2
-    })
+    body: JSON.stringify(requestBody)
   });
   const responseText = await response.text();
 

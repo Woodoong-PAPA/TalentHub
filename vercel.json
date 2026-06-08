@@ -58,7 +58,7 @@
     },
     {
       "src": "/api/trending-people-cron",
-      "dest": "/api/trending-people.js"
+      "dest": "/api/trending-people-cron.js"
     },
     {
       "src": "/api/trending-people",

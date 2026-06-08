@@ -82,6 +82,10 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function modelSupportsTemperature(model) {
+  return !/^gpt-5(?:[.\-]|$)/i.test(String(model || ""));
+}
+
 function extractOutputText(responseJson) {
   if (typeof responseJson.output_text === "string") {
     return responseJson.output_text;
@@ -371,9 +375,12 @@ async function callOpenAI({ text, fileName, deterministic, useWebSearch }) {
         schema: RESUME_SCHEMA,
         strict: true
       }
-    },
-    temperature: 0
+    }
   };
+
+  if (modelSupportsTemperature(model)) {
+    requestBody.temperature = 0;
+  }
 
   if (useWebSearch) {
     requestBody.tools = [{ type: "web_search" }];
