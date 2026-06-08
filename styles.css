@@ -806,6 +806,10 @@ table {
   width: 104px;
 }
 
+.col-linkedin {
+  width: 86px;
+}
+
 .col-actions {
   width: 92px;
 }
@@ -947,7 +951,7 @@ tr:last-child td {
   display: block;
   margin-top: 3px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: inherit;
   line-height: 1.45;
 }
 
@@ -999,6 +1003,44 @@ tr:last-child td {
 
 .summary-lines .muted-text {
   color: var(--muted);
+}
+
+.pool-title-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  margin-left: 8px;
+  border-radius: 999px;
+  padding: 0 9px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 13px;
+  font-weight: 800;
+  vertical-align: middle;
+}
+
+.linkedin-cell {
+  text-align: center;
+}
+
+.linkedin-icon-link {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #cfe3ff;
+  border-radius: 8px;
+  color: #1b64da;
+  background: #e8f3ff;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.linkedin-icon-link:hover {
+  border-color: var(--blue);
+  background: #dcebff;
 }
 
 .member-identity {
@@ -3887,6 +3929,13 @@ tr:last-child td {
   gap: 8px;
 }
 
+.detail-birth-line {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .detail-business-unit-chip {
   display: inline-flex;
   align-items: center;
@@ -3950,6 +3999,47 @@ tr:last-child td {
 
 .detail-hero-side .compact-select {
   min-width: 138px;
+}
+
+.detail-status-select {
+  border-color: #d8dee6;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.detail-status-select.status-interested {
+  background: #eef6ff;
+  color: #1b64da;
+}
+
+.detail-status-select.status-contacted {
+  background: #eefbf3;
+  color: #178746;
+}
+
+.detail-status-select.status-contact_planned {
+  background: #f2f7ff;
+  color: #286fbf;
+}
+
+.detail-status-select.status-screening {
+  background: #f3f0ff;
+  color: #6d4aff;
+}
+
+.detail-status-select.status-nurture {
+  background: #fff7e6;
+  color: #9a6700;
+}
+
+.detail-status-select.status-hold {
+  background: #fff3ed;
+  color: #b45309;
+}
+
+.detail-status-select.status-inactive {
+  background: var(--surface-soft);
+  color: var(--muted);
 }
 
 .icon-link-button,

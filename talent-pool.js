@@ -976,6 +976,7 @@ function normalizeCandidate(candidate) {
   const normalized = removeConsentFields({
     photoUrl: "",
     resumeAttachment: null,
+    englishName: "",
     birthYear: "",
     age: "",
     email: "",
@@ -997,6 +998,7 @@ function normalizeCandidate(candidate) {
     recommended: false,
     recommendedAt: "",
     recommendedBy: "",
+    syncUpdatedAt: "",
     ...candidate
   });
 
@@ -1004,6 +1006,7 @@ function normalizeCandidate(candidate) {
   normalized.visibility = normalizeCandidateVisibility(normalized.visibility || normalized.profileVisibility);
   normalized.createdAt = inferCreatedAt(normalized);
   normalized.updatedAt = normalized.updatedAt || normalized.createdAt;
+  normalized.syncUpdatedAt = normalized.syncUpdatedAt || normalized.updatedAt || normalized.createdAt;
   normalized.age = calculateAge(normalized.birthYear);
   normalized.attachments = Array.isArray(normalized.attachments)
     ? normalized.attachments.filter((attachment) => attachment && (attachment.name || attachment.dataUrl))
@@ -1259,6 +1262,7 @@ function normalizeScreeningFolder(folder = {}) {
     createdByName: String(folder.createdByName || "").trim(),
     createdAt: folder.createdAt || getTodayDate(),
     updatedAt: folder.updatedAt || folder.createdAt || getTodayDate(),
+    syncUpdatedAt: folder.syncUpdatedAt || folder.updatedAt || folder.createdAt || getTodayDate(),
     accessMemberIds,
     receptionMemberIds,
     secondScreeningMemberIds,
@@ -1756,6 +1760,17 @@ function canCreateMemberAccounts(member = getCurrentMember()) {
 
 function canUseManagement(member = getCurrentMember()) {
   return Boolean(member && member.status === "active" && (isAdmin(member) || canCreateMemberAccounts(member)));
+}
+
+function resetAccountScopedWorkspaceForCurrentUser() {
+  const savedAnalyses = (state.jobFitAnalysis?.savedAnalyses || [])
+    .map(normalizeSavedJobFitAnalysis)
+    .filter((analysis) => analysis && belongsToCurrentAccount(analysis));
+
+  state.jobFitAnalysis = normalizeJobFitState({ savedAnalyses });
+  state.policyChatQuestion = "";
+  state.policyChatSelectedCitationId = "";
+  state.policyChatLoading = false;
 }
 
 function getCreatableMemberRoles(member = getCurrentMember()) {
@@ -2260,7 +2275,10 @@ async function deleteSupabaseRecord(tableName, id) {
 }
 
 function candidateToSupabaseRow(candidate) {
-  const normalizedCandidate = normalizeCandidate(candidate);
+  const normalizedCandidate = normalizeCandidate({
+    ...candidate,
+    syncUpdatedAt: candidate.syncUpdatedAt || new Date().toISOString()
+  });
 
   return {
     id: normalizedCandidate.id,
@@ -2269,9 +2287,136 @@ function candidateToSupabaseRow(candidate) {
     role: normalizedCandidate.role,
     owner: normalizedCandidate.owner,
     status: normalizedCandidate.status,
-    updated_at: new Date().toISOString(),
+    business_unit: normalizedCandidate.organization || null,
+    profile_visibility: normalizedCandidate.visibility || "all",
+    updated_at: normalizedCandidate.syncUpdatedAt,
     profile: normalizedCandidate
   };
+}
+
+function candidateFromSupabaseRow(row) {
+  if (!row?.profile) {
+    return null;
+  }
+
+  return normalizeCandidate({
+    ...row.profile,
+    id: row.id || row.profile.id,
+    name: row.name || row.profile.name,
+    company: row.company || row.profile.company,
+    role: row.role || row.profile.role,
+    owner: row.owner || row.profile.owner,
+    status: row.status || row.profile.status,
+    organization: row.business_unit || row.profile.organization,
+    visibility: row.profile_visibility || row.profile.visibility,
+    syncUpdatedAt: row.profile.syncUpdatedAt || row.updated_at || row.profile.updatedAt
+  });
+}
+
+function entityFreshness(value) {
+  const normalized = value || {};
+  return Math.max(
+    dateSortValue(normalized.syncUpdatedAt),
+    dateSortValue(normalized.updatedAt),
+    dateSortValue(normalized.createdAt)
+  );
+}
+
+function mergeByLatest(localItems = [], remoteItems = [], normalizer = (item) => item) {
+  const byId = new Map();
+
+  [...remoteItems, ...localItems].forEach((item) => {
+    const normalized = normalizer(item);
+
+    if (!normalized?.id) {
+      return;
+    }
+
+    const existing = byId.get(normalized.id);
+
+    if (!existing || entityFreshness(normalized) >= entityFreshness(existing)) {
+      byId.set(normalized.id, normalized);
+    }
+  });
+
+  return [...byId.values()];
+}
+
+function touchCandidate(candidate) {
+  if (!candidate) {
+    return null;
+  }
+
+  candidate.updatedAt = getTodayDate();
+  candidate.syncUpdatedAt = new Date().toISOString();
+  return candidate;
+}
+
+async function upsertCandidateToSupabase(candidate) {
+  if (!REMOTE_SYNC_ENABLED || !candidate?.id) {
+    return;
+  }
+
+  await supabaseRequest("candidates?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([candidateToSupabaseRow(candidate)])
+  });
+}
+
+function screeningFolderToSupabaseRow(folder) {
+  const normalized = normalizeScreeningFolder({
+    ...folder,
+    syncUpdatedAt: folder.syncUpdatedAt || new Date().toISOString()
+  });
+
+  return {
+    id: normalized.id,
+    title: normalized.title,
+    business_unit: normalized.businessUnit || null,
+    created_by_id: normalized.createdById || null,
+    created_by_name: normalized.createdByName || null,
+    updated_at: normalized.syncUpdatedAt,
+    payload: normalized
+  };
+}
+
+function screeningFolderFromSupabaseRow(row) {
+  if (!row?.payload) {
+    return null;
+  }
+
+  return normalizeScreeningFolder({
+    ...row.payload,
+    id: row.id || row.payload.id,
+    title: row.title || row.payload.title,
+    businessUnit: row.business_unit || row.payload.businessUnit,
+    createdById: row.created_by_id || row.payload.createdById,
+    createdByName: row.created_by_name || row.payload.createdByName,
+    syncUpdatedAt: row.payload.syncUpdatedAt || row.updated_at || row.payload.updatedAt
+  });
+}
+
+function touchScreeningFolder(folder) {
+  if (!folder) {
+    return null;
+  }
+
+  folder.updatedAt = getTodayDate();
+  folder.syncUpdatedAt = new Date().toISOString();
+  return folder;
+}
+
+async function upsertScreeningFolderToSupabase(folder) {
+  if (!REMOTE_SYNC_ENABLED || !folder?.id) {
+    return;
+  }
+
+  await supabaseRequest("screening_folders?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([screeningFolderToSupabaseRow(folder)])
+  });
 }
 
 function auditLogToSupabaseRow(log) {
@@ -2380,14 +2525,45 @@ function getJobFitAnalysisOwner() {
   };
 }
 
+function currentAccountOwnerFields() {
+  const owner = getJobFitAnalysisOwner();
+
+  return {
+    ownerId: owner.ownerId,
+    ownerEmail: owner.ownerEmail
+  };
+}
+
+function belongsToCurrentAccount(item = {}) {
+  const owner = currentAccountOwnerFields();
+  const itemOwnerId = String(item.ownerId || item.owner_id || "").trim();
+  const itemOwnerEmail = String(item.ownerEmail || item.owner_email || "").trim().toLowerCase();
+
+  if (!owner.ownerId && !owner.ownerEmail) {
+    return false;
+  }
+
+  return Boolean(
+    (owner.ownerId && itemOwnerId && owner.ownerId === itemOwnerId) ||
+    (owner.ownerEmail && itemOwnerEmail && owner.ownerEmail.toLowerCase() === itemOwnerEmail)
+  );
+}
+
+function withCurrentAccountOwner(payload = {}) {
+  return {
+    ...payload,
+    ...currentAccountOwnerFields()
+  };
+}
+
 function jobFitAnalysisToSupabaseRow(analysis) {
   const normalized = normalizeSavedJobFitAnalysis(analysis);
   const owner = getJobFitAnalysisOwner();
 
   return {
     id: normalized.id,
-    owner_id: owner.ownerId || null,
-    owner_email: owner.ownerEmail || null,
+    owner_id: normalized.ownerId || owner.ownerId || null,
+    owner_email: normalized.ownerEmail || owner.ownerEmail || null,
     title: normalized.title,
     created_by: normalized.createdBy || null,
     created_at: toSupabaseTimestamp(normalized.createdAt) || new Date().toISOString(),
@@ -2400,6 +2576,8 @@ function jobFitAnalysisFromSupabaseRow(row) {
   return normalizeSavedJobFitAnalysis({
     ...(row.payload || {}),
     id: row.id,
+    ownerId: row.owner_id || row.payload?.ownerId || "",
+    ownerEmail: row.owner_email || row.payload?.ownerEmail || "",
     title: row.title,
     createdBy: row.created_by || row.payload?.createdBy || "",
     createdAt: row.payload?.createdAt || row.created_at || ""
@@ -2561,6 +2739,7 @@ async function syncStateToSupabase() {
     ensureAuditLogIds();
     await ensureMemberPasswordHashes();
     const candidateRows = state.candidates.map(candidateToSupabaseRow);
+    const screeningFolderRows = state.screeningFolders.map(screeningFolderToSupabaseRow);
     const auditRows = state.auditLogs.map(auditLogToSupabaseRow);
     const memberRows = state.members.map(memberToSupabaseRow);
     const permissionRows = rolePermissionToSupabaseRows();
@@ -2572,6 +2751,18 @@ async function syncStateToSupabase() {
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify(candidateRows)
       });
+    }
+
+    if (screeningFolderRows.length) {
+      try {
+        await supabaseRequest("screening_folders?on_conflict=id", {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify(screeningFolderRows)
+        });
+      } catch (error) {
+        console.warn("Screening folders could not be synced.", error);
+      }
     }
 
     if (auditRows.length) {
@@ -2626,8 +2817,12 @@ async function loadStateFromSupabase() {
 
   try {
     state.remoteSyncStatus = "Supabase 불러오는 중";
-    const [candidateRows, auditRows, memberRows, permissionRows, policySourceRows] = await Promise.all([
-      supabaseRequest("candidates?select=profile&order=updated_at.desc"),
+    const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows] = await Promise.all([
+      supabaseRequest("candidates?select=*&order=updated_at.desc"),
+      supabaseRequest("screening_folders?select=*&order=updated_at.desc").catch((error) => {
+        console.warn("Screening folders could not be loaded.", error);
+        return [];
+      }),
       supabaseRequest("audit_logs?select=payload&order=created_at.desc&limit=200"),
       supabaseRequest("app_members?select=*&order=requested_at.desc"),
       supabaseRequest("app_role_permissions?select=*"),
@@ -2638,8 +2833,15 @@ async function loadStateFromSupabase() {
     ]);
 
     if (Array.isArray(candidateRows) && candidateRows.length) {
-      state.candidates = candidateRows.map((row) => row.profile).filter(Boolean).map(normalizeCandidate);
+      const remoteCandidates = candidateRows.map(candidateFromSupabaseRow).filter(Boolean);
+      state.candidates = sortPoolCandidates(mergeByLatest(state.candidates, remoteCandidates, normalizeCandidate));
       state.selectedCandidateId = state.candidates[0]?.id || state.selectedCandidateId;
+    }
+
+    if (Array.isArray(screeningFolderRows) && screeningFolderRows.length) {
+      const remoteFolders = screeningFolderRows.map(screeningFolderFromSupabaseRow).filter(Boolean);
+      state.screeningFolders = mergeByLatest(state.screeningFolders, remoteFolders, normalizeScreeningFolder)
+        .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || a.title.localeCompare(b.title));
     }
 
     if (Array.isArray(auditRows) && auditRows.length) {
@@ -3573,6 +3775,7 @@ function getFilteredCandidates() {
   return getVisibleCandidates().filter((candidate) => {
     const text = [
       candidate.name,
+      candidate.englishName,
       candidate.role,
       candidate.company,
       candidate.jobFamily,
@@ -3972,6 +4175,7 @@ function candidateTable(candidates) {
           <col class="col-competency" />
           <col class="col-status" />
           <col class="col-owner" />
+          <col class="col-linkedin" />
           <col class="col-actions" />
         </colgroup>
         <thead>
@@ -3983,6 +4187,7 @@ function candidateTable(candidates) {
             <th>핵심역량</th>
             <th>사업부</th>
             <th>담당자</th>
+            <th>Linkedin</th>
             <th>관리</th>
           </tr>
         </thead>
@@ -3991,6 +4196,7 @@ function candidateTable(candidates) {
             const educationSummary = formatEducationSummary(candidate);
             const careerSummary = formatCareerSummary(candidate);
             const competencyLines = [candidate.role || candidate.skills?.[0] || ""].filter(Boolean);
+            const linkedin = normalizeExternalUrl(candidate.linkedinUrl);
 
             return `
             <tr>
@@ -4012,6 +4218,9 @@ function candidateTable(candidates) {
               <td class="role-cell">${renderCandidateSummaryScroll(competencyLines, "핵심역량 미입력")}</td>
               <td>${escapeHtml(candidate.organization || "사업부 미입력")}</td>
               <td>${escapeHtml(candidate.owner)}</td>
+              <td class="linkedin-cell">
+                ${linkedin ? `<a class="linkedin-icon-link" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="${escapeHtml(candidate.name)} LinkedIn">in</a>` : ""}
+              </td>
               <td>
                 ${canManageCandidateProfile(candidate) ? `<button class="ghost-button danger-button compact-button" type="button" data-delete-candidate="${candidate.id}">삭제</button>` : `<span class="muted-text">-</span>`}
               </td>
@@ -4022,6 +4231,16 @@ function candidateTable(candidates) {
       </table>
     </div>
   `;
+}
+
+function updatePoolTitleCount(count) {
+  const title = $("#pool-title");
+
+  if (!title) {
+    return;
+  }
+
+  title.innerHTML = `Talent Pool <span class="pool-title-count">${Number(count || 0).toLocaleString()}명</span>`;
 }
 
 function renderPool() {
@@ -4035,6 +4254,7 @@ function renderPool() {
       const indexB = BUSINESS_UNITS.indexOf(b);
       return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB) || a.localeCompare(b, "ko");
     });
+  updatePoolTitleCount(candidates.length);
 
   $("#pool-content").innerHTML = `
     <div class="filter-strip pool-filter-strip">
@@ -4065,6 +4285,7 @@ function renderPool() {
 function renderPoolTable() {
   const tableContent = $("#pool-table-content");
   const candidates = sortPoolCandidates(getFilteredCandidates());
+  updatePoolTitleCount(candidates.length);
 
   if (!tableContent) {
     renderPool();
@@ -4148,10 +4369,17 @@ function getScreeningApplicant(folder, applicantId) {
 
 function replaceScreeningFolder(folder) {
   const index = state.screeningFolders.findIndex((item) => item.id === folder.id);
+  const nextFolder = normalizeScreeningFolder(touchScreeningFolder(folder));
 
   if (index >= 0) {
-    state.screeningFolders[index] = normalizeScreeningFolder(folder);
+    state.screeningFolders[index] = nextFolder;
   }
+
+  upsertScreeningFolderToSupabase(nextFolder).catch((error) => {
+    console.warn("Screening folder remote save failed.", error);
+  });
+
+  return nextFolder;
 }
 
 function tokenizeScreeningText(value) {
@@ -6106,12 +6334,16 @@ function renderRegister() {
             <input class="control-input" id="candidate-name" name="name" autocomplete="off" />
           </div>
           <div class="field">
-            <label for="candidate-role">핵심 역량</label>
-            <input class="control-input" id="candidate-role" name="role" autocomplete="off" />
+            <label for="candidate-english-name">이름(영문)</label>
+            <input class="control-input" id="candidate-english-name" name="englishName" autocomplete="off" />
           </div>
-          <div class="field full">
+          <div class="field">
+            <label for="candidate-role">핵심 역량</label>
+            <textarea class="control-textarea compact-textarea" id="candidate-role" name="role" rows="4"></textarea>
+          </div>
+          <div class="field">
             <label for="candidate-skills">주요성과/실적</label>
-            <input class="control-input" id="candidate-skills" name="skills" autocomplete="off" />
+            <textarea class="control-textarea compact-textarea" id="candidate-skills" name="skills" rows="4"></textarea>
           </div>
           <div class="field">
             <label for="candidate-organization">사업부</label>
@@ -6547,6 +6779,8 @@ function normalizeSavedJobFitAnalysis(analysis = {}) {
 
   return {
     id: analysis.id || createId("job-fit-saved"),
+    ownerId: String(analysis.ownerId || analysis.owner_id || "").trim(),
+    ownerEmail: String(analysis.ownerEmail || analysis.owner_email || "").trim().toLowerCase(),
     title: String(analysis.title || "저장된 직무적합도 분석").trim(),
     createdAt: analysis.createdAt || getTimestampText(),
     createdBy: analysis.createdBy || getCurrentActorName(),
@@ -6564,6 +6798,10 @@ function getJobFitState() {
   Object.assign(current, normalizeJobFitState(current));
   state.jobFitAnalysis = current;
   return state.jobFitAnalysis;
+}
+
+function getCurrentUserSavedJobFitAnalyses() {
+  return (getJobFitState().savedAnalyses || []).filter(belongsToCurrentAccount);
 }
 
 function inferCandidateNameFromResume(text, fileName = "") {
@@ -7141,7 +7379,7 @@ function renderJobFitResumeList() {
 }
 
 function renderSavedJobFitAnalyses() {
-  const savedAnalyses = getJobFitState().savedAnalyses || [];
+  const savedAnalyses = getCurrentUserSavedJobFitAnalyses();
 
   if (!savedAnalyses.length) {
     return `<div class="empty-state compact-empty">저장된 분석 결과가 없습니다.</div>`;
@@ -7480,7 +7718,7 @@ async function saveJobFitAnalysis() {
     return;
   }
 
-  const saved = normalizeSavedJobFitAnalysis({
+  const saved = normalizeSavedJobFitAnalysis(withCurrentAccountOwner({
     id: createId("job-fit-saved"),
     title: inferJobFitAnalysisTitle(jobFit.jdText, jobFit.results),
     createdAt: getTimestampText(),
@@ -7489,7 +7727,7 @@ async function saveJobFitAnalysis() {
     jdFile: jobFit.jdFile,
     resumes: jobFit.resumes,
     results: jobFit.results
-  });
+  }));
 
   jobFit.savedAnalyses = [saved, ...jobFit.savedAnalyses.filter((item) => item.id !== saved.id)].slice(0, 20);
   jobFit.analysisStatus = "분석 결과를 저장했습니다.";
@@ -7511,7 +7749,7 @@ async function saveJobFitAnalysis() {
 
 function loadSavedJobFitAnalysis(analysisId) {
   const jobFit = getJobFitState();
-  const saved = jobFit.savedAnalyses.find((analysis) => analysis.id === analysisId);
+  const saved = getCurrentUserSavedJobFitAnalyses().find((analysis) => analysis.id === analysisId);
 
   if (!saved) {
     showToast("저장된 분석 결과를 찾지 못했습니다.");
@@ -7995,7 +8233,7 @@ async function buildPolicyAssistantMessage(question) {
 }
 
 function findPolicyCitationContext(citationId) {
-  const messages = state.policyChatMessages || [];
+  const messages = getCurrentUserPolicyChatMessages();
 
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
@@ -8200,6 +8438,10 @@ function renderPolicyMessage(message) {
   `;
 }
 
+function getCurrentUserPolicyChatMessages() {
+  return (state.policyChatMessages || []).filter(belongsToCurrentAccount);
+}
+
 function renderPolicyCitationPanel() {
   const citationContext = findPolicyCitationContext(state.policyChatSelectedCitationId);
   const citation = citationContext?.citation || null;
@@ -8248,8 +8490,9 @@ function renderPolicyChat() {
     return;
   }
 
-  const messages = state.policyChatMessages.length
-    ? state.policyChatMessages.map(renderPolicyMessage).join("")
+  const accountMessages = getCurrentUserPolicyChatMessages();
+  const messages = accountMessages.length
+    ? accountMessages.map(renderPolicyMessage).join("")
     : `<div class="empty-state">채용 기준 문서에 대해 자연어로 질문해보세요. 답변은 등록된 소스 데이터에서 확인되는 내용만 사용합니다.</div>`;
   const loadingMessage = state.policyChatLoading
     ? `
@@ -8395,6 +8638,7 @@ async function askPolicyChat(form) {
   state.policyChatLoading = true;
   state.policyChatMessages.push({
     id: createId("policy-message"),
+    ...currentAccountOwnerFields(),
     role: "user",
     text: question,
     createdAt: getTimestampText()
@@ -8404,7 +8648,7 @@ async function askPolicyChat(form) {
 
   try {
     const answer = await buildPolicyAssistantMessage(question);
-    state.policyChatMessages.push(answer);
+    state.policyChatMessages.push(withCurrentAccountOwner(answer));
     state.policyChatMessages = state.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
     state.policyChatSelectedCitationId = answer.citations?.[0]?.id || "";
     addAuditLog("채용 AI 챗봇 질문", "채용 기준 Q&A", question);
@@ -8412,6 +8656,7 @@ async function askPolicyChat(form) {
     console.warn("Policy answer failed.", error);
     state.policyChatMessages.push({
       id: createId("policy-message"),
+      ...currentAccountOwnerFields(),
       role: "assistant",
       createdAt: getTimestampText(),
       answerItems: [{
@@ -8466,7 +8711,7 @@ async function deletePolicySource(sourceId) {
 }
 
 function clearPolicyChat() {
-  state.policyChatMessages = [];
+  state.policyChatMessages = (state.policyChatMessages || []).filter((message) => !belongsToCurrentAccount(message));
   state.policyChatSelectedCitationId = "";
   state.policyChatQuestion = "";
   state.policyChatLoading = false;
@@ -9522,6 +9767,7 @@ function renderDetailHero(candidate) {
   ].filter(Boolean);
   const linkedin = normalizeExternalUrl(candidate.linkedinUrl);
   const attachment = candidate.resumeAttachment?.dataUrl;
+  const birthAge = formatBirthAge(candidate);
 
   return `
     <section class="detail-hero-card">
@@ -9535,6 +9781,7 @@ function renderDetailHero(candidate) {
               <h3>${escapeHtml(candidate.name)}</h3>
               ${candidate.organization ? `<span class="detail-business-unit-chip">${escapeHtml(candidate.organization)}</span>` : ""}
             </div>
+            ${birthAge ? `<p class="detail-birth-line">${escapeHtml(birthAge)}</p>` : ""}
             <div class="detail-hero-lines">
               ${titleLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
             </div>
@@ -9608,7 +9855,7 @@ function renderDetailStatusControl(candidate) {
 
   return `
     <label class="detail-status-control">
-      <select class="control-select compact-select" data-detail-status-select>
+      <select class="control-select compact-select detail-status-select status-${escapeHtml(candidate.status)}" data-detail-status-select>
         ${STATUS_ORDER.map((status) => `<option value="${status}" ${candidate.status === status ? "selected" : ""}>${escapeHtml(STATUS_LABELS[status])}</option>`).join("")}
       </select>
     </label>
@@ -10049,12 +10296,16 @@ function renderCandidateEditForm(candidate) {
             <input class="control-input" id="edit-name" name="editName" value="${inputValue(candidate.name)}" />
           </div>
           <div class="field">
-            <label for="edit-role">핵심 역량</label>
-            <input class="control-input" id="edit-role" name="editRole" value="${inputValue(candidate.role)}" />
+            <label for="edit-english-name">이름(영문)</label>
+            <input class="control-input" id="edit-english-name" name="editEnglishName" value="${inputValue(candidate.englishName)}" />
           </div>
-          <div class="field full">
+          <div class="field">
+            <label for="edit-role">핵심 역량</label>
+            <textarea class="control-textarea compact-textarea" id="edit-role" name="editRole" rows="4">${inputValue(candidate.role)}</textarea>
+          </div>
+          <div class="field">
             <label for="edit-skills">주요성과/실적</label>
-            <input class="control-input" id="edit-skills" name="editSkills" value="${inputValue(candidate.skills.join(", "))}" />
+            <textarea class="control-textarea compact-textarea" id="edit-skills" name="editSkills" rows="4">${inputValue(candidate.skills.join("\n"))}</textarea>
           </div>
           <div class="field">
             <label for="edit-organization">사업부</label>
@@ -10335,18 +10586,19 @@ async function saveCandidateEdits(form, options = {}) {
   const resumeFile = formData.get("editResume");
   const otherAttachmentFiles = formData.getAll("editOtherAttachments").filter((file) => file && file.size);
   const skills = getFormText(form, "editSkills")
-    .split(",")
+    .split(/[,;\n]+/)
     .map((skill) => skill.trim())
     .filter(Boolean);
-  const name = getFormText(form, "editName") || candidate.name;
+  const name = getFormText(form, "editName") || "이름 미입력";
   const education = collectEducationFromForm(form, options.preserveBlankRecords);
   const career = collectCareerFromForm(form, options.preserveBlankRecords);
-  const company = career.find(hasAnyRecordValue)?.company || candidate.company;
+  const company = career.find(hasAnyRecordValue)?.company || "";
 
   candidate.name = name;
   candidate.initials = `${name.slice(0, 1)}${name.slice(-1)}`;
   candidate.company = company;
-  candidate.role = getFormText(form, "editRole") || candidate.role;
+  candidate.englishName = getFormText(form, "editEnglishName");
+  candidate.role = getFormText(form, "editRole");
   candidate.organization = normalizeBusinessUnit(getFormText(form, "editOrganization")) || candidate.organization;
   candidate.visibility = normalizeCandidateVisibility(getFormText(form, "editVisibility"));
   candidate.owner = normalizeOwnerSelection(getFormText(form, "editOwner")) || candidate.owner;
@@ -10357,12 +10609,12 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.phone = getFormText(form, "editPhone");
   candidate.linkedinUrl = getFormText(form, "editLinkedinUrl");
   candidate.referenceUrl = getFormText(form, "editReferenceUrl");
-  candidate.skills = skills.length ? skills : candidate.skills;
-  candidate.summary = getFormText(form, "editSummary") || candidate.summary;
+  candidate.skills = skills;
+  candidate.summary = getFormText(form, "editSummary");
   candidate.education = education;
   candidate.career = career;
   candidate.years = estimateCareerYears(candidate.career);
-  candidate.updatedAt = getTodayDate();
+  touchCandidate(candidate);
 
   if (photoFile && photoFile.size) {
     try {
@@ -10414,6 +10666,12 @@ async function saveCandidateEdits(form, options = {}) {
       time: "2026-06-04 09:40"
     });
     persistState();
+    try {
+      await upsertCandidateToSupabase(candidate);
+    } catch (error) {
+      console.warn("Candidate remote save failed.", error);
+      showToast("화면에는 저장됐지만 원격 DB 저장 확인에 실패했습니다. 잠시 후 다시 동기화됩니다.");
+    }
     showToast(`${candidate.name} 후보자 정보가 저장되었습니다.`);
   }
 
@@ -12056,6 +12314,7 @@ function normalizeParsedResumeForForm(parsed = {}) {
 
   return {
     name: cleanParsedValue(parsed.name),
+    englishName: cleanParsedValue(parsed.englishName || parsed.english_name || parsed.nameEnglish),
     company: cleanParsedValue(parsed.company || career[0]?.company),
     role: cleanParsedValue(parsed.role || career[0]?.position),
     birthYear: cleanParsedValue(parsed.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
@@ -12105,6 +12364,7 @@ async function parseResumeWithServer(text, fileName, deterministic) {
 function hasParsedResumeValues(parsed) {
   return Boolean(
     parsed?.name ||
+    parsed?.englishName ||
     parsed?.company ||
     parsed?.role ||
     parsed?.birthYear ||
@@ -12130,6 +12390,7 @@ function mergeParsedResumeResults(primary = {}, fallback = {}) {
     ...fallback,
     ...primary,
     name: normalizeInferredCandidateName(primary.name) || normalizeInferredCandidateName(fallback.name),
+    englishName: primary.englishName || fallback.englishName,
     company: primary.company || fallback.company,
     role: primary.role || fallback.role,
     birthYear: primary.birthYear || fallback.birthYear,
@@ -12147,6 +12408,7 @@ function mergeParsedResumeResults(primary = {}, fallback = {}) {
 function registerFormHasEnteredValues() {
   const fields = [
     "#candidate-name",
+    "#candidate-english-name",
     "#candidate-role",
     "#candidate-birth-year",
     "#candidate-nationality",
@@ -12190,6 +12452,7 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   const currentCareerIsBlank = !collectRegisterCareerFromForm($("#register-form"), true).some(hasAnyRecordValue);
 
   setFieldValue("#candidate-name", parsed.name, overwrite);
+  setFieldValue("#candidate-english-name", parsed.englishName, overwrite);
   setFieldValue("#candidate-role", parsed.role, overwrite);
   setFieldValue("#candidate-birth-year", parsed.birthYear, overwrite);
   setFieldValue("#candidate-nationality", parsed.nationality, overwrite);
@@ -12197,7 +12460,7 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   setFieldValue("#candidate-phone", parsed.phone, overwrite);
   setFieldValue("#candidate-linkedin", parsed.linkedinUrl, overwrite);
   setFieldValue("#candidate-reference-url", parsed.referenceUrl, overwrite);
-  setFieldValue("#candidate-skills", parsed.skills.join(", "), overwrite);
+  setFieldValue("#candidate-skills", parsed.skills.join("\n"), overwrite);
   updateAgeOutput("#candidate-birth-year", "#candidate-age");
 
   if (education.length && (overwrite || currentEducationIsBlank)) {
@@ -12218,6 +12481,7 @@ function editFormHasEnteredValues() {
 
   const fields = [
     "#edit-name",
+    "#edit-english-name",
     "#edit-role",
     "#edit-organization",
     "#edit-owner",
@@ -12246,6 +12510,7 @@ function applyParsedResumeToEditForm(parsed, options = {}) {
   const currentCareerIsBlank = form ? !collectCareerFromForm(form, true).some(hasAnyRecordValue) : true;
 
   setFieldValue("#edit-name", parsed.name, overwrite);
+  setFieldValue("#edit-english-name", parsed.englishName, overwrite);
   setFieldValue("#edit-role", parsed.role, overwrite);
   setFieldValue("#edit-birth-year", parsed.birthYear, overwrite);
   setFieldValue("#edit-nationality", parsed.nationality, overwrite);
@@ -12253,7 +12518,7 @@ function applyParsedResumeToEditForm(parsed, options = {}) {
   setFieldValue("#edit-phone", parsed.phone, overwrite);
   setFieldValue("#edit-linkedin", parsed.linkedinUrl, overwrite);
   setFieldValue("#edit-reference-url", parsed.referenceUrl, overwrite);
-  setFieldValue("#edit-skills", parsed.skills.join(", "), overwrite);
+  setFieldValue("#edit-skills", parsed.skills.join("\n"), overwrite);
   updateAgeOutput("#edit-birth-year", "#edit-age");
 
   if (education.length && (overwrite || currentEducationIsBlank)) {
@@ -12638,10 +12903,10 @@ async function saveTrendingMailSettings() {
   }
 
   try {
+    const settings = collectTrendingMailSettingsFromForm(form);
     state.trendingMailLoading = true;
     state.trendingMailError = "";
     renderTrendingPeople();
-    const settings = collectTrendingMailSettingsFromForm(form);
     const response = await fetch("/api/trending-mail", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -12724,10 +12989,10 @@ async function sendTrendingMailTest() {
   }
 
   try {
+    const settings = collectTrendingMailSettingsFromForm(form);
     state.trendingMailLoading = true;
     state.trendingMailError = "";
     renderTrendingPeople();
-    const settings = collectTrendingMailSettingsFromForm(form);
     const response = await fetch("/api/trending-mail", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -12885,6 +13150,7 @@ async function registerCandidate(eventOrForm) {
 
   const form = new FormData(formElement);
   const name = form.get("name").toString().trim();
+  const englishName = form.get("englishName").toString().trim();
   const role = form.get("role").toString().trim();
   const visibility = normalizeCandidateVisibility(form.get("visibility"));
   let organization = normalizeBusinessUnit(form.get("organization"));
@@ -12898,12 +13164,12 @@ async function registerCandidate(eventOrForm) {
   const education = collectRegisterEducationFromForm(formElement);
   const career = collectRegisterCareerFromForm(formElement);
   const candidateName = name || "이름 미입력";
-  const candidateCompany = career[0]?.company || "미입력";
-  const candidateRole = role || "미입력";
+  const candidateCompany = career[0]?.company || "";
+  const candidateRole = role;
   const skills = form
     .get("skills")
     .toString()
-    .split(",")
+    .split(/[,;\n]+/)
     .map((skill) => skill.trim())
     .filter(Boolean);
   const photoFile = form.get("photo");
@@ -12955,6 +13221,7 @@ async function registerCandidate(eventOrForm) {
     initials: name ? `${name.slice(0, 1)}${name.slice(-1)}` : "미",
     role: candidateRole,
     company: candidateCompany,
+    englishName,
     years: estimateCareerYears(career),
     jobFamily: "Equipment Software",
     organization,
@@ -12963,6 +13230,7 @@ async function registerCandidate(eventOrForm) {
     owner,
     createdAt: today,
     updatedAt: today,
+    syncUpdatedAt: new Date().toISOString(),
     lastContactedAt: "-",
     location: "미확인",
     source: "직접 등록",
@@ -13008,6 +13276,12 @@ async function registerCandidate(eventOrForm) {
   });
   state.aiResults = [];
   persistState();
+  try {
+    await upsertCandidateToSupabase(candidate);
+  } catch (error) {
+    console.warn("Candidate remote save failed.", error);
+    showToast("화면에는 등록됐지만 원격 DB 저장 확인에 실패했습니다. 잠시 후 다시 동기화됩니다.");
+  }
   showToast(`${candidate.name} 후보자가 등록되었습니다.`);
   setView("detail");
 }
@@ -13255,12 +13529,16 @@ async function createScreeningFolder(form) {
     interviewPanel: { names: "", emails: "", availability: "" },
     applicants: []
   });
+  touchScreeningFolder(folder);
 
   state.screeningFolders.unshift(folder);
   state.selectedScreeningFolderId = folder.id;
   state.screeningPositionModalOpen = false;
   addAuditLog("Screening 포지션 생성", folder.title, "포지션 스크리닝 생성");
   persistState();
+  upsertScreeningFolderToSupabase(folder).catch((error) => {
+    console.warn("Screening folder remote save failed.", error);
+  });
   showToast(`${folder.title} 포지션을 생성했습니다.`);
   render();
 }
@@ -14100,9 +14378,12 @@ function toggleCandidateRecommendation(candidateId) {
   candidate.recommended = !candidate.recommended;
   candidate.recommendedAt = candidate.recommended ? getTodayDate() : "";
   candidate.recommendedBy = candidate.recommended ? getCurrentActorName() : "";
-  candidate.updatedAt = getTodayDate();
+  touchCandidate(candidate);
   addAuditLog(candidate.recommended ? "후보자 추천 등록" : "후보자 추천 해제", candidate.name, "Dashboard 추천 프로필");
   persistState();
+  upsertCandidateToSupabase(candidate).catch((error) => {
+    console.warn("Candidate remote save failed.", error);
+  });
   renderDashboard();
   renderDetail();
   renderPoolTable();
@@ -14131,7 +14412,7 @@ function changeCandidateStatus(status) {
   }
 
   candidate.status = status;
-  candidate.updatedAt = today;
+  touchCandidate(candidate);
   candidate.timeline.unshift({
     type: "상태 변경",
     text: `${STATUS_LABELS[previous]}에서 ${STATUS_LABELS[status]}으로 변경`,
@@ -14146,6 +14427,9 @@ function changeCandidateStatus(status) {
     time: "2026-06-04 09:32"
   });
   persistState();
+  upsertCandidateToSupabase(candidate).catch((error) => {
+    console.warn("Candidate remote save failed.", error);
+  });
   showToast(`${candidate.name} 상태가 변경되었습니다.`);
   render();
 }
@@ -14623,6 +14907,7 @@ async function handleLoginSubmit(form) {
   state.authMessage = "";
   state.memberProfileModalOpen = false;
   state.view = canAccessView(state.view, member) ? state.view : getDefaultView(member);
+  resetAccountScopedWorkspaceForCurrentUser();
   await mergeCurrentUserJobFitAnalysesFromSupabase();
   addAuditLog("로그인", member.name, "시스템 접속", member.name);
   persistState();

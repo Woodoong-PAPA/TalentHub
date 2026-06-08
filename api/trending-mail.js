@@ -791,7 +791,9 @@ async function sendReport({ request, settings, report, eventType }) {
 
   const finalReport = await ensureReport(request, report);
   const result = await sendEmailViaResend(settings, finalReport);
-  const savedSettings = await updateLastSent(settings, finalReport.targetDate || finalReport.reportDate);
+  const savedSettings = eventType === "test"
+    ? normalizeSettings(settings)
+    : await updateLastSent(settings, finalReport.targetDate || finalReport.reportDate);
 
   await logMailEvent({
     eventType,

@@ -65,7 +65,7 @@ create index if not exists app_members_business_unit_idx on public.app_members (
 
 create table if not exists public.app_role_permissions (
   role text not null check (role in ('applicant', 'general', 'search_firm', 'hiring_manager', 'business_recruiter', 'division_recruiter', 'admin')),
-  view text not null check (view in ('dashboard', 'pool', 'screening', 'register', 'ai-search', 'job-fit', 'policy-chat', 'trending', 'audit', 'members')),
+  view text not null check (view in ('dashboard', 'pool', 'screening', 'interview', 'register', 'ai-search', 'job-fit', 'policy-chat', 'trending', 'audit', 'members')),
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   primary key (role, view)
@@ -88,6 +88,23 @@ create index if not exists job_fit_analyses_owner_email_idx
 on public.job_fit_analyses (owner_email, created_at desc);
 create index if not exists job_fit_analyses_payload_gin_idx
 on public.job_fit_analyses using gin (payload);
+
+create table if not exists public.screening_folders (
+  id text primary key,
+  title text not null,
+  business_unit text,
+  created_by_id text,
+  created_by_name text,
+  updated_at timestamptz not null default now(),
+  payload jsonb not null default '{}'::jsonb
+);
+
+create index if not exists screening_folders_business_unit_idx
+on public.screening_folders (business_unit, updated_at desc);
+create index if not exists screening_folders_created_by_idx
+on public.screening_folders (created_by_id, updated_at desc);
+create index if not exists screening_folders_payload_gin_idx
+on public.screening_folders using gin (payload);
 
 create table if not exists public.recruiting_policy_sources (
   id text primary key,
@@ -168,6 +185,7 @@ alter table public.audit_logs enable row level security;
 alter table public.app_members enable row level security;
 alter table public.app_role_permissions enable row level security;
 alter table public.job_fit_analyses enable row level security;
+alter table public.screening_folders enable row level security;
 alter table public.recruiting_policy_sources enable row level security;
 alter table public.trending_people_reports enable row level security;
 alter table public.trending_search_settings enable row level security;
@@ -184,6 +202,8 @@ drop policy if exists "demo role permissions read" on public.app_role_permission
 drop policy if exists "demo role permissions write" on public.app_role_permissions;
 drop policy if exists "demo job fit analyses read" on public.job_fit_analyses;
 drop policy if exists "demo job fit analyses write" on public.job_fit_analyses;
+drop policy if exists "demo screening folders read" on public.screening_folders;
+drop policy if exists "demo screening folders write" on public.screening_folders;
 drop policy if exists "demo recruiting policy sources read" on public.recruiting_policy_sources;
 drop policy if exists "demo recruiting policy sources write" on public.recruiting_policy_sources;
 drop policy if exists "demo trending people read" on public.trending_people_reports;
@@ -260,6 +280,19 @@ to anon, authenticated
 using (true)
 with check (true);
 
+create policy "demo screening folders read"
+on public.screening_folders
+for select
+to anon, authenticated
+using (true);
+
+create policy "demo screening folders write"
+on public.screening_folders
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
 create policy "demo recruiting policy sources read"
 on public.recruiting_policy_sources
 for select
@@ -328,6 +361,7 @@ with check (true);
 insert into public.app_role_permissions (role, view, enabled)
 values
   ('applicant', 'screening', true),
+  ('applicant', 'interview', true),
   ('general', 'dashboard', true),
   ('general', 'pool', true),
   ('general', 'policy-chat', true),
@@ -341,6 +375,7 @@ values
   ('hiring_manager', 'dashboard', true),
   ('hiring_manager', 'pool', true),
   ('hiring_manager', 'screening', true),
+  ('hiring_manager', 'interview', true),
   ('hiring_manager', 'ai-search', true),
   ('hiring_manager', 'job-fit', true),
   ('hiring_manager', 'policy-chat', true),
@@ -348,6 +383,7 @@ values
   ('business_recruiter', 'dashboard', true),
   ('business_recruiter', 'pool', true),
   ('business_recruiter', 'screening', true),
+  ('business_recruiter', 'interview', true),
   ('business_recruiter', 'register', true),
   ('business_recruiter', 'ai-search', true),
   ('business_recruiter', 'job-fit', true),
@@ -356,6 +392,7 @@ values
   ('division_recruiter', 'dashboard', true),
   ('division_recruiter', 'pool', true),
   ('division_recruiter', 'screening', true),
+  ('division_recruiter', 'interview', true),
   ('division_recruiter', 'register', true),
   ('division_recruiter', 'ai-search', true),
   ('division_recruiter', 'job-fit', true),
@@ -365,6 +402,7 @@ values
   ('admin', 'dashboard', true),
   ('admin', 'pool', true),
   ('admin', 'screening', true),
+  ('admin', 'interview', true),
   ('admin', 'register', true),
   ('admin', 'ai-search', true),
   ('admin', 'job-fit', true),
