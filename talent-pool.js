@@ -7687,10 +7687,18 @@ async function loadInterviewReportFile(file, field) {
   renderInterviewReport();
 
   try {
-    const result = await readResumeText(file);
-    report[field === "script" ? "scriptText" : "templateText"] = result.text || "";
+    const result = await readInterviewReportUploadText(file);
+    const extractedText = normalizeResumeText(result.text || "");
+
+    if (!extractedText) {
+      throw createResumeParseError("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
+    }
+
+    report[field === "script" ? "scriptText" : "templateText"] = extractedText;
     report[field === "script" ? "scriptFileName" : "templateFileName"] = file.name;
     report.status = `${file.name} 파일을 불러왔습니다.`;
+    const sourceLabel = result.meta?.source === "server" ? "서버 보강 추출" : "브라우저 추출";
+    report.status = `${file.name} 파일 내용을 불러왔습니다. (${sourceLabel}, ${extractedText.length.toLocaleString("ko-KR")}자)`;
     persistState();
   } catch (error) {
     console.warn(error);
@@ -14980,6 +14988,106 @@ async function readResumeText(file) {
     fileType,
     extractionMethod
   });
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(message || "작업 시간이 초과되었습니다."));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+async function extractDocumentTextWithServer(file) {
+  const dataUrl = await readFileAsDataUrl(file);
+  const response = await fetch("/api/extract-text", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      mimeType: file.type || "",
+      dataUrl
+    })
+  });
+  const responseText = await response.text();
+  let payload = {};
+
+  try {
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch (error) {
+    throw new Error("파일 텍스트 추출 API 응답을 해석하지 못했습니다.");
+  }
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || `파일 텍스트 추출 API 오류: ${response.status}`);
+  }
+
+  const text = normalizeResumeText(payload.text || "");
+
+  if (!text) {
+    throw new Error("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
+  }
+
+  return {
+    text,
+    meta: {
+      ...(payload.meta || {}),
+      source: "server"
+    }
+  };
+}
+
+async function readInterviewReportUploadText(file) {
+  const errors = [];
+
+  try {
+    const browserResult = await withTimeout(
+      readResumeText(file),
+      12000,
+      "브라우저 파일 텍스트 추출 시간이 초과되었습니다."
+    );
+    const text = normalizeResumeText(browserResult.text || "");
+
+    if (text) {
+      return {
+        text,
+        meta: {
+          ...(browserResult.meta || {}),
+          source: "browser"
+        }
+      };
+    }
+
+    errors.push(new Error("브라우저 추출 결과가 비어 있습니다."));
+  } catch (error) {
+    errors.push(error);
+  }
+
+  try {
+    return await extractDocumentTextWithServer(file);
+  } catch (serverError) {
+    const browserError = errors.find(Boolean);
+    const error = createResumeParseError(
+      serverError.message ||
+        browserError?.message ||
+        "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
+      browserError?.warnings || []
+    );
+    error.cause = serverError;
+    throw error;
+  }
 }
 
 function firstMatch(text, patterns) {

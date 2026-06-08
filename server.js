@@ -25,6 +25,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/extract-text") {
+    const extractText = require("./api/extract-text.js");
+    extractText(request, response);
+    return;
+  }
+
   if (request.url.split("?")[0] === "/api/search-candidates") {
     const searchCandidates = require("./api/search-candidates.js");
     searchCandidates(request, response);
