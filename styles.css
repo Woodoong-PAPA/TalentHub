@@ -3777,7 +3777,7 @@ tr:last-child td {
 
 .trending-card {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 52px minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
   overflow: hidden;
@@ -3788,61 +3788,24 @@ tr:last-child td {
   box-shadow: var(--shadow);
 }
 
-.trending-media {
-  position: relative;
+.trending-rank-cell {
+  display: grid;
+  align-content: start;
+  justify-items: center;
   min-width: 0;
 }
 
-.trending-rank {
+.trending-rank-marker {
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  border-radius: var(--radius);
-  color: var(--blue-700);
-  background: var(--blue-soft);
-  font-size: 18px;
-  font-weight: 800;
-}
-
-.trending-photo-placeholder {
-  display: grid;
-  width: 78px;
-  height: 78px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  color: var(--muted);
-  background: var(--surface-soft);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.trending-photo {
-  display: block;
-  width: 78px;
-  height: 78px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface-soft);
-  object-fit: cover;
-  object-position: center top;
-}
-
-.trending-rank-badge {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  display: grid;
-  min-width: 26px;
-  height: 26px;
-  place-items: center;
-  border: 1px solid #ffffff;
   border-radius: 999px;
   color: #ffffff;
   background: var(--blue);
-  font-size: 12px;
+  font-size: 17px;
   font-weight: 800;
+  line-height: 1;
 }
 
 .trending-profile {
@@ -3866,26 +3829,11 @@ tr:last-child td {
 .trending-title-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
   min-width: 0;
 }
 
 .trending-title-row > div {
   min-width: 0;
-}
-
-.trending-title-rank {
-  display: grid;
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 999px;
-  color: #ffffff;
-  background: var(--blue);
-  font-size: 14px;
-  font-weight: 800;
-  line-height: 1;
 }
 
 .trending-card-header h4 {
@@ -5230,10 +5178,21 @@ tr:last-child td {
     flex: 1 1 160px;
   }
 
-  .trending-card,
   .trending-profile-grid,
   .trending-mail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .trending-card {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .trending-rank-marker {
+    width: 34px;
+    height: 34px;
+    font-size: 14px;
   }
 
   .trending-modal-backdrop {

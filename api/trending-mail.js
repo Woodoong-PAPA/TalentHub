@@ -701,16 +701,10 @@ function renderMailSection(title, body) {
   `;
 }
 
-function renderMailProfileImage(person) {
-  if (person.profileImageUrl) {
-    return `
-      <img src="${escapeHtml(person.profileImageUrl)}" width="74" height="74" alt="${escapeHtml(person.name || "Talent")} profile" style="display:block;width:74px;height:74px;border:1px solid #e5e8eb;border-radius:16px;background:#f2f4f6;object-fit:cover;object-position:center top" />
-    `;
-  }
-
+function renderMailRankMarker(person) {
   return `
-    <div style="width:74px;height:74px;border:1px solid #e5e8eb;border-radius:16px;background:#f2f4f6;color:#8b95a1;text-align:center;line-height:74px;font-size:13px;font-weight:800">
-      사진
+    <div style="width:42px;height:42px;border-radius:999px;background:#3182f6;color:#ffffff;text-align:center;line-height:42px;font-size:17px;font-weight:800">
+      ${escapeHtml(person.rank || "")}
     </div>
   `;
 }
@@ -726,21 +720,12 @@ function renderPersonCard(person) {
         <td style="padding:18px">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
             <tr>
-              <td width="86" valign="top" style="width:86px;padding:0 14px 14px 0">
-                ${renderMailProfileImage(person)}
+              <td width="56" valign="top" style="width:56px;padding:2px 14px 14px 0">
+                ${renderMailRankMarker(person)}
               </td>
               <td valign="top" style="padding:0 0 14px 0">
-                <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
-                  <tr>
-                    <td valign="top" style="padding:2px 10px 0 0">
-                      <div style="width:30px;height:30px;border-radius:999px;color:#ffffff;background:#3182f6;text-align:center;line-height:30px;font-size:14px;font-weight:800">${escapeHtml(person.rank || "")}</div>
-                    </td>
-                    <td valign="top">
-                      <h3 style="margin:0 0 5px;color:#191f28;font-size:22px;line-height:1.25">${escapeHtml(person.name || "-")}</h3>
-                      <p style="margin:0;color:#6b7684;font-size:14px;line-height:1.5">${escapeHtml(meta || "-")}</p>
-                    </td>
-                  </tr>
-                </table>
+                <h3 style="margin:0 0 5px;color:#191f28;font-size:22px;line-height:1.25">${escapeHtml(person.name || "-")}</h3>
+                <p style="margin:0;color:#6b7684;font-size:14px;line-height:1.5">${escapeHtml(meta || "-")}</p>
               </td>
             </tr>
           </table>

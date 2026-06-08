@@ -2,25 +2,13 @@ const MAX_ARTICLES = 90;
 const GOOGLE_NEWS_DECODE_CONCURRENCY = 4;
 const GOOGLE_NEWS_BATCH_URL = "https://news.google.com/_/DotsSplashUi/data/batchexecute";
 const GOOGLE_NEWS_USER_AGENT = "Mozilla/5.0 (compatible; SamsungTalentPoolNewsRadar/1.0)";
-const PROFILE_COMPLETENESS_VERSION = 6;
+const PROFILE_COMPLETENESS_VERSION = 7;
 const DEFAULT_SEARCH_SETTINGS = {
   prompt: "AI, 로보틱스, 모바일, TV, 생활가전 등 삼성전자 DX부문 주요 사업분야 중심. DS/반도체 분야는 제외.",
   keywords: ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"],
   updatedAt: "",
   updatedBy: ""
 };
-const KNOWN_PROFILE_IMAGE_URLS = [
-  {
-    name: "팀 쿡",
-    organizationPattern: /apple|애플/i,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/Tim_Cook_%282017%2C_cropped%29.jpg/640px-Tim_Cook_%282017%2C_cropped%29.jpg"
-  },
-  {
-    name: "구광모",
-    organizationPattern: /lg|엘지/i,
-    url: "https://www.businesspost.co.kr/news/photo/202307/20230704112634_119248.jpg"
-  }
-];
 const TOPIC_KEYWORDS = ["AI", "인공지능", "로보틱스", "로봇", "모바일", "스마트폰", "TV", "생활가전", "가전"];
 const EXCLUDE_KEYWORDS = ["반도체", "DS부문", "DS 부문", "HBM", "메모리", "파운드리", "웨이퍼", "낸드", "D램"];
 
@@ -914,10 +902,21 @@ async function loadExcludedNames(targetDate) {
 }
 
 async function saveReport(report, options = {}) {
-  const peopleCount = Array.isArray(report.people) ? report.people.length : 0;
+  const people = Array.isArray(report.people)
+    ? report.people.map((person) => normalizePersonProfileBasics({
+      ...person,
+      profileImageUrl: ""
+    }))
+    : [];
+  const normalizedReport = {
+    ...report,
+    people,
+    profileCompletenessVersion: PROFILE_COMPLETENESS_VERSION
+  };
+  const peopleCount = people.length;
 
   if (!options.allowShort && peopleCount > 0 && peopleCount < 5) {
-    console.warn(`Skipped saving short Today's Talent report for ${report.targetDate}: ${peopleCount} people.`);
+    console.warn(`Skipped saving short Today's Talent report for ${normalizedReport.targetDate}: ${peopleCount} people.`);
     return;
   }
 
@@ -925,14 +924,14 @@ async function saveReport(report, options = {}) {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify([{
-      report_date: report.targetDate,
-      target_date: report.targetDate,
+      report_date: normalizedReport.targetDate,
+      target_date: normalizedReport.targetDate,
       generated_at: new Date().toISOString(),
       topics: TOPIC_KEYWORDS,
-      excluded_names: report.excludedNames || [],
-      articles: report.articles || [],
-      people: report.people || [],
-      payload: report
+      excluded_names: normalizedReport.excludedNames || [],
+      articles: normalizedReport.articles || [],
+      people: normalizedReport.people || [],
+      payload: normalizedReport
     }])
   });
 }
@@ -979,7 +978,7 @@ function normalizeEditablePerson(person, fallback, index) {
       : [],
     selectionReasons: reasons,
     linkedinUrl: sanitizeUrl(merged.linkedinUrl),
-    profileImageUrl: sanitizeUrl(merged.profileImageUrl),
+    profileImageUrl: "",
     topics: Array.isArray(merged.topics)
       ? merged.topics.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 8)
       : [],
@@ -1190,7 +1189,7 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames, searchSe
     "최근 1개월 내 이미 제공된 이름은 절대 다시 선정하지 않는다.",
     "프로필 정보는 기사 스니펫과 일반적으로 알려진 공개 프로필 이력에 근거해 최대한 보강한다.",
     "다만 확인이 어려운 출생년도/학력/링크드인은 추정하지 말고 빈 문자열로 둔다.",
-    "대표 프로필 사진 URL은 이 단계에서 확실하지 않으면 빈 문자열로 둔다. 후속 공개 웹 프로필 보강 단계에서 다시 조사한다.",
+    "프로필 사진은 수집하지 않는다. profileImageUrl은 항상 빈 문자열로 둔다.",
     "현재소속, 현재직책, 과거경력, 핵심 성과는 공개적으로 널리 알려진 사실이면 기사 스니펫에 없더라도 작성한다.",
     "학력은 박사, 석사, 학사 순서로 정리한다. 고등학교 학력은 제외한다.",
     "한국 학교명은 반드시 한국 공식 표기명으로 쓴다. 예: Seoul National University가 아니라 서울대학교, Korea University가 아니라 고려대학교.",
@@ -1253,8 +1252,7 @@ async function callOpenAIForProfileEnrichment(targetDate, people) {
     "경력 start/end는 YYYY-MM, YYYY, 현재 중 가능한 수준으로만 기재한다. 월 정보가 없으면 YYYY만 쓴다.",
     "직급/직책은 각 경력에서 확인 가능한 최종 직급/직책 기준으로 쓴다. 불확실하면 빈 문자열.",
     "LinkedIn은 공식 개인 프로필이라고 판단되는 경우만 URL을 기재한다. 동명이인 가능성이 있거나 확증이 없으면 빈 문자열.",
-    "profileImageUrl은 얼굴이 잘 보이는 대표 프로필 사진의 직접 이미지 URL만 기재한다. 로고, 기사 썸네일 합성, 회사 건물, 비인물 이미지는 제외한다.",
-    "이미지 URL을 확실히 제공할 수 없으면 빈 문자열. 추정하거나 존재하지 않는 URL을 만들지 않는다.",
+    "프로필 사진은 수집하지 않는다. profileImageUrl은 항상 빈 문자열로 둔다.",
     "핵심 성과/실적은 보고서 항목처럼 짧게 끊고, '~했습니다' 같은 종결 문장을 쓰지 않는다.",
     "",
     "Top5 인물 JSON:",
@@ -1266,7 +1264,7 @@ async function callOpenAIForProfileEnrichment(targetDate, people) {
       currentTitle: person.currentTitle,
       topics: person.topics,
       linkedinUrl: person.linkedinUrl,
-      profileImageUrl: person.profileImageUrl,
+      profileImageUrl: "",
       education: person.education,
       career: person.career,
       achievements: person.achievements,
@@ -1331,7 +1329,7 @@ function normalizePerson(person, index, articleById) {
       }).filter((reason) => reason.text).slice(0, 2)
       : [],
     linkedinUrl: String(person.linkedinUrl || "").trim(),
-    profileImageUrl: sanitizeUrl(person.profileImageUrl),
+    profileImageUrl: "",
     topics: Array.isArray(person.topics) ? person.topics.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 5) : [],
     mentionCount: Number(person.mentionCount || 0)
   };
@@ -1445,17 +1443,13 @@ function normalizePersonProfileBasics(person) {
     ...person,
     education: normalizeEducationRecords(person.education).slice(0, 8),
     career: career.slice(0, 20),
-    profileImageUrl: sanitizeUrl(person.profileImageUrl),
+    profileImageUrl: "",
     linkedinUrl: sanitizeUrl(person.linkedinUrl)
   };
 }
 
 function reportNeedsProfileRepair(report) {
-  if (!report || !Array.isArray(report.people) || !report.people.length) {
-    return false;
-  }
-
-  return Number(report.profileCompletenessVersion || 0) < PROFILE_COMPLETENESS_VERSION;
+  return false;
 }
 
 function mergePersonProfile(basePerson, enrichedPerson) {
@@ -1482,7 +1476,7 @@ function mergePersonProfile(basePerson, enrichedPerson) {
     career: normalizeCareerRecords(career).slice(0, 20),
     achievements: achievements.map((item) => String(item || "").replace(/^[-\s]+/, "").trim()).filter(Boolean).slice(0, 5),
     linkedinUrl: sanitizeUrl(enrichedPerson.linkedinUrl) || basePerson.linkedinUrl,
-    profileImageUrl: sanitizeUrl(enrichedPerson.profileImageUrl) || basePerson.profileImageUrl
+    profileImageUrl: ""
   });
 }
 
@@ -1880,14 +1874,7 @@ function extractImageCandidateUrls(html, pageUrl, options = {}) {
 }
 
 function findKnownProfileImageUrl(person) {
-  const name = String(person.name || "").trim();
-  const organization = String(person.currentOrg || "").trim();
-  const match = KNOWN_PROFILE_IMAGE_URLS.find((item) =>
-    item.name === name &&
-    (!item.organizationPattern || item.organizationPattern.test(organization))
-  );
-
-  return match?.url || "";
+  return "";
 }
 
 function collectPersonSourceUrls(person) {
@@ -2030,43 +2017,10 @@ async function validateImageUrl(url) {
 }
 
 async function supplementPublicProfileAssets(people) {
-  const results = await Promise.allSettled(people.map(async (rawPerson) => {
-    const person = normalizePersonProfileBasics(rawPerson);
-    let imageUrl = await validateImageUrl(person.profileImageUrl);
-
-    if (!imageUrl) {
-      imageUrl = await validateImageUrl(await fetchWikipediaProfileImage(person));
-    }
-
-    if (!imageUrl) {
-      imageUrl = await validateImageUrl(await fetchWikidataProfileImage(person));
-    }
-
-    if (!imageUrl) {
-      imageUrl = await validateImageUrl(findKnownProfileImageUrl(person));
-    }
-
-    if (!imageUrl) {
-      imageUrl = await fetchProfileImageFromSourceLinks(person);
-    }
-
-    if (!imageUrl) {
-      imageUrl = await fetchProfileImageFromSearch(person);
-    }
-
-    const linkedinUrl = person.linkedinUrl || await fetchLinkedInProfileUrl(person);
-
-    return {
-      ...person,
-      profileImageUrl: imageUrl,
-      linkedinUrl: sanitizeUrl(person.linkedinUrl) || sanitizeUrl(linkedinUrl)
-    };
+  return (people || []).map((person) => normalizePersonProfileBasics({
+    ...person,
+    profileImageUrl: ""
   }));
-
-  return people.map((person, index) => {
-    const result = results[index];
-    return result.status === "fulfilled" ? result.value : person;
-  });
 }
 
 async function repairReportProfiles(report) {
@@ -2074,14 +2028,12 @@ async function repairReportProfiles(report) {
     return report;
   }
 
-  const targetDate = report.targetDate || report.reportDate || kstDateKeyOffset(-1);
-  const normalizedPeople = report.people.map(normalizePersonProfileBasics);
-  const enrichedPeople = await enrichPeopleProfiles(targetDate, normalizedPeople);
-  const people = await supplementPublicProfileAssets(enrichedPeople);
-
   return {
     ...report,
-    people,
+    people: report.people.map((person) => normalizePersonProfileBasics({
+      ...person,
+      profileImageUrl: ""
+    })),
     profileCompletenessVersion: PROFILE_COMPLETENESS_VERSION,
     profileRepairedAt: new Date().toISOString()
   };
@@ -2349,6 +2301,24 @@ function fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedN
   return rankedCandidates.concat(supplemental).slice(0, 5);
 }
 
+function mergeRankedCandidateLists(primary, supplemental) {
+  const merged = [];
+  const seen = new Set();
+
+  [...(primary || []), ...(supplemental || [])].forEach((person) => {
+    const key = normalizePersonNameKey(person);
+
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    merged.push(person);
+    seen.add(key);
+  });
+
+  return merged.slice(0, 5);
+}
+
 async function generateReport(targetDate) {
   const searchSettings = await loadSearchSettings();
   const excludedNames = await loadExcludedNames(targetDate);
@@ -2372,6 +2342,20 @@ async function generateReport(targetDate) {
 
   rankedCandidates = fillRankedCandidatesWithHeuristic(rankedCandidates, articles, excludedNames);
 
+  if (rankedCandidates.length < 5) {
+    try {
+      const supplementalRanking = await callOpenAIForPeople(targetDate, articles, [], searchSettings);
+      const supplementalCandidates = selectRankedCandidates(supplementalRanking.people, []);
+      rankedCandidates = fillRankedCandidatesWithHeuristic(
+        mergeRankedCandidateLists(rankedCandidates, supplementalCandidates),
+        articles,
+        []
+      );
+    } catch (error) {
+      console.warn("OpenAI supplemental trending people ranking failed.", error.message);
+    }
+  }
+
   if (!rankedCandidates.length && rankingError) {
     throw rankingError;
   }
@@ -2380,12 +2364,19 @@ async function generateReport(targetDate) {
     throw new Error("No plausible people were found for the target date.");
   }
 
+  if (rankedCandidates.length < 5) {
+    throw new Error(`Today's Talent Top5 후보를 충분히 검증하지 못했습니다. 현재 후보 ${rankedCandidates.length}명.`);
+  }
+
   await resolveReferencedArticleUrls(articleById, rankedCandidates);
 
   const articlesWithResolvedLinks = articles.map((article) => articleById.get(article.id) || article);
   const rankedPeople = rankedCandidates.map((person, index) => normalizePerson(person, index, articleById));
   const enrichedPeople = await enrichPeopleProfiles(targetDate, rankedPeople);
-  const people = await supplementPublicProfileAssets(enrichedPeople);
+  const people = enrichedPeople.map((person) => normalizePersonProfileBasics({
+    ...person,
+    profileImageUrl: ""
+  }));
   const report = {
     reportDate: targetDate,
     targetDate,
@@ -2452,16 +2443,19 @@ module.exports = async function trendingPeople(request, response) {
     const shouldForce = forceRefresh(request.url);
     const cached = shouldForce ? null : await loadCachedReport(targetDate);
     const usedCached = Boolean(cached && Array.isArray(cached.people) && cached.people.length);
-    const sourceReport = usedCached ? cached : await generateReport(targetDate);
-    let report = await resolveReportNewsLinks(sourceReport);
+    const report = usedCached
+      ? {
+        ...cached,
+        people: cached.people.map((person) => normalizePersonProfileBasics({
+          ...person,
+          profileImageUrl: ""
+        }))
+      }
+      : await resolveReportNewsLinks(await generateReport(targetDate));
 
-    if (usedCached && reportNeedsProfileRepair(report)) {
-      report = await repairReportProfiles(report);
-    }
-
-    if (usedCached && report !== sourceReport) {
+    if (!usedCached) {
       await saveReport(report).catch((saveError) => {
-        console.warn("Trending people report migration save failed.", saveError.message);
+        console.warn("Trending people generated report save failed.", saveError.message);
       });
     }
 

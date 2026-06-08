@@ -89,7 +89,6 @@ const DEFAULT_TRENDING_SEARCH_SETTINGS = {
   updatedBy: ""
 };
 const LEGACY_TRENDING_MAIL_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
-const TRENDING_PROFILE_COMPLETENESS_VERSION = 6;
 const BUSINESS_UNITS = ["VD", "MX", "DA", "NW", "CDO", "SR", "한총", "G.CS", "전사직속"];
 const SCREENING_JOB_CATEGORIES = [
   "연구개발",
@@ -3717,10 +3716,6 @@ function trendingReportNeedsRefresh(report) {
   }
 
   if (!state.trendingSelectedDate && (report.targetDate || report.reportDate) !== getTrendingTargetDate()) {
-    return true;
-  }
-
-  if (Number(report.profileCompletenessVersion || 0) < TRENDING_PROFILE_COMPLETENESS_VERSION) {
     return true;
   }
 
@@ -9886,12 +9881,6 @@ function renderTrendingProfileEditPanel() {
   return `
     <form class="trending-profile-edit-form" id="trending-profile-edit-form" data-trending-profile-id="${escapeHtml(trendingPersonIdentifier(person))}">
       ${state.trendingProfileError ? `<div class="form-error">${escapeHtml(state.trendingProfileError)}</div>` : ""}
-      <div class="trending-profile-edit-preview">
-        ${person.profileImageUrl
-          ? `<img src="${escapeHtml(person.profileImageUrl)}" alt="${escapeHtml(person.name || "화제 인물")} 프로필 사진 미리보기" referrerpolicy="no-referrer" />`
-          : `<div>${escapeHtml(String(person.name || "?").slice(0, 1))}</div>`}
-        <span>프로필 사진 URL을 수정하면 웹 카드와 메일 본문에 같은 이미지가 반영됩니다.</span>
-      </div>
       <div class="field-grid">
         <div class="field">
           <label for="trending-edit-name">이름</label>
@@ -9908,10 +9897,6 @@ function renderTrendingProfileEditPanel() {
         <div class="field">
           <label for="trending-edit-current-title">현재직책</label>
           <input class="control-input" id="trending-edit-current-title" name="currentTitle" value="${inputValue(person.currentTitle)}" />
-        </div>
-        <div class="field full">
-          <label for="trending-edit-profile-image">프로필 사진 URL</label>
-          <input class="control-input" id="trending-edit-profile-image" name="profileImageUrl" type="url" value="${inputValue(person.profileImageUrl)}" placeholder="https://..." />
         </div>
         <div class="field full">
           <label for="trending-edit-linkedin">LinkedIn URL</label>
@@ -9983,7 +9968,7 @@ function renderTrendingModal() {
     : isSearchModal
       ? "매일 Today's Talent에서 검색해야 하는 관심 분야를 자연어 프롬프트로 관리합니다."
       : isProfileModal
-        ? "저장된 리포트의 인물 정보와 프로필 사진 URL을 직접 수정합니다."
+        ? "저장된 리포트의 인물 정보, 학력/경력, 성과, 선정 사유를 직접 수정합니다."
       : "저장된 날짜를 선택해 과거 Today's Talent 리포트를 조회합니다.";
   const effectiveContent = isSearchModal ? renderTrendingSearchPanel({ hideTitle: true }) : isProfileModal ? renderTrendingProfileEditPanel() : content;
 
@@ -10059,9 +10044,6 @@ function trendingPersonCard(person) {
   const achievements = Array.isArray(person.achievements) ? person.achievements : [];
   const reasons = Array.isArray(person.selectionReasons) ? person.selectionReasons : [];
   const rank = person.rank || "";
-  const photo = person.profileImageUrl
-    ? `<img class="trending-photo" src="${escapeHtml(person.profileImageUrl)}" alt="${escapeHtml(person.name || "화제 인물")} 프로필 사진" loading="lazy" referrerpolicy="no-referrer" />`
-    : `<div class="trending-photo-placeholder" aria-hidden="true">${escapeHtml(String(person.name || "?").slice(0, 1))}</div>`;
   const alreadyRegistered = getVisibleCandidates().some((candidate) =>
     candidate.name === person.name &&
     (!person.currentOrg || candidate.company === person.currentOrg)
@@ -10069,13 +10051,12 @@ function trendingPersonCard(person) {
 
   return `
     <article class="trending-card">
-      <div class="trending-media" data-trending-rank="${escapeHtml(rank)}">
-        ${photo}
+      <div class="trending-rank-cell" aria-label="${escapeHtml(rank)}순위">
+        <span class="trending-rank-marker">${escapeHtml(rank)}</span>
       </div>
       <div class="trending-profile">
         <div class="trending-card-header">
           <div class="trending-title-row">
-            <span class="trending-title-rank">${escapeHtml(rank)}</span>
             <div>
               <h4>${escapeHtml(person.name || "-")}</h4>
               <p>${escapeHtml([person.birthYear ? `${person.birthYear}년생` : "", person.currentOrg, person.currentTitle].filter(Boolean).join(" · "))}</p>
@@ -13632,7 +13613,7 @@ function collectTrendingProfileFromForm(form, existingPerson) {
     birthYear: String(form.birthYear.value || "").trim(),
     currentOrg: String(form.currentOrg.value || "").trim(),
     currentTitle: String(form.currentTitle.value || "").trim(),
-    profileImageUrl: String(form.profileImageUrl.value || "").trim(),
+    profileImageUrl: "",
     linkedinUrl: String(form.linkedinUrl.value || "").trim(),
     education: parseTrendingEducationLines(form.education.value),
     career: parseTrendingCareerLines(form.career.value),
@@ -13782,7 +13763,7 @@ function registerTrendingPerson(identifier) {
     dataQuality: 82,
     parsingConfidence: 82,
     avatarColor: "#4e5968",
-    photoUrl: person.profileImageUrl || "",
+    photoUrl: "",
     birthYear: person.birthYear || "",
     linkedinUrl: person.linkedinUrl || "",
     referenceUrl: (person.selectionReasons || [])
@@ -16289,12 +16270,20 @@ function bindEvents() {
     const refreshTrendingButton = event.target.closest("[data-refresh-trending]");
     if (refreshTrendingButton) {
       const mode = refreshTrendingButton.dataset.refreshTrending;
+      const targetDate = state.trendingReport?.targetDate || state.trendingSelectedDate || getTrendingTargetDate();
+
       if (mode === "force") {
-        state.trendingSelectedDate = "";
+        const confirmed = window.confirm(`${targetDate} 00:00~24:00 기사 기준 Today's Talent 리포트를 다시 조사합니다.\n\n기존 리포트 보관함의 같은 날짜 데이터가 새 결과로 덮어써집니다. 계속 진행할까요?`);
+
+        if (!confirmed) {
+          return;
+        }
       }
+
       fetchTrendingPeople({
         force: mode === "force",
-        forceLatest: mode === "force" || mode === "latest"
+        date: mode === "force" ? targetDate : undefined,
+        forceLatest: mode === "latest"
       });
       return;
     }
@@ -17147,17 +17136,6 @@ function bindEvents() {
       updateJobFitJdText(event.target.value);
     }
   });
-
-  document.addEventListener("error", (event) => {
-    if (!event.target.classList?.contains("trending-photo")) {
-      return;
-    }
-
-    const fallback = document.createElement("div");
-    fallback.className = "trending-photo-placeholder";
-    fallback.textContent = "사진";
-    event.target.replaceWith(fallback);
-  }, true);
 
   document.addEventListener("dragover", (event) => {
     const input = findFileInputForDrop(event.target);
