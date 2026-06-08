@@ -289,6 +289,33 @@ function buildMailPayload(body) {
   throw new Error("지원하지 않는 Screening 메일 액션입니다.");
 }
 
+function textToHtml(text) {
+  return `
+    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.7">
+      ${escapeHtml(text).replace(/\r?\n/g, "<br>")}
+    </div>
+  `;
+}
+
+function applyMailOverride(mail, override = {}) {
+  if (!override || typeof override !== "object") {
+    return mail;
+  }
+
+  const recipients = normalizeEmailList(override.recipients || override.to || override.recipient);
+  const subject = String(override.subject || "").trim();
+  const text = String(override.text || "").trim();
+  const html = String(override.html || "").trim();
+
+  return {
+    ...mail,
+    to: recipients.length ? recipients : mail.to,
+    subject: subject || mail.subject,
+    text: text || mail.text,
+    html: html || (text ? textToHtml(text) : mail.html)
+  };
+}
+
 async function sendEmailViaResend(mail) {
   const config = assertProviderConfigured();
   const invalidRecipients = mail.to.filter((email) => !isValidEmail(email));
@@ -334,7 +361,7 @@ module.exports = async function screeningMail(request, response) {
 
   try {
     const body = await readJsonBody(request);
-    const mail = buildMailPayload(body);
+    const mail = applyMailOverride(buildMailPayload(body), body.mailOverride);
     const result = await sendEmailViaResend(mail);
 
     sendJson(response, 200, {

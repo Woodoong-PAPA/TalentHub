@@ -2072,19 +2072,28 @@ tr:last-child td {
 }
 
 .screening-structured-card {
-  gap: 18px;
-  border-color: #111827;
-  border-radius: 2px;
-  padding: 20px;
-  box-shadow: none;
+  gap: 16px;
+  border-color: var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
-.screening-structured-card.is-passed,
+.screening-structured-card.is-passed {
+  border-color: rgba(3, 178, 108, 0.24);
+  box-shadow: inset 3px 0 0 rgba(3, 178, 108, 0.22), var(--shadow);
+}
+
 .screening-structured-card.is-draft,
-.screening-structured-card.is-reviewing,
+.screening-structured-card.is-reviewing {
+  border-color: rgba(49, 130, 246, 0.24);
+  box-shadow: inset 3px 0 0 rgba(49, 130, 246, 0.2), var(--shadow);
+}
+
 .screening-structured-card.is-rejected {
-  border-color: #111827;
-  box-shadow: none;
+  border-color: rgba(244, 63, 94, 0.22);
+  box-shadow: inset 3px 0 0 rgba(244, 63, 94, 0.2), var(--shadow);
 }
 
 .screening-structured-top {
@@ -2120,9 +2129,9 @@ tr:last-child td {
 }
 
 .screening-structured-status .stage-chip {
-  border-radius: 0;
-  background: #fff4cf;
-  color: #4e3b00;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue-700);
 }
 
 .screening-structured-info-grid {
@@ -2146,8 +2155,8 @@ tr:last-child td {
 .screening-structured-special-input > span {
   display: block;
   margin: 0 0 8px;
-  color: #111827;
-  font-size: 17px;
+  color: var(--text);
+  font-size: 14px;
   font-weight: 900;
 }
 
@@ -2155,7 +2164,7 @@ tr:last-child td {
 .screening-structured-special-box p,
 .screening-structured-fit p {
   margin: 0 0 6px;
-  color: #111827;
+  color: var(--text);
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -2167,9 +2176,10 @@ tr:last-child td {
 
 .screening-structured-special-box {
   min-height: 66px;
-  border: 1px solid #111827;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 12px;
-  background: #fff;
+  background: var(--surface-soft);
 }
 
 .screening-structured-special-input {
@@ -2179,8 +2189,8 @@ tr:last-child td {
 .screening-structured-special-input textarea,
 .screening-structured-opinion textarea {
   min-height: 78px;
-  border-color: #111827;
-  border-radius: 0;
+  border-color: var(--line);
+  border-radius: var(--radius-sm);
   background: #fff;
 }
 
@@ -2192,9 +2202,10 @@ tr:last-child td {
 }
 
 .screening-structured-fit {
-  border: 1px solid #111827;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 12px 14px;
-  background: #fff;
+  background: var(--surface-soft);
 }
 
 .screening-structured-fit-title {
@@ -2288,6 +2299,21 @@ tr:last-child td {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.screening-mail-preview-modal {
+  max-width: 760px;
+}
+
+.screening-mail-preview-form {
+  display: grid;
+  gap: 16px;
+}
+
+.screening-mail-preview-form .mail-body-editor {
+  min-height: 280px;
+  line-height: 1.65;
+  white-space: pre-wrap;
 }
 
 .screening-applicant-detail-modal {
@@ -3753,13 +3779,28 @@ tr:last-child td {
   display: grid;
   width: 76px;
   height: 76px;
+  gap: 2px;
   place-items: center;
+  align-content: center;
   justify-self: end;
   border-radius: 50%;
   color: var(--blue-700);
   background: var(--blue-soft);
   font-size: 18px;
   font-weight: 700;
+  text-align: center;
+}
+
+.match-score span {
+  color: var(--blue-700);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.match-score strong {
+  color: var(--text);
+  font-size: 19px;
+  line-height: 1;
 }
 
 .evidence-list {

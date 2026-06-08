@@ -34,6 +34,7 @@ const MENU_CONFIG = [
 const DEFAULT_MENU_ORDER = MENU_CONFIG.map((item) => item.view);
 const DEFAULT_MENU_LABELS = Object.fromEntries(MENU_CONFIG.map((item) => [item.view, item.label]));
 const MENU_SETTING_KEY = "menu_order";
+const SCREENING_DELETED_FOLDERS_SETTING_KEY = "screening_deleted_folder_ids";
 
 const MEMBER_ROLES = {
   applicant: "지원자",
@@ -620,6 +621,7 @@ const state = {
   editingInterviewId: "",
   editingMemoId: "",
   screeningFolders: structuredClone(DEFAULT_SCREENING_FOLDERS),
+  screeningDeletedFolderIds: [],
   selectedScreeningFolderId: "screening-folder-001",
   screeningPage: "list",
   screeningDetailStep: "reception",
@@ -636,6 +638,7 @@ const state = {
   screeningJdModalOpen: false,
   screeningAccessModalOpen: false,
   screeningApplicantDetailId: "",
+  screeningMailPreview: null,
   screeningResultPanelOpen: false,
   poolReturnScrollY: 0,
   poolFilters: {
@@ -1561,10 +1564,11 @@ function ensurePolicySourceDefaults() {
 }
 
 function ensureScreeningDefaults() {
-  state.screeningFolders = state.screeningFolders.map(normalizeScreeningFolder);
+  state.screeningDeletedFolderIds = normalizeIdList(state.screeningDeletedFolderIds);
+  state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders.map(normalizeScreeningFolder));
   normalizeScreeningFilters();
 
-  if (!state.screeningFolders.length) {
+  if (!state.screeningFolders.length && !state.screeningDeletedFolderIds.length) {
     state.screeningFolders = structuredClone(DEFAULT_SCREENING_FOLDERS).map(normalizeScreeningFolder);
   }
 
@@ -2301,6 +2305,7 @@ function persistState(options = {}) {
         version: STORAGE_VERSION,
         candidates: state.candidates,
         screeningFolders: state.screeningFolders,
+        screeningDeletedFolderIds: state.screeningDeletedFolderIds,
         interviewCases: state.interviewCases,
         selectedInterviewCaseId: state.selectedInterviewCaseId,
         selectedInterviewStage: state.selectedInterviewStage,
@@ -2351,6 +2356,11 @@ function restorePersistedState() {
 
   if (Array.isArray(persisted.screeningFolders) && persisted.screeningFolders.length) {
     state.screeningFolders = persisted.screeningFolders.map(normalizeScreeningFolder);
+  }
+
+  if (Array.isArray(persisted.screeningDeletedFolderIds)) {
+    state.screeningDeletedFolderIds = normalizeIdList(persisted.screeningDeletedFolderIds);
+    state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
   }
 
   if (Array.isArray(persisted.interviewCases)) {
@@ -2984,6 +2994,39 @@ function buildMenuSettingPayload() {
   };
 }
 
+function buildScreeningDeletedFoldersPayload() {
+  return {
+    ids: normalizeIdList(state.screeningDeletedFolderIds),
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentActorName()
+  };
+}
+
+function getDeletedScreeningFolderIdSet() {
+  return new Set(normalizeIdList(state.screeningDeletedFolderIds));
+}
+
+function filterDeletedScreeningFolders(folders = []) {
+  const deletedIds = getDeletedScreeningFolderIdSet();
+
+  if (!deletedIds.size) {
+    return Array.isArray(folders) ? folders : [];
+  }
+
+  return (Array.isArray(folders) ? folders : []).filter((folder) => folder?.id && !deletedIds.has(folder.id));
+}
+
+function rememberDeletedScreeningFolderId(folderId) {
+  const id = String(folderId || "").trim();
+
+  if (!id) {
+    return;
+  }
+
+  state.screeningDeletedFolderIds = normalizeIdList([...(state.screeningDeletedFolderIds || []), id]);
+  state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
+}
+
 function getRemoteMenuSettingsUpdatedAt(row) {
   return normalizeMenuSettingsUpdatedAt(
     row?.payload?.menuSettingsUpdatedAt ||
@@ -3007,9 +3050,38 @@ async function syncMenuSettingsToSupabase() {
   return true;
 }
 
+async function syncScreeningDeletedFoldersToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(SCREENING_DELETED_FOLDERS_SETTING_KEY, buildScreeningDeletedFoldersPayload())])
+  });
+
+  return true;
+}
+
 function applyAppSettingsFromSupabaseRows(rows = []) {
   const settings = Array.isArray(rows) ? rows : [];
   const menuOrderSetting = settings.find((row) => row.setting_key === MENU_SETTING_KEY);
+  const deletedFoldersSetting = settings.find((row) => row.setting_key === SCREENING_DELETED_FOLDERS_SETTING_KEY);
+
+  if (deletedFoldersSetting?.payload) {
+    const remoteDeletedIds = normalizeIdList(
+      deletedFoldersSetting.payload.ids ||
+      deletedFoldersSetting.payload.screeningDeletedFolderIds ||
+      deletedFoldersSetting.payload.screening_deleted_folder_ids ||
+      []
+    );
+
+    if (remoteDeletedIds.length) {
+      state.screeningDeletedFolderIds = normalizeIdList([...(state.screeningDeletedFolderIds || []), ...remoteDeletedIds]);
+      state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
+    }
+  }
 
   if (!menuOrderSetting) {
     return;
@@ -3063,6 +3135,7 @@ async function syncStateToSupabase() {
     ensureAuditLogIds();
     await ensureMemberPasswordHashes();
     const candidateRows = state.candidates.map(candidateToSupabaseRow);
+    state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
     const screeningFolderRows = state.screeningFolders.map(screeningFolderToSupabaseRow);
     const auditRows = state.auditLogs.map(auditLogToSupabaseRow);
     const memberRows = state.members.map(memberToSupabaseRow);
@@ -3127,6 +3200,7 @@ async function syncStateToSupabase() {
 
     try {
       await syncMenuSettingsToSupabase();
+      await syncScreeningDeletedFoldersToSupabase();
     } catch (error) {
       console.warn("App settings could not be synced.", error);
     }
@@ -3161,11 +3235,15 @@ async function loadStateFromSupabase() {
         console.warn("Policy sources could not be loaded.", error);
         return [];
       }),
-      supabaseRequest("app_settings?select=*&setting_key=eq.menu_order&limit=1").catch((error) => {
+      supabaseRequest("app_settings?select=*&setting_key=in.(menu_order,screening_deleted_folder_ids)").catch((error) => {
         console.warn("App settings could not be loaded.", error);
         return [];
       })
     ]);
+
+    if (Array.isArray(appSettingRows) && appSettingRows.length) {
+      applyAppSettingsFromSupabaseRows(appSettingRows);
+    }
 
     if (Array.isArray(candidateRows)) {
       const remoteCandidates = candidateRows.map(candidateFromSupabaseRow).filter(Boolean);
@@ -3176,8 +3254,8 @@ async function loadStateFromSupabase() {
     }
 
     if (Array.isArray(screeningFolderRows) && screeningFolderRows.length) {
-      const remoteFolders = screeningFolderRows.map(screeningFolderFromSupabaseRow).filter(Boolean);
-      state.screeningFolders = mergeByLatest(state.screeningFolders, remoteFolders, normalizeScreeningFolder)
+      const remoteFolders = filterDeletedScreeningFolders(screeningFolderRows.map(screeningFolderFromSupabaseRow).filter(Boolean));
+      state.screeningFolders = filterDeletedScreeningFolders(mergeByLatest(state.screeningFolders, remoteFolders, normalizeScreeningFolder))
         .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || a.title.localeCompare(b.title));
     }
 
@@ -3199,10 +3277,6 @@ async function loadStateFromSupabase() {
 
     if (Array.isArray(policySourceRows) && policySourceRows.length) {
       state.policySources = policySourceRows.map(policySourceFromSupabaseRow).filter((source) => source.content);
-    }
-
-    if (Array.isArray(appSettingRows) && appSettingRows.length) {
-      applyAppSettingsFromSupabaseRows(appSettingRows);
     }
 
     await mergeCurrentUserJobFitAnalysesFromSupabase();
@@ -4743,7 +4817,7 @@ function renderPoolTable() {
 }
 
 function getBaseAccessibleScreeningFolders(member = getCurrentMember()) {
-  return state.screeningFolders
+  return filterDeletedScreeningFolders(state.screeningFolders)
     .filter((folder) => canAccessScreeningFolder(folder, member))
     .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || a.title.localeCompare(b.title));
 }
@@ -4807,6 +4881,10 @@ function getSelectedScreeningFolder() {
 }
 
 function getScreeningFolder(folderId = state.selectedScreeningFolderId) {
+  if (getDeletedScreeningFolderIdSet().has(folderId)) {
+    return null;
+  }
+
   return state.screeningFolders.find((folder) => folder.id === folderId) || null;
 }
 
@@ -4815,6 +4893,10 @@ function getScreeningApplicant(folder, applicantId) {
 }
 
 function replaceScreeningFolder(folder) {
+  if (getDeletedScreeningFolderIdSet().has(folder?.id)) {
+    return null;
+  }
+
   const index = state.screeningFolders.findIndex((item) => item.id === folder.id);
   const nextFolder = normalizeScreeningFolder(touchScreeningFolder(folder));
 
@@ -4846,6 +4928,7 @@ async function deleteScreeningFolder(folderId) {
     return;
   }
 
+  rememberDeletedScreeningFolderId(folder.id);
   state.screeningFolders = state.screeningFolders.filter((item) => item.id !== folder.id);
 
   if (state.selectedScreeningFolderId === folder.id) {
@@ -4864,7 +4947,15 @@ async function deleteScreeningFolder(folderId) {
   renderScreening();
 
   try {
-    await deleteScreeningFolderFromSupabase(folder.id);
+    const results = await Promise.allSettled([
+      deleteScreeningFolderFromSupabase(folder.id),
+      syncScreeningDeletedFoldersToSupabase()
+    ]);
+    const failed = results.find((result) => result.status === "rejected");
+
+    if (failed) {
+      throw failed.reason;
+    }
     showToast(`${folder.title} 포지션을 삭제했습니다.`);
   } catch (error) {
     console.warn("Screening folder remote delete failed.", error);
@@ -6302,7 +6393,8 @@ function renderScreeningStructuredApplicantCard(folder, applicant, step) {
   const careerLines = getScreeningApplicantCareerLines(applicant);
   const locked = isScreeningStageSnapshotLocked(applicant, step);
   const cardClass = [locked ? "is-locked" : "", getScreeningApplicantCardClass(applicant)].filter(Boolean).join(" ");
-  const showFirstScreeningArea = step === "first";
+  const showReviewArea = step !== "reception";
+  const opinionStage = step === "second" ? "second" : step === "first" ? "first" : "";
   const lockedNote = getScreeningStageSnapshotNote(applicant, step);
 
   return `
@@ -6337,7 +6429,7 @@ function renderScreeningStructuredApplicantCard(folder, applicant, step) {
 
       ${renderScreeningApplicantSpecialBox(folder, applicant, step)}
 
-      ${showFirstScreeningArea ? `
+      ${showReviewArea ? `
         <div class="screening-structured-review-row">
           ${renderScreeningStructuredFitPanel(folder, applicant)}
           <aside class="screening-structured-actions">
@@ -6345,11 +6437,11 @@ function renderScreeningStructuredApplicantCard(folder, applicant, step) {
             ${renderApplicantActions(folder, applicant, step)}
           </aside>
         </div>
-        ${renderScreeningOpinionField(folder, applicant, "first", {
+        ${opinionStage ? renderScreeningOpinionField(folder, applicant, opinionStage, {
           label: "평가의견",
           rows: 4,
           className: "screening-structured-opinion"
-        })}
+        }) : ""}
       ` : `
         <div class="screening-structured-bottom-actions">
           ${renderApplicantActions(folder, applicant, step)}
@@ -6360,6 +6452,8 @@ function renderScreeningStructuredApplicantCard(folder, applicant, step) {
 }
 
 function renderApplicantCard(folder, applicant, step = state.screeningDetailStep) {
+  return renderScreeningStructuredApplicantCard(folder, applicant, step);
+
   if (step === "reception" || step === "first") {
     return renderScreeningStructuredApplicantCard(folder, applicant, step);
   }
@@ -6547,6 +6641,49 @@ function renderScreeningMailQueue(folder) {
   `;
 }
 
+function renderScreeningMailPreviewModal() {
+  const preview = state.screeningMailPreview;
+
+  if (!preview) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-screening-mail-preview-backdrop>
+      <section class="trending-modal screening-mail-preview-modal" role="dialog" aria-modal="true" aria-labelledby="screening-mail-preview-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="screening-mail-preview-title">${escapeHtml(preview.title || "메일 발송 검토")}</strong>
+            <span>수신자, 제목, 본문을 확인한 뒤 필요한 부분을 수정해서 발송합니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-screening-mail-preview>닫기</button>
+        </div>
+        <div class="trending-modal-body">
+          <form id="screening-mail-preview-form" class="screening-mail-preview-form">
+            <div class="field">
+              <label for="screening-mail-preview-recipients">수신자</label>
+              <textarea class="control-textarea" id="screening-mail-preview-recipients" name="recipients" rows="3">${escapeHtml(preview.recipientsText || "")}</textarea>
+              <span class="form-help">여러 명에게 보낼 경우 줄바꿈, 쉼표, 세미콜론으로 구분합니다.</span>
+            </div>
+            <div class="field">
+              <label for="screening-mail-preview-subject">제목</label>
+              <input class="control-input" id="screening-mail-preview-subject" name="subject" value="${inputValue(preview.subject || "")}" />
+            </div>
+            <div class="field">
+              <label for="screening-mail-preview-body">본문</label>
+              <textarea class="control-textarea mail-body-editor" id="screening-mail-preview-body" name="body" rows="14">${escapeHtml(preview.body || "")}</textarea>
+            </div>
+            <div class="form-actions">
+              <button class="ghost-button" type="button" data-close-screening-mail-preview>취소</button>
+              <button class="primary-button" type="submit">수정 내용으로 발송</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderScreeningStepContent(folder) {
   const step = getCurrentScreeningDetailStep(folder);
 
@@ -6695,6 +6832,7 @@ function renderScreening() {
       ${renderScreeningJdModal(selectedFolder)}
       ${renderScreeningAccessModal(selectedFolder)}
       ${renderScreeningApplicantDetailModal(selectedFolder)}
+      ${renderScreeningMailPreviewModal()}
     `;
     hydrateScreeningResumeViewers(selectedFolder);
     return;
@@ -7144,10 +7282,6 @@ function renderRegister() {
             <textarea class="control-textarea compact-textarea" id="candidate-summary" name="summary" rows="4"></textarea>
           </div>
           <div class="field">
-            <label for="candidate-skills">키워드</label>
-            <textarea class="control-textarea compact-textarea" id="candidate-skills" name="skills" rows="3"></textarea>
-          </div>
-          <div class="field">
             <label for="candidate-organization">사업부</label>
             <select class="control-select" id="candidate-organization" name="organization">
               ${renderBusinessUnitOptions(getMemberBusinessUnit())}
@@ -7220,6 +7354,17 @@ function renderRegister() {
           </div>
           <div class="edit-record-list" id="register-career-list">
             ${renderRegisterCareerRecord({}, 0)}
+          </div>
+        </section>
+
+        <section class="edit-section register-section">
+          <div class="edit-section-header">
+            <h5>키워드</h5>
+          </div>
+          <div class="field">
+            <label for="candidate-skills">키워드</label>
+            <textarea class="control-textarea compact-textarea" id="candidate-skills" name="skills" rows="3"></textarea>
+            <span class="form-help">기술, 도메인, 툴, 핵심 키워드를 줄바꿈 또는 쉼표로 입력합니다.</span>
           </div>
         </section>
 
@@ -7449,7 +7594,9 @@ function normalizeJobFitResume(resume = {}) {
   const hasResumeEducation = Array.isArray(resume.education) && resume.education.some(hasAnyRecordValue);
   const hasResumeCareer = Array.isArray(resume.career) && resume.career.some(hasAnyRecordValue);
   const needsProfileExtraction = text && (!existingName || !hasResumeEducation || !hasResumeCareer);
-  const parsedProfile = needsProfileExtraction ? extractJobFitProfileFromResume(text, fileName) : {};
+  const parsedProfile = needsProfileExtraction
+    ? normalizeParsedResumeForForm(parseResumeText(text, fileName))
+    : {};
   const education = normalizeJobFitEducationRecords(
     hasResumeEducation
       ? resume.education
@@ -7501,15 +7648,22 @@ function normalizeJobFitEducationRecords(records = []) {
 
 function normalizeJobFitCareerRecords(records = []) {
   return (Array.isArray(records) ? records : [])
-    .map((item) => ({
-      country: cleanParsedValue(item?.country),
-      company: cleanParsedValue(item?.company),
-      rank: cleanParsedValue(item?.rank),
-      position: cleanParsedValue(item?.position || item?.title || item?.department || ""),
-      start: normalizeParsedDate(item?.start),
-      end: normalizeParsedDate(item?.end),
-      achievements: normalizeResumeText(item?.achievements || "")
-    }))
+    .map((item) => {
+      const roleFields = normalizeCareerRoleFields(
+        item?.rank,
+        item?.position || item?.title || item?.department || ""
+      );
+
+      return {
+        country: cleanParsedValue(item?.country),
+        company: cleanParsedValue(item?.company),
+        rank: roleFields.rank,
+        position: roleFields.position,
+        start: normalizeParsedDate(item?.start),
+        end: normalizeParsedDate(item?.end),
+        achievements: normalizeResumeText(item?.achievements || "")
+      };
+    })
     .filter(hasAnyRecordValue)
     .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
     .slice(0, 8);
@@ -10422,6 +10576,21 @@ function includesAny(text, aliases) {
   return aliases.some((alias) => text.includes(normalizeSearchText(alias)));
 }
 
+function aiSearchGradeFromScore(score) {
+  return gradeFromJobFitScore(score);
+}
+
+function buildAiSearchResult(candidate, score, reasons) {
+  const matchScore = Math.max(0, Math.min(98, Math.round(score)));
+
+  return {
+    ...candidate,
+    matchScore,
+    matchGrade: aiSearchGradeFromScore(matchScore),
+    matchReasons: reasons.filter(Boolean).slice(0, 4)
+  };
+}
+
 function runLocalAiSearch(query) {
   const cleanQuery = query.trim();
 
@@ -10441,12 +10610,30 @@ function runLocalAiSearch(query) {
       const tokenHits = queryTokens.filter((token) => profileText.includes(token));
       const conceptHits = requestedConcepts.filter((concept) => includesAny(profileText, concept.aliases));
       const skillHits = (candidate.skills || []).filter((skill) => queryText.includes(normalizeSearchText(skill)));
+      const roleText = normalizeSearchText([candidate.role, candidate.company, candidate.jobFamily].filter(Boolean).join(" "));
+      const careerText = normalizeSearchText((candidate.career || [])
+        .flatMap((item) => [item.company, item.rank, item.position, item.achievements])
+        .filter(Boolean)
+        .join(" "));
+      const educationText = normalizeSearchText((candidate.education || [])
+        .flatMap((item) => [item.degree, item.school, item.major])
+        .filter(Boolean)
+        .join(" "));
+      const roleHits = queryTokens.filter((token) => roleText.includes(token));
+      const careerHits = queryTokens.filter((token) => careerText.includes(token));
+      const educationHits = queryTokens.filter((token) => educationText.includes(token));
+      const tokenCoverage = queryTokens.length ? tokenHits.length / queryTokens.length : 0;
       const reasons = [];
-      let score = 28;
+      let score = 12;
 
-      score += Math.min(30, tokenHits.length * 5);
-      score += conceptHits.length * 13;
-      score += skillHits.length * 8;
+      score += Math.min(24, Math.round(tokenCoverage * 24));
+      score += requestedConcepts.length
+        ? Math.min(28, Math.round((conceptHits.length / requestedConcepts.length) * 28))
+        : Math.min(10, tokenHits.length * 2);
+      score += Math.min(18, skillHits.length * 6);
+      score += Math.min(10, roleHits.length * 4);
+      score += Math.min(12, careerHits.length * 3);
+      score += Math.min(6, educationHits.length * 2);
 
       if (conceptHits.length) {
         reasons.push(`${conceptHits.slice(0, 3).map((concept) => concept.label).join(", ")} 조건과 프로필이 일치`);
@@ -10479,15 +10666,21 @@ function runLocalAiSearch(query) {
         reasons.push(`${tokenHits.slice(0, 4).join(", ")} 키워드가 프로필에 포함`);
       }
 
-      const matchScore = Math.max(0, Math.min(98, Math.round(score)));
+      if (requestedConcepts.length && !conceptHits.length) {
+        score -= 18;
+      }
 
-      return {
-        ...candidate,
-        matchScore,
-        matchReasons: reasons.filter(Boolean).slice(0, 4)
-      };
+      if (queryTokens.length >= 3 && tokenCoverage < 0.25) {
+        score -= 12;
+      }
+
+      if (tokenCoverage >= 0.7 && (conceptHits.length || skillHits.length || careerHits.length)) {
+        score += 8;
+      }
+
+      return buildAiSearchResult(candidate, score, reasons);
     })
-    .filter((candidate) => candidate.matchScore >= 35)
+    .filter((candidate) => candidate.matchScore >= 25)
     .sort((a, b) => b.matchScore - a.matchScore || dateSortValue(b.createdAt) - dateSortValue(a.createdAt))
     .slice(0, 6);
 }
@@ -10537,11 +10730,17 @@ function mergeServerSearchResults(localResults, serverResults) {
       }
 
       const local = localById.get(result.id);
-      return {
-        ...candidate,
-        matchScore: Math.max(result.score, local?.matchScore || 0),
-        matchReasons: result.reasons?.length ? result.reasons : local?.matchReasons || []
-      };
+      const localScore = Number(local?.matchScore || 0);
+      const serverScore = Number(result.score || 0);
+      const blendedScore = serverScore && localScore
+        ? Math.round((serverScore * 0.65) + (localScore * 0.35))
+        : serverScore || localScore;
+
+      return buildAiSearchResult(
+        candidate,
+        blendedScore,
+        result.reasons?.length ? result.reasons : local?.matchReasons || []
+      );
     })
     .filter(Boolean);
 
@@ -11471,10 +11670,12 @@ function searchResultCard(candidate) {
         </ul>
         <div class="actions-cell" style="margin-top:12px">
           <button class="primary-button" type="button" data-select-candidate="${candidate.id}">상세 보기</button>
-          <button class="ghost-button" type="button" data-shortlist="${candidate.id}">Shortlist</button>
         </div>
       </div>
-      <div class="match-score">${candidate.matchScore}%</div>
+      <div class="match-score">
+        <span>적합도 ${escapeHtml(candidate.matchGrade || aiSearchGradeFromScore(candidate.matchScore))}</span>
+        <strong>${candidate.matchScore}%</strong>
+      </div>
     </article>
   `;
 }
@@ -16526,7 +16727,127 @@ async function sendScreeningMail(payload) {
   return result;
 }
 
-async function requestScreeningContact(applicantId) {
+function buildScreeningContactRequestPreview(applicantId) {
+  const folder = getSelectedScreeningFolder();
+  const applicant = getScreeningApplicant(folder, applicantId);
+  const searchFirm = applicant ? getSearchFirmMember(applicant) : null;
+
+  if (!folder || !applicant || applicant.sourceType !== "search_firm") {
+    showToast("서치펌 등록 지원자에게만 연락처 요청 메일을 보낼 수 있습니다.");
+    return null;
+  }
+
+  if (!searchFirm?.email) {
+    showToast("서치펌 담당자 이메일이 없습니다.");
+    return null;
+  }
+
+  return {
+    type: "contact_request",
+    applicantId: applicant.id,
+    title: "서치펌 연락처 요청 메일",
+    recipientsText: searchFirm.email,
+    subject: `[TalentHub Screening] ${applicant.name || "지원자"} 연락처 정보 요청`,
+    body: [
+      `${searchFirm.name || "서치펌 담당자"}님`,
+      "",
+      "아래 지원자가 2차 스크리닝을 통과하여 전화면접 안내를 위한 연락처 확인이 필요합니다.",
+      "",
+      `지원자명: ${applicant.name || "-"}`,
+      `채용 부서명: ${folder.department || "-"}`,
+      `포지션명: ${folder.positionName || folder.title || "-"}`,
+      "",
+      "TalentHub Screening 메뉴에서 지원자의 이메일 주소와 휴대폰 번호를 입력해주세요."
+    ].join("\n")
+  };
+}
+
+function buildPhoneInterviewPreview(applicantId) {
+  const folder = getSelectedScreeningFolder();
+  const applicant = getScreeningApplicant(folder, applicantId);
+
+  if (!folder || !applicant) {
+    showToast("지원자 정보를 찾지 못했습니다.");
+    return null;
+  }
+
+  if (!applicant.email || !applicant.phone) {
+    showToast("지원자 이메일과 휴대폰 번호를 먼저 입력해주세요.");
+    return null;
+  }
+
+  if (!folder.interviewPanel.availability) {
+    showToast("면접 가능 시간대를 먼저 입력해주세요.");
+    return null;
+  }
+
+  const interviewerEmails = normalizeEmailList(folder.interviewPanel.emails);
+  const recipients = normalizeEmailList([applicant.email, ...interviewerEmails]);
+
+  return {
+    type: "phone_interview",
+    applicantId: applicant.id,
+    title: "전화면접 안내 메일",
+    recipientsText: recipients.join("\n"),
+    subject: `[TalentHub Screening] ${applicant.name || "후보자"} 전화면접 안내`,
+    body: [
+      `${applicant.name || "후보자"}님`,
+      "",
+      "전화면접 가능 시간대를 안내드립니다.",
+      "",
+      `후보자 이름: ${applicant.name || "-"}`,
+      `면접 가능 시간대: ${folder.interviewPanel.availability || "-"}`,
+      `채용 부서명: ${folder.department || "-"}`,
+      `포지션명: ${folder.positionName || folder.title || "-"}`,
+      "",
+      "위 시간대 중 가능한 일정을 회신해주세요."
+    ].join("\n")
+  };
+}
+
+function openScreeningMailPreview(type, applicantId) {
+  const preview = type === "contact_request"
+    ? buildScreeningContactRequestPreview(applicantId)
+    : buildPhoneInterviewPreview(applicantId);
+
+  if (!preview) {
+    return;
+  }
+
+  state.screeningMailPreview = preview;
+  renderScreening();
+}
+
+async function sendScreeningMailPreview(form) {
+  const preview = state.screeningMailPreview;
+
+  if (!preview) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const recipients = normalizeEmailList(formData.get("recipients"));
+  const subject = String(formData.get("subject") || "").trim();
+  const text = String(formData.get("body") || "").trim();
+
+  if (!recipients.length || !subject || !text) {
+    showToast("수신자, 제목, 본문을 모두 입력해주세요.");
+    return;
+  }
+
+  const mailOverride = { recipients, subject, text };
+
+  if (preview.type === "contact_request") {
+    await requestScreeningContact(preview.applicantId, mailOverride);
+  } else {
+    await sendPhoneInterviewMail(preview.applicantId, mailOverride);
+  }
+
+  state.screeningMailPreview = null;
+  renderScreening();
+}
+
+async function requestScreeningContact(applicantId, mailOverride = null) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
   const searchFirm = applicant ? getSearchFirmMember(applicant) : null;
@@ -16546,13 +16867,16 @@ async function requestScreeningContact(applicantId) {
     recipient: searchFirm.email,
     searchFirmName: searchFirm.name,
     folder,
-    applicant
+    applicant,
+    mailOverride
   });
+
+  const sentRecipientText = normalizeEmailList(mailOverride?.recipients || searchFirm.email).join(", ") || searchFirm.email;
 
   applicant.stage = "contact_requested";
   applicant.contactRequest = {
     sentAt: getTimestampText(),
-    recipient: searchFirm.email,
+    recipient: sentRecipientText,
     by: getCurrentActorName()
   };
   applicant.updatedAt = getTodayDate();
@@ -16564,7 +16888,7 @@ async function requestScreeningContact(applicantId) {
   renderScreening();
 }
 
-async function sendPhoneInterviewMail(applicantId) {
+async function sendPhoneInterviewMail(applicantId, mailOverride = null) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
 
@@ -16590,13 +16914,16 @@ async function sendPhoneInterviewMail(applicantId) {
     recipients: [applicant.email, ...interviewerEmails],
     folder,
     applicant,
-    interviewPanel: folder.interviewPanel
+    interviewPanel: folder.interviewPanel,
+    mailOverride
   });
+
+  const sentRecipientText = normalizeEmailList(mailOverride?.recipients || [applicant.email, ...interviewerEmails]).join(", ");
 
   applicant.stage = "interview_mail_sent";
   applicant.phoneInterviewMail = {
     sentAt: getTimestampText(),
-    recipients: [applicant.email, ...interviewerEmails],
+    recipients: sentRecipientText,
     by: getCurrentActorName()
   };
   applicant.updatedAt = getTodayDate();
@@ -18362,6 +18689,12 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-close-screening-mail-preview]") || event.target.matches("[data-screening-mail-preview-backdrop]")) {
+      state.screeningMailPreview = null;
+      renderScreening();
+      return;
+    }
+
     const screeningStepButton = event.target.closest("[data-screening-detail-step]");
     if (screeningStepButton) {
       const folder = getSelectedScreeningFolder();
@@ -18445,6 +18778,18 @@ function bindEvents() {
     const revertScreeningButton = event.target.closest("[data-screening-revert]");
     if (revertScreeningButton) {
       revertScreeningApplicantStage(revertScreeningButton.dataset.screeningRevert);
+      return;
+    }
+
+    const requestContactPreviewButton = event.target.closest("[data-screening-request-contact]");
+    if (requestContactPreviewButton) {
+      openScreeningMailPreview("contact_request", requestContactPreviewButton.dataset.screeningRequestContact);
+      return;
+    }
+
+    const sendInterviewPreviewButton = event.target.closest("[data-screening-send-interview]");
+    if (sendInterviewPreviewButton) {
+      openScreeningMailPreview("phone_interview", sendInterviewPreviewButton.dataset.screeningSendInterview);
       return;
     }
 
@@ -18888,19 +19233,6 @@ function bindEvents() {
       return;
     }
 
-    const shortlistButton = event.target.closest("[data-shortlist]");
-    if (shortlistButton) {
-      const candidate = getCandidate(shortlistButton.dataset.shortlist);
-      state.auditLogs.unshift({
-        actor: candidate.owner,
-        action: "Shortlist 추가",
-        resource: candidate.name,
-        purpose: "AI 검색 결과",
-        time: "2026-06-04 09:34"
-      });
-      persistState();
-      showToast(`${candidate.name} 후보자를 Shortlist에 추가했습니다.`);
-    }
   });
 
   document.addEventListener("keydown", (event) => {
@@ -18931,6 +19263,11 @@ function bindEvents() {
 
     if (event.key === "Escape" && state.screeningApplicantDetailId) {
       state.screeningApplicantDetailId = "";
+      renderScreening();
+    }
+
+    if (event.key === "Escape" && state.screeningMailPreview) {
+      state.screeningMailPreview = null;
       renderScreening();
     }
 
@@ -19026,6 +19363,15 @@ function bindEvents() {
     if (event.target.matches("#screening-final-pass-form")) {
       event.preventDefault();
       finalPassSecondScreening(event.target);
+      return;
+    }
+
+    if (event.target.matches("#screening-mail-preview-form")) {
+      event.preventDefault();
+      sendScreeningMailPreview(event.target).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "메일 발송 중 오류가 발생했습니다.");
+      });
       return;
     }
 

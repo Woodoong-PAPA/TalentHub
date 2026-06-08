@@ -122,6 +122,9 @@ async function callOpenAI(query, candidates) {
 
   const model = process.env.OPENAI_SEARCH_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const prompt = [
+    "Scoring calibration: be conservative. Use 90+ only when almost every core requirement is directly supported by the profile.",
+    "Use 80-89 for strong fit, 60-79 for partial fit, 40-59 for weak fit, and below 40 for low relevance.",
+    "Do not give 70+ for one or two keyword overlaps unless role, career context, achievements, and required domain also align.",
     "삼성전자 채용담당자의 인재 Pool에서 자연어 조건에 가장 적합한 후보자를 찾아라.",
     "후보자 정보 안에 있는 사실만 사용하고, 민감한 개인 속성은 평가하지 않는다.",
     "요청 조건과 직무/경력/성과/학력/기술의 의미적 관련성을 종합해 0~100점으로 점수화한다.",
