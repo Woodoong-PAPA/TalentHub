@@ -4349,7 +4349,7 @@ function applyMenuOrderToSidebar() {
   const navItems = new Map([...navList.querySelectorAll(".nav-item[data-view]")].map((item) => [item.dataset.view, item]));
 
   getOrderedMenuConfig().forEach((menu) => {
-    const item = navItems.get(menu.view);
+    const item = navItems.get(menu.view) || createSidebarMenuItem(menu);
 
     if (item) {
       const labelElement = [...item.querySelectorAll("span")].find((span) => !span.classList.contains("nav-icon"));
@@ -4358,9 +4358,53 @@ function applyMenuOrderToSidebar() {
         labelElement.textContent = menu.label;
       }
 
+      if (!navItems.has(menu.view)) {
+        navItems.set(menu.view, item);
+      }
+
       navList.appendChild(item);
     }
   });
+}
+
+function createSidebarMenuItem(menu) {
+  if (!menu?.view) {
+    return null;
+  }
+
+  const item = document.createElement("button");
+  const icon = document.createElement("span");
+  const label = document.createElement("span");
+  const labelText = String(menu.label || menu.view || "").trim();
+
+  item.className = "nav-item";
+  item.type = "button";
+  item.dataset.view = menu.view;
+  icon.className = "nav-icon";
+  icon.textContent = getMenuIcon(menu.view, labelText);
+  label.textContent = labelText;
+  item.append(icon, label);
+
+  return item;
+}
+
+function getMenuIcon(view, label = "") {
+  const explicitIcons = {
+    dashboard: "D",
+    pool: "P",
+    screening: "S",
+    interview: "I",
+    "interview-report": "R",
+    "recruiting-metrics": "M",
+    "ai-search": "A",
+    "job-fit": "J",
+    "jd-enhance": "G",
+    "policy-chat": "C",
+    trending: "T",
+    members: "M"
+  };
+
+  return explicitIcons[view] || label.charAt(0).toUpperCase() || "?";
 }
 
 function ensureActiveViewAllowed() {
