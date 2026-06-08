@@ -4568,6 +4568,16 @@ tr:last-child td {
   font-weight: 800;
 }
 
+.icon-link-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .icon-link-button:hover,
 .icon-mini-button:hover {
   border-color: var(--line);

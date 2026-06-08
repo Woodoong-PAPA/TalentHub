@@ -12370,7 +12370,14 @@ function renderDetailHero(candidate) {
           <div class="detail-hero-side">
             <div class="detail-hero-actions">
               ${linkedin ? `<a class="icon-link-button" href="${escapeHtml(linkedin)}" target="_blank" rel="noreferrer" title="LinkedIn">in</a>` : ""}
-              <button class="icon-link-button" type="button" data-download-profile-report="${escapeHtml(candidate.id)}" title="프로필 보고서 생성 및 다운로드">DOC</button>
+              <button class="icon-link-button" type="button" data-download-profile-report="${escapeHtml(candidate.id)}" title="프로필 보고서 생성 및 다운로드" aria-label="프로필 보고서 생성 및 다운로드">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+                  <path d="M14 3v5h5"></path>
+                  <path d="M8 13h8"></path>
+                  <path d="M8 17h5"></path>
+                </svg>
+              </button>
               ${canManageCandidateProfile(candidate) ? `<button class="icon-link-button" type="button" data-start-edit title="정보 수정">✎</button>` : ""}
             </div>
             ${renderDetailStatusControl(candidate)}
