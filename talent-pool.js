@@ -1057,6 +1057,8 @@ function normalizeCandidate(candidate) {
     nationality: "",
     linkedinUrl: "",
     referenceUrl: "",
+    referenceUrl2: "",
+    referenceUrl3: "",
     attachments: [],
     education: [],
     career: [],
@@ -3276,6 +3278,47 @@ function centerSquareCropBox(imageWidth, imageHeight) {
   };
 }
 
+function clampCropBox(box, imageWidth, imageHeight) {
+  const x = Math.max(0, Math.min(imageWidth - 1, box.x));
+  const y = Math.max(0, Math.min(imageHeight - 1, box.y));
+  const width = Math.max(1, Math.min(imageWidth - x, box.width));
+  const height = Math.max(1, Math.min(imageHeight - y, box.height));
+
+  return { x, y, width, height };
+}
+
+function relativeCropBox(imageWidth, imageHeight, x, y, width, height) {
+  return clampCropBox({
+    x: imageWidth * x,
+    y: imageHeight * y,
+    width: imageWidth * width,
+    height: imageHeight * height
+  }, imageWidth, imageHeight);
+}
+
+function drawRawImageCrop(image, box) {
+  const crop = clampCropBox(box, image.naturalWidth, image.naturalHeight);
+  const canvas = document.createElement("canvas");
+  const maxSide = 720;
+  const scale = Math.min(1, maxSide / Math.max(crop.width, crop.height));
+  canvas.width = Math.max(1, Math.round(crop.width * scale));
+  canvas.height = Math.max(1, Math.round(crop.height * scale));
+  const context = canvas.getContext("2d");
+  context.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
+function pdfProfileRegionBoxes(imageWidth, imageHeight) {
+  return [
+    relativeCropBox(imageWidth, imageHeight, 0.035, 0.025, 0.26, 0.24),
+    relativeCropBox(imageWidth, imageHeight, 0.70, 0.025, 0.26, 0.24),
+    relativeCropBox(imageWidth, imageHeight, 0.035, 0.03, 0.32, 0.32),
+    relativeCropBox(imageWidth, imageHeight, 0.63, 0.03, 0.33, 0.32),
+    relativeCropBox(imageWidth, imageHeight, 0.05, 0.12, 0.24, 0.28),
+    relativeCropBox(imageWidth, imageHeight, 0.71, 0.12, 0.24, 0.28)
+  ].filter((box) => Math.min(box.width, box.height) >= 80);
+}
+
 function drawCroppedProfileImage(image, box) {
   const canvas = document.createElement("canvas");
   const size = 360;
@@ -3376,6 +3419,17 @@ async function renderPdfFirstPageImage(buffer) {
   return canvas.toDataURL("image/png");
 }
 
+async function extractPdfProfileRegionCandidates(firstPageDataUrl, fileName) {
+  const pageImage = await loadImageElement(firstPageDataUrl);
+
+  return pdfProfileRegionBoxes(pageImage.naturalWidth, pageImage.naturalHeight)
+    .map((box, index) => ({
+      fileName: `${fileName}-profile-region-${index + 1}.png`,
+      dataUrl: drawRawImageCrop(pageImage, box),
+      scoreBoost: 45
+    }));
+}
+
 async function extractProfilePhotoFromResume(file) {
   const buffer = await file.arrayBuffer();
   const fileType = detectResumeFileType(file, buffer);
@@ -3385,7 +3439,9 @@ async function extractProfilePhotoFromResume(file) {
     candidates.push(...await extractImageCandidatesFromResumeZip(buffer, fileType));
   } else if (fileType === "pdf") {
     try {
-      candidates.push({ fileName: `${file.name}-first-page.png`, dataUrl: await renderPdfFirstPageImage(buffer), requireFace: true });
+      const firstPageDataUrl = await renderPdfFirstPageImage(buffer);
+      candidates.push({ fileName: `${file.name}-first-page.png`, dataUrl: firstPageDataUrl, requireFace: true });
+      candidates.push(...await extractPdfProfileRegionCandidates(firstPageDataUrl, file.name));
     } catch (error) {
       console.warn("PDF profile photo extraction failed.", error);
     }
@@ -3403,7 +3459,7 @@ async function extractProfilePhotoFromResume(file) {
 
       scored.push({
         ...cropped,
-        score: profileImageScore({ width: cropped.width, height: cropped.height, fileName: candidate.fileName }) + (cropped.confidence === "face" ? 70 : 0),
+        score: profileImageScore({ width: cropped.width, height: cropped.height, fileName: candidate.fileName }) + (cropped.confidence === "face" ? 70 : 0) + (candidate.scoreBoost || 0),
         fileName: candidate.fileName
       });
     } catch (error) {
@@ -4112,6 +4168,8 @@ function getFilteredCandidates() {
       candidate.phone,
       candidate.linkedinUrl,
       candidate.referenceUrl,
+      candidate.referenceUrl2,
+      candidate.referenceUrl3,
       ...candidate.skills,
       ...candidate.tags,
       ...(candidate.education || []).flatMap((item) => [item.degree, item.school, item.major, item.start, item.end]),
@@ -6830,7 +6888,7 @@ function renderRegister() {
           <div class="field">
             <label for="candidate-organization">사업부</label>
             <select class="control-select" id="candidate-organization" name="organization">
-              ${renderBusinessUnitOptions()}
+              ${renderBusinessUnitOptions(getMemberBusinessUnit())}
             </select>
           </div>
           <div class="field">
@@ -6870,12 +6928,16 @@ function renderRegister() {
             <input class="control-input" id="candidate-linkedin" name="linkedinUrl" type="url" autocomplete="url" />
           </div>
           <div class="field">
-            <label for="candidate-reference-url">기타 참고 URL</label>
+            <label for="candidate-reference-url">기타 참고 URL 1</label>
             <input class="control-input" id="candidate-reference-url" name="referenceUrl" type="url" autocomplete="url" />
           </div>
-          <div class="field full">
-            <label for="candidate-summary">담당자 메모</label>
-            <textarea class="control-textarea" id="candidate-summary" name="summary"></textarea>
+          <div class="field">
+            <label for="candidate-reference-url-2">기타 참고 URL 2</label>
+            <input class="control-input" id="candidate-reference-url-2" name="referenceUrl2" type="url" autocomplete="url" />
+          </div>
+          <div class="field">
+            <label for="candidate-reference-url-3">기타 참고 URL 3</label>
+            <input class="control-input" id="candidate-reference-url-3" name="referenceUrl3" type="url" autocomplete="url" />
           </div>
         </div>
 
@@ -11418,7 +11480,9 @@ function renderOverviewSection(candidate) {
     { label: "이메일 주소", value: candidate.email },
     { label: "휴대폰 번호", value: candidate.phone },
     { label: "링크드인 주소", html: detailLink(candidate.linkedinUrl) },
-    { label: "기타 참고 URL", html: detailLink(candidate.referenceUrl) }
+    { label: "기타 참고 URL 1", html: detailLink(candidate.referenceUrl) },
+    { label: "기타 참고 URL 2", html: detailLink(candidate.referenceUrl2) },
+    { label: "기타 참고 URL 3", html: detailLink(candidate.referenceUrl3) }
   ]);
 }
 
@@ -11703,12 +11767,16 @@ function renderCandidateEditForm(candidate) {
             <input class="control-input" id="edit-linkedin" name="editLinkedinUrl" type="url" value="${inputValue(candidate.linkedinUrl)}" />
           </div>
           <div class="field">
-            <label for="edit-reference-url">기타 참고 URL</label>
+            <label for="edit-reference-url">기타 참고 URL 1</label>
             <input class="control-input" id="edit-reference-url" name="editReferenceUrl" type="url" value="${inputValue(candidate.referenceUrl)}" />
           </div>
-          <div class="field full">
-            <label for="edit-summary">담당자 메모</label>
-            <textarea class="control-textarea" id="edit-summary" name="editSummary">${inputValue(candidate.summary)}</textarea>
+          <div class="field">
+            <label for="edit-reference-url-2">기타 참고 URL 2</label>
+            <input class="control-input" id="edit-reference-url-2" name="editReferenceUrl2" type="url" value="${inputValue(candidate.referenceUrl2)}" />
+          </div>
+          <div class="field">
+            <label for="edit-reference-url-3">기타 참고 URL 3</label>
+            <input class="control-input" id="edit-reference-url-3" name="editReferenceUrl3" type="url" value="${inputValue(candidate.referenceUrl3)}" />
           </div>
         </div>
       </section>
@@ -11962,8 +12030,9 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.phone = getFormText(form, "editPhone");
   candidate.linkedinUrl = getFormText(form, "editLinkedinUrl");
   candidate.referenceUrl = getFormText(form, "editReferenceUrl");
+  candidate.referenceUrl2 = getFormText(form, "editReferenceUrl2");
+  candidate.referenceUrl3 = getFormText(form, "editReferenceUrl3");
   candidate.skills = skills;
-  candidate.summary = getFormText(form, "editSummary");
   candidate.education = education;
   candidate.career = career;
   candidate.years = estimateCareerYears(candidate.career);
@@ -13681,6 +13750,10 @@ function extractLinkedinUrl(text) {
 }
 
 function extractReferenceUrl(text) {
+  return extractReferenceUrls(text)[0] || "";
+}
+
+function extractReferenceUrls(text) {
   const urls = [...text.matchAll(/https?:\/\/[^\s<>)"']+|(?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/[^\s<>)"']*/g)]
     .map((match) => cleanParsedValue(match[0]))
     .filter((url) =>
@@ -13690,7 +13763,65 @@ function extractReferenceUrl(text) {
       !/\.(?:com|co\.kr|net|org)$/i.test(url)
     );
 
-  return urls[0] || "";
+  return [...new Set(urls)].slice(0, 3);
+}
+
+function compactResumeSummaryLine(value, maxLength = 20) {
+  const text = cleanParsedValue(value)
+    .replace(/^[-•·\s]+/, "")
+    .replace(/[。.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) {
+    return "";
+  }
+
+  return Array.from(text).slice(0, maxLength).join("");
+}
+
+function buildResumeCoreCompetency(parsed = {}, career = [], education = [], skillKeywords = []) {
+  const direct = compactResumeSummaryLine(parsed.coreCompetency || parsed.core_competency, 20);
+
+  if (direct) {
+    return direct;
+  }
+
+  const role = cleanParsedValue(parsed.role || career[0]?.position || career[0]?.rank);
+  const skill = skillKeywords.find((item) => !/검수|필요/i.test(item)) || "";
+  const major = education[0]?.major || "";
+  let phrase = [skill, role].filter(Boolean).join(" ");
+
+  if (!phrase && major) {
+    phrase = `${major} 전문가`;
+  } else if (phrase && !/(전문가|엔지니어|연구원|디자이너|기획자|담당자|PM|CEO|CTO|CPO|Engineer|Researcher|Designer|Director)/i.test(phrase)) {
+    phrase = `${phrase} 전문가`;
+  }
+
+  return compactResumeSummaryLine(phrase, 20);
+}
+
+function buildResumeAchievementSummary(parsed = {}, career = [], skillKeywords = []) {
+  const directLines = Array.isArray(parsed.achievementSummary)
+    ? parsed.achievementSummary
+    : Array.isArray(parsed.achievement_summary)
+      ? parsed.achievement_summary
+      : [];
+  const careerLines = career.flatMap((item) =>
+    String(item.achievements || "")
+      .split(/\r?\n|[.!?。]\s+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+  const careerFallback = career
+    .map((item) => [item.company, item.position || item.rank].filter(Boolean).join(" "))
+    .filter(Boolean);
+  const skillFallback = skillKeywords.length ? [`${skillKeywords.slice(0, 3).join(", ")} 역량 보유`] : [];
+  const lines = [...directLines, ...careerLines, ...careerFallback, ...skillFallback]
+    .map((line) => compactResumeSummaryLine(line, 20))
+    .filter(Boolean);
+
+  return [...new Set(lines)].slice(0, 3);
 }
 
 function parseResumeText(text, filename = "") {
@@ -13708,6 +13839,7 @@ function parseResumeText(text, filename = "") {
   const education = educationLines.map(parseEducationLine).filter(hasAnyRecordValue).slice(0, 5);
   const career = careerLines.map(parseCareerLine).filter(hasAnyRecordValue).slice(0, 6);
   const skills = inferSkills(compact);
+  const referenceUrls = extractReferenceUrls(compact);
   const name = extractLikelyPersonNameFromResumeText(compact) ||
     normalizeInferredCandidateName(lines.find((line) => (/^[가-힣]{2,5}$|^[A-Z][a-z]+ [A-Z][a-z]+$/.test(line)) && !/(이력서|자기소개|경력)/.test(line)) || "");
   const role = cleanParsedValue(findLabeledValue(lines, ["희망직무", "지원분야", "지원 직무", "직무", "포지션", "Position"]) || firstMatch(compact, [
@@ -13723,7 +13855,11 @@ function parseResumeText(text, filename = "") {
     email: extractEmail(compact),
     phone: extractPhone(compact),
     linkedinUrl: extractLinkedinUrl(compact),
-    referenceUrl: extractReferenceUrl(compact),
+    referenceUrl: referenceUrls[0] || "",
+    referenceUrl2: referenceUrls[1] || "",
+    referenceUrl3: referenceUrls[2] || "",
+    coreCompetency: buildResumeCoreCompetency({ role }, career, education, skills),
+    achievementSummary: buildResumeAchievementSummary({}, career, skills),
     skills,
     summary: "",
     education: education.length ? education : [{}],
@@ -13802,19 +13938,30 @@ function normalizeParsedResumeForForm(parsed = {}) {
       .split(/[,;\n]/)
       .map(cleanParsedValue)
       .filter(Boolean);
+  const referenceUrls = [...new Set((Array.isArray(parsed.referenceUrls)
+    ? [parsed.referenceUrl, ...parsed.referenceUrls]
+    : [
+      parsed.referenceUrl,
+      parsed.referenceUrl2,
+      parsed.referenceUrl3
+    ]).map(cleanParsedValue).filter(Boolean))].slice(0, 3);
+  const coreCompetency = buildResumeCoreCompetency(parsed, career, education, skills);
+  const achievementSummary = buildResumeAchievementSummary(parsed, career, skills);
 
   return {
     name: cleanParsedValue(parsed.name),
     englishName: cleanParsedValue(parsed.englishName || parsed.english_name || parsed.nameEnglish),
     company: cleanParsedValue(parsed.company || career[0]?.company),
-    role: cleanParsedValue(parsed.role || career[0]?.position),
+    role: coreCompetency || cleanParsedValue(parsed.role || career[0]?.position),
     birthYear: cleanParsedValue(parsed.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
     nationality: cleanParsedValue(parsed.nationality),
     email: extractEmail(String(parsed.email || "")),
     phone: cleanParsedValue(parsed.phone),
     linkedinUrl: cleanParsedValue(parsed.linkedinUrl),
-    referenceUrl: cleanParsedValue(parsed.referenceUrl),
-    skills: [...new Set(skills)].slice(0, 12),
+    referenceUrl: referenceUrls[0] || "",
+    referenceUrl2: referenceUrls[1] || "",
+    referenceUrl3: referenceUrls[2] || "",
+    skills: achievementSummary.length ? achievementSummary : [...new Set(skills)].slice(0, 3),
     summary: "",
     education: education.length ? education : [{}],
     career: career.length ? career : [{}],
@@ -13864,6 +14011,8 @@ function hasParsedResumeValues(parsed) {
     parsed?.phone ||
     parsed?.linkedinUrl ||
     parsed?.referenceUrl ||
+    parsed?.referenceUrl2 ||
+    parsed?.referenceUrl3 ||
     parsed?.skills?.length ||
     parsed?.education?.some(hasAnyRecordValue) ||
     parsed?.career?.some(hasAnyRecordValue)
@@ -13876,6 +14025,15 @@ function mergeParsedResumeResults(primary = {}, fallback = {}) {
   const primaryCareer = (primary.career || []).filter(hasAnyRecordValue);
   const fallbackCareer = (fallback.career || []).filter(hasAnyRecordValue);
   const skills = [...new Set([...(primary.skills || []), ...(fallback.skills || [])].map(cleanParsedValue).filter(Boolean))];
+  const referenceUrls = [
+    primary.referenceUrl,
+    primary.referenceUrl2,
+    primary.referenceUrl3,
+    fallback.referenceUrl,
+    fallback.referenceUrl2,
+    fallback.referenceUrl3
+  ].map(cleanParsedValue).filter(Boolean);
+  const uniqueReferenceUrls = [...new Set(referenceUrls)].slice(0, 3);
 
   return normalizeParsedResumeForForm({
     ...fallback,
@@ -13889,7 +14047,11 @@ function mergeParsedResumeResults(primary = {}, fallback = {}) {
     email: primary.email || fallback.email,
     phone: primary.phone || fallback.phone,
     linkedinUrl: primary.linkedinUrl || fallback.linkedinUrl,
-    referenceUrl: primary.referenceUrl || fallback.referenceUrl,
+    referenceUrl: uniqueReferenceUrls[0] || "",
+    referenceUrl2: uniqueReferenceUrls[1] || "",
+    referenceUrl3: uniqueReferenceUrls[2] || "",
+    coreCompetency: primary.coreCompetency || fallback.coreCompetency || primary.role || fallback.role,
+    achievementSummary: primary.skills?.length ? primary.skills : fallback.skills,
     skills,
     education: primaryEducation.length ? primaryEducation : fallbackEducation,
     career: primaryCareer.length ? primaryCareer : fallbackCareer
@@ -13907,8 +14069,9 @@ function registerFormHasEnteredValues() {
     "#candidate-phone",
     "#candidate-linkedin",
     "#candidate-reference-url",
-    "#candidate-skills",
-    "#candidate-summary"
+    "#candidate-reference-url-2",
+    "#candidate-reference-url-3",
+    "#candidate-skills"
   ];
   const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
   const hasEducationValue = collectRegisterEducationFromForm($("#register-form"), true).some(hasAnyRecordValue);
@@ -13951,6 +14114,8 @@ function applyParsedResumeToRegisterForm(parsed, options = {}) {
   setFieldValue("#candidate-phone", parsed.phone, overwrite);
   setFieldValue("#candidate-linkedin", parsed.linkedinUrl, overwrite);
   setFieldValue("#candidate-reference-url", parsed.referenceUrl, overwrite);
+  setFieldValue("#candidate-reference-url-2", parsed.referenceUrl2, overwrite);
+  setFieldValue("#candidate-reference-url-3", parsed.referenceUrl3, overwrite);
   setFieldValue("#candidate-skills", parsed.skills.join("\n"), overwrite);
   updateAgeOutput("#candidate-birth-year", "#candidate-age");
 
@@ -13982,8 +14147,9 @@ function editFormHasEnteredValues() {
     "#edit-phone",
     "#edit-linkedin",
     "#edit-reference-url",
-    "#edit-skills",
-    "#edit-summary"
+    "#edit-reference-url-2",
+    "#edit-reference-url-3",
+    "#edit-skills"
   ];
   const hasBasicValue = fields.some((selector) => $(selector)?.value?.trim());
   const hasEducationValue = collectEducationFromForm(form, true).some(hasAnyRecordValue);
@@ -14009,6 +14175,8 @@ function applyParsedResumeToEditForm(parsed, options = {}) {
   setFieldValue("#edit-phone", parsed.phone, overwrite);
   setFieldValue("#edit-linkedin", parsed.linkedinUrl, overwrite);
   setFieldValue("#edit-reference-url", parsed.referenceUrl, overwrite);
+  setFieldValue("#edit-reference-url-2", parsed.referenceUrl2, overwrite);
+  setFieldValue("#edit-reference-url-3", parsed.referenceUrl3, overwrite);
   setFieldValue("#edit-skills", parsed.skills.join("\n"), overwrite);
   updateAgeOutput("#edit-birth-year", "#edit-age");
 
@@ -14105,8 +14273,9 @@ async function parseResumeIntoRegisterForm(file) {
     const result = await readResumeText(file);
 
     if (!result.text || result.text.length < 20) {
+      const profilePhotoApplied = await applyResumeProfilePhotoToRegisterForm(file, status);
       if (status) {
-        status.textContent = "읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 수동 입력해주세요.";
+        status.textContent = `읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 수동 입력해주세요.${profilePhotoApplied ? " 프로필 사진은 자동 반영했습니다." : ""}`;
       }
       showToast("이력서 텍스트를 충분히 읽지 못했습니다.");
       return;
@@ -14175,8 +14344,9 @@ async function parseResumeIntoEditForm(file) {
     const result = await readResumeText(file);
 
     if (!result.text || result.text.length < 20) {
+      const profilePhotoApplied = await applyResumeProfilePhotoToEditForm(file, status);
       if (status) {
-        status.textContent = "읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 수동 입력해주세요.";
+        status.textContent = `읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 수동 입력해주세요.${profilePhotoApplied ? " 프로필 사진은 자동 반영했습니다." : ""}`;
       }
       showToast("이력서 텍스트를 충분히 읽지 못했습니다.");
       return;
@@ -14863,12 +15033,14 @@ async function registerCandidate(eventOrForm) {
     nationality: form.get("nationality").toString().trim(),
     linkedinUrl: form.get("linkedinUrl").toString().trim(),
     referenceUrl: form.get("referenceUrl").toString().trim(),
+    referenceUrl2: form.get("referenceUrl2").toString().trim(),
+    referenceUrl3: form.get("referenceUrl3").toString().trim(),
     attachments,
     education,
     career,
     skills,
     tags: ["신규 등록", "검수 필요"],
-    summary: form.get("summary").toString().trim(),
+    summary: "",
     evidence: [
       "업로드 이력서에서 후보자 정보를 자동 입력",
       "주요성과/실적 태그 자동 생성",
@@ -18190,6 +18362,7 @@ function bindEvents() {
         const status = $("#resume-parse-status");
         const preview = $("#photo-preview");
         const owner = $("#candidate-owner");
+        const organization = $("#candidate-organization");
 
         if (status) {
           status.textContent = "이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.";
@@ -18201,6 +18374,10 @@ function bindEvents() {
 
         if (owner) {
           owner.value = getDefaultOwnerName();
+        }
+
+        if (organization) {
+          organization.value = getMemberBusinessUnit();
         }
       });
     }

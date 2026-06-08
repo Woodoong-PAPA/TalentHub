@@ -3,16 +3,25 @@ const MAX_TEXT_LENGTH = 60000;
 const RESUME_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "company", "role", "birthYear", "email", "phone", "linkedinUrl", "referenceUrl", "skills", "education", "career", "warnings"],
+  required: ["name", "company", "role", "coreCompetency", "achievementSummary", "birthYear", "email", "phone", "linkedinUrl", "referenceUrl", "referenceUrls", "skills", "education", "career", "warnings"],
   properties: {
     name: { type: "string" },
     company: { type: "string" },
     role: { type: "string" },
+    coreCompetency: { type: "string" },
+    achievementSummary: {
+      type: "array",
+      items: { type: "string" }
+    },
     birthYear: { type: "string" },
     email: { type: "string" },
     phone: { type: "string" },
     linkedinUrl: { type: "string" },
     referenceUrl: { type: "string" },
+    referenceUrls: {
+      type: "array",
+      items: { type: "string" }
+    },
     skills: {
       type: "array",
       items: { type: "string" }
@@ -174,11 +183,18 @@ function normalizeResult(result) {
     name: normalizeString(result.name),
     company: normalizeString(result.company || career[0]?.company),
     role: normalizeString(result.role || career[0]?.position),
+    coreCompetency: normalizeString(result.coreCompetency),
+    achievementSummary: Array.isArray(result.achievementSummary)
+      ? result.achievementSummary.map(normalizeString).filter(Boolean).slice(0, 3)
+      : [],
     birthYear: normalizeString(result.birthYear).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "",
     email: normalizeString(result.email),
     phone: normalizeString(result.phone),
     linkedinUrl: normalizeString(result.linkedinUrl),
     referenceUrl: normalizeString(result.referenceUrl),
+    referenceUrls: Array.isArray(result.referenceUrls)
+      ? [...new Set(result.referenceUrls.map(normalizeString).filter(Boolean))].slice(0, 3)
+      : [normalizeString(result.referenceUrl)].filter(Boolean),
     skills: Array.isArray(result.skills)
       ? [...new Set(result.skills.map(normalizeString).filter(Boolean))].slice(0, 12)
       : [],
@@ -210,11 +226,14 @@ function mergeParsedResult(primary, fallback) {
     name: normalizedPrimary.name || normalizedFallback.name,
     company: normalizedPrimary.company || normalizedFallback.company,
     role: normalizedPrimary.role || normalizedFallback.role,
+    coreCompetency: normalizedPrimary.coreCompetency || normalizedFallback.coreCompetency,
+    achievementSummary: normalizedPrimary.achievementSummary.length ? normalizedPrimary.achievementSummary : normalizedFallback.achievementSummary,
     birthYear: normalizedPrimary.birthYear || normalizedFallback.birthYear,
     email: normalizedPrimary.email || normalizedFallback.email,
     phone: normalizedPrimary.phone || normalizedFallback.phone,
     linkedinUrl: normalizedPrimary.linkedinUrl || normalizedFallback.linkedinUrl,
     referenceUrl: normalizedPrimary.referenceUrl || normalizedFallback.referenceUrl,
+    referenceUrls: normalizedPrimary.referenceUrls.length ? normalizedPrimary.referenceUrls : normalizedFallback.referenceUrls,
     skills: normalizedPrimary.skills.length ? normalizedPrimary.skills : normalizedFallback.skills,
     education: normalizedPrimary.education.length ? normalizedPrimary.education : normalizedFallback.education,
     career: mergedCareer,
@@ -335,9 +354,11 @@ async function callOpenAI({ text, fileName, deterministic, useWebSearch }) {
     "- 이름: 한글 이름과 영어 이름이 모두 있으면 한글 이름을 사용한다.",
     "- 출생년도: 생년월일 또는 출생년도 정보가 있으면 YYYY만 추출한다. 없으면 빈 문자열.",
     "- 이메일 주소, 휴대폰 번호, 링크드인 주소, 기타 참고 URL이 있으면 그대로 추출한다. 없으면 빈 문자열.",
-    "- 기타 참고 URL은 GitHub, 포트폴리오, 개인 홈페이지, 논문/프로젝트 URL 등 링크드인 외 참고 URL 중 가장 유용한 1개를 선택한다.",
+    "- 기타 참고 URL은 GitHub, 포트폴리오, 개인 홈페이지, 논문/프로젝트 URL 등 링크드인 외 참고 URL 중 유용한 URL을 최대 3개까지 referenceUrls에 넣고, 가장 유용한 1개는 referenceUrl에도 넣는다.",
     "- 현재/최근회사: 현재 또는 가장 최근까지 다녔던 직장의 회사명.",
     "- 현재/최근직무: 현재 또는 가장 최근 직장에서 맡은 직무명. 지원 직무가 아니라 실제 경력상의 직무를 우선한다.",
+    "- coreCompetency: 이 사람이 어떠한 전문가인지 20자 내외의 1줄 문구로 작성한다. 예: 온디바이스 AI 전문가, 휴머노이드 제어 전문가.",
+    "- achievementSummary: 주요성과/실적을 정확히 3줄로 요약한다. 각 줄은 한 문장, 20자 내외로 작성한다.",
     "- 핵심기술: 이력서 전반에서 주요 역량을 1줄 키워드 배열로 정리한다.",
     "- 학력: 고등학교는 제외한다. 박사, 석사, 학사만 사용한다. 여러 개면 최근 학력부터 정렬한다.",
     "- 경력: 여러 개면 최근 경력부터 정렬한다.",
