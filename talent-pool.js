@@ -7988,8 +7988,15 @@ function updateJdGuideline(value) {
 
 function updateJdInputText(value) {
   const jd = getJdEnhancementState();
+  const previousText = jd.jdText;
+  const shouldSyncFinalText = !jd.reviewItems.length
+    && !jd.appliedSuggestionIds.length
+    && (!jd.finalText || jd.finalText === previousText);
+
   jd.jdText = value;
-  jd.finalText = jd.finalText || value;
+  if (shouldSyncFinalText) {
+    jd.finalText = value;
+  }
   jd.reviewItems = [];
   jd.score = 0;
   jd.summary = "";
