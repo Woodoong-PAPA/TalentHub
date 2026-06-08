@@ -2760,6 +2760,25 @@ tr:last-child td {
   gap: 14px;
 }
 
+.jd-enhance-source-actions {
+  max-width: 100%;
+}
+
+.jd-guideline-modal {
+  width: min(840px, 100%);
+}
+
+.jd-guideline-modal-body {
+  display: grid;
+  gap: 14px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .jd-review-summary {
   margin: 0;
   border-left: 3px solid var(--blue);

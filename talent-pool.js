@@ -7132,6 +7132,8 @@ function normalizeJdEnhancementState(value = {}) {
     fileLoading: Boolean(value.fileLoading),
     status: String(value.status || "").trim(),
     fileStatus: String(value.fileStatus || "").trim(),
+    guidelineModalOpen: Boolean(value.guidelineModalOpen),
+    guidelineDraft: String(value.guidelineDraft || value.guidelineText || DEFAULT_JD_GUIDELINE).replace(/\r\n?/g, "\n"),
     appliedSuggestionIds: Array.isArray(value.appliedSuggestionIds)
       ? value.appliedSuggestionIds.map((id) => String(id || "")).filter(Boolean)
       : []
@@ -7905,28 +7907,22 @@ function renderJdEnhancement() {
   const jd = getJdEnhancementState();
   const canRun = Boolean(jd.guidelineText.trim() && jd.jdText.trim() && !jd.loading && !jd.fileLoading);
   const canDownload = Boolean(jd.finalText.trim());
+  const hasSuggestions = jd.reviewItems.some((item) => item.suggestedText && item.status !== "pass");
 
   container.innerHTML = `
     <div class="jd-enhance-workspace">
-      <section class="form-panel jd-guideline-panel">
-        <div class="job-fit-panel-header">
-          <div>
-            <strong>JD 작성 가이드라인</strong>
-            <span>가이드라인을 수정하면 다음 점검부터 즉시 반영됩니다.</span>
-          </div>
-          <button class="ghost-button compact-button" type="button" data-save-jd-guideline>가이드라인 저장</button>
-        </div>
-        <textarea class="control-textarea" id="jd-enhance-guideline" rows="8">${escapeHtml(jd.guidelineText)}</textarea>
-      </section>
-
       <div class="jd-enhance-grid">
         <section class="form-panel job-fit-upload-card">
           <div class="job-fit-panel-header">
             <div>
               <strong>현업 작성 JD</strong>
-              <span>Word/PDF 파일을 업로드하거나 본문을 직접 입력합니다.</span>
+              <span>Word/PDF 파일을 업로드하거나 본문을 직접 입력한 뒤 가이드라인 기준으로 점검합니다.</span>
             </div>
-            <button class="ghost-button compact-button" type="button" data-clear-jd-enhance-input ${jd.jdText || jd.jdFile ? "" : "disabled"}>초기화</button>
+            <div class="job-fit-result-actions jd-enhance-source-actions">
+              <button class="ghost-button compact-button" type="button" data-open-jd-guideline-modal>JD 작성 가이드라인</button>
+              <button class="ghost-button compact-button" type="button" data-clear-jd-enhance-input ${jd.jdText || jd.jdFile ? "" : "disabled"}>초기화</button>
+              <button class="primary-button compact-button" type="button" data-run-jd-enhance ${canRun ? "" : "disabled"}>${jd.loading ? "점검 중" : "JD 점검 시작"}</button>
+            </div>
           </div>
           <div class="dropzone compact-upload">
             <input id="jd-enhance-file" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
@@ -7962,13 +7958,42 @@ function renderJdEnhancement() {
             <span>${jd.reviewItems.length ? `점검 항목 ${jd.reviewItems.length}개 · 품질점수 ${jd.score || 0}점` : "JD 작성 품질과 수정 제안을 확인합니다."}</span>
           </div>
           <div class="job-fit-result-actions">
-            <button class="primary-button compact-button" type="button" data-run-jd-enhance ${canRun ? "" : "disabled"}>${jd.loading ? "점검 중" : "JD 점검 시작"}</button>
-            <button class="ghost-button compact-button" type="button" data-apply-all-jd-suggestions ${jd.reviewItems.some((item) => item.suggestedText && item.status !== "pass") ? "" : "disabled"}>제안 전체 적용</button>
+            <button class="ghost-button compact-button" type="button" data-apply-all-jd-suggestions ${hasSuggestions ? "" : "disabled"}>제안 전체 적용</button>
           </div>
         </div>
         ${jd.status ? `<div class="job-fit-inline-status">${escapeHtml(jd.status)}</div>` : ""}
         ${jd.summary ? `<p class="jd-review-summary">${escapeHtml(jd.summary)}</p>` : ""}
         ${renderJdReviewItems()}
+      </section>
+      ${renderJdGuidelineModal()}
+    </div>
+  `;
+}
+
+function renderJdGuidelineModal() {
+  const jd = getJdEnhancementState();
+
+  if (!jd.guidelineModalOpen) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-jd-guideline-modal-backdrop>
+      <section class="trending-modal jd-guideline-modal" role="dialog" aria-modal="true" aria-labelledby="jd-guideline-modal-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="jd-guideline-modal-title">JD 작성 가이드라인</strong>
+            <span>저장한 원문은 다음 JD 점검부터 즉시 기준으로 사용됩니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-jd-guideline-modal>닫기</button>
+        </div>
+        <div class="trending-modal-body jd-guideline-modal-body">
+          <textarea class="control-textarea" id="jd-enhance-guideline" rows="18">${escapeHtml(jd.guidelineDraft || jd.guidelineText)}</textarea>
+          <div class="modal-actions">
+            <button class="ghost-button" type="button" data-close-jd-guideline-modal>취소</button>
+            <button class="primary-button" type="button" data-save-jd-guideline>저장</button>
+          </div>
+        </div>
       </section>
     </div>
   `;
@@ -7981,9 +8006,22 @@ function rerenderJdEnhancement() {
 
 function updateJdGuideline(value) {
   const jd = getJdEnhancementState();
-  jd.guidelineText = value;
-  jd.status = "가이드라인이 수정되었습니다. 다음 JD 점검부터 최신 가이드라인이 반영됩니다.";
+  jd.guidelineDraft = String(value || "").replace(/\r\n?/g, "\n");
   persistState();
+}
+
+function openJdGuidelineModal() {
+  const jd = getJdEnhancementState();
+  jd.guidelineDraft = jd.guidelineText || DEFAULT_JD_GUIDELINE;
+  jd.guidelineModalOpen = true;
+  rerenderJdEnhancement();
+}
+
+function closeJdGuidelineModal() {
+  const jd = getJdEnhancementState();
+  jd.guidelineModalOpen = false;
+  jd.guidelineDraft = jd.guidelineText || DEFAULT_JD_GUIDELINE;
+  rerenderJdEnhancement();
 }
 
 function updateJdInputText(value) {
@@ -8094,6 +8132,7 @@ async function runJdEnhancementReview() {
   }
 
   jd.loading = true;
+  jd.finalText = jdText;
   jd.status = "JD 작성 가이드라인 기준으로 점검 중입니다.";
   renderJdEnhancement();
 
@@ -8105,7 +8144,6 @@ async function runJdEnhancementReview() {
     jd.score = Math.max(0, Math.min(100, Math.round(Number(result.score || 0))));
     jd.summary = String(result.summary || "").trim();
     jd.revisedDocument = normalizeResumeText(result.revisedDocument || "");
-    jd.finalText = jd.finalText || jdText;
     jd.appliedSuggestionIds = [];
     jd.status = jd.reviewItems.length
       ? `JD 점검을 완료했습니다. 수정 제안 ${jd.reviewItems.filter((item) => item.status !== "pass").length}개를 확인해 주세요.`
@@ -8196,15 +8234,150 @@ function clearJdEnhancementInput() {
 
 function saveJdGuideline() {
   const jd = getJdEnhancementState();
-  jd.guidelineText = normalizeResumeText($("#jd-enhance-guideline")?.value || jd.guidelineText || DEFAULT_JD_GUIDELINE);
-  jd.status = "JD 작성 가이드라인을 저장했습니다. 다음 점검부터 최신 가이드라인이 반영됩니다.";
+  const rawGuideline = String($("#jd-enhance-guideline")?.value ?? jd.guidelineDraft ?? jd.guidelineText ?? DEFAULT_JD_GUIDELINE)
+    .replace(/\r\n?/g, "\n");
+  jd.guidelineText = rawGuideline;
+  jd.guidelineDraft = rawGuideline;
+  jd.guidelineModalOpen = false;
+  jd.status = "JD 작성 가이드라인 원문을 저장했습니다. 다음 점검부터 최신 가이드라인이 반영됩니다.";
   addAuditLog("JD 가이드라인 저장", "JD 고도화", getCurrentActorName());
   rerenderJdEnhancement();
 }
 
+function isJdDocumentHeading(line) {
+  const text = String(line || "").trim();
+
+  if (!text) {
+    return false;
+  }
+
+  return /^(?:\[.+\]|[0-9]+[.)]\s*)?(?:포지션|직무|채용|소속|근무지|수행업무|담당업무|주요업무|필수|자격|우대|필요역량|핵심역량|조직|협업|전형|기타|JD 개선 제안|개선 제안)/i.test(text)
+    || (/[:：]$/.test(text) && text.length <= 40);
+}
+
+function renderJdWordParagraphs(lines) {
+  const html = [];
+  let bulletItems = [];
+  let numberedItems = [];
+
+  const flushBullets = () => {
+    if (bulletItems.length) {
+      html.push(`<ul>${bulletItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+      bulletItems = [];
+    }
+
+    if (numberedItems.length) {
+      html.push(`<ol>${numberedItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>`);
+      numberedItems = [];
+    }
+  };
+
+  lines.forEach((line) => {
+    const trimmed = String(line || "").trim();
+
+    if (!trimmed) {
+      flushBullets();
+      return;
+    }
+
+    const bulletMatch = trimmed.match(/^[-•*]\s+(.+)$/);
+    const numberedMatch = trimmed.match(/^[0-9]+[.)]\s+(.+)$/);
+
+    if (bulletMatch) {
+      if (numberedItems.length) {
+        flushBullets();
+      }
+      bulletItems.push(bulletMatch[1]);
+      return;
+    }
+
+    if (numberedMatch) {
+      if (bulletItems.length) {
+        flushBullets();
+      }
+      numberedItems.push(numberedMatch[1]);
+      return;
+    }
+
+    flushBullets();
+    html.push(`<p>${escapeHtml(trimmed)}</p>`);
+  });
+
+  flushBullets();
+  return html.join("");
+}
+
+function renderJdWordBody(finalText) {
+  const blocks = String(finalText || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (!blocks.length) {
+    return "";
+  }
+
+  return blocks.map((block) => {
+    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+
+    if (!lines.length) {
+      return "";
+    }
+
+    if (lines.length === 1 && isJdDocumentHeading(lines[0])) {
+      return `<h2>${escapeHtml(lines[0].replace(/[:：]$/, ""))}</h2>`;
+    }
+
+    if (lines.length > 1 && isJdDocumentHeading(lines[0])) {
+      return `<h2>${escapeHtml(lines[0].replace(/[:：]$/, ""))}</h2>${renderJdWordParagraphs(lines.slice(1))}`;
+    }
+
+    return renderJdWordParagraphs(lines);
+  }).join("");
+}
+
+function buildJdWordHtml(title, finalText) {
+  const generatedAt = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head>",
+    "<meta charset=\"utf-8\">",
+    "<style>",
+    "@page WordSection1 { size: 21cm 29.7cm; margin: 2.2cm 2.1cm 2.2cm 2.1cm; }",
+    "body { font-family: 'Malgun Gothic', Arial, sans-serif; color: #111827; line-height: 1.65; font-size: 10.5pt; }",
+    "div.WordSection1 { page: WordSection1; }",
+    ".doc-header { border-bottom: 2px solid #111827; padding-bottom: 14px; margin-bottom: 22px; }",
+    ".doc-eyebrow { color: #6b7280; font-size: 9pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin: 0 0 4px; }",
+    "h1 { font-size: 20pt; line-height: 1.3; margin: 0; color: #111827; }",
+    ".meta { color: #6b7280; font-size: 9pt; margin-top: 8px; }",
+    "h2 { font-size: 13pt; margin: 20px 0 8px; padding-bottom: 5px; border-bottom: 1px solid #d1d5db; color: #111827; }",
+    "p { margin: 0 0 8px; }",
+    "ul, ol { margin: 0 0 10px 20px; padding: 0; }",
+    "li { margin: 0 0 5px; }",
+    ".doc-footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 8.5pt; }",
+    "</style>",
+    "</head>",
+    "<body>",
+    "<div class=\"WordSection1\">",
+    "<div class=\"doc-header\">",
+    "<p class=\"doc-eyebrow\">Job Description</p>",
+    `<h1>${escapeHtml(title)} 최종본</h1>`,
+    `<div class=\"meta\">생성 시각: ${escapeHtml(generatedAt)} KST</div>`,
+    "</div>",
+    renderJdWordBody(finalText),
+    "<div class=\"doc-footer\">본 문서는 JD 고도화 메뉴에서 작성 가이드라인 점검 후 생성된 Word 호환 문서입니다.</div>",
+    "</div>",
+    "</body>",
+    "</html>"
+  ].join("");
+}
+
 function downloadJdFinalDocument() {
   const jd = getJdEnhancementState();
-  const finalText = normalizeResumeText(jd.finalText || jd.jdText);
+  const finalText = String(jd.finalText || jd.jdText || "").replace(/\r\n?/g, "\n").trim();
 
   if (!finalText) {
     showToast("다운로드할 최종 완성본이 없습니다.");
@@ -8212,14 +8385,7 @@ function downloadJdFinalDocument() {
   }
 
   const title = (jd.jdFile?.name || "JD_최종완성본").replace(/\.[^.]+$/, "");
-  const html = [
-    "<!doctype html><html><head><meta charset=\"utf-8\">",
-    "<style>body{font-family:'Malgun Gothic',Arial,sans-serif;line-height:1.65;color:#111827;} h1{font-size:20px;} p{white-space:pre-wrap;}</style>",
-    "</head><body>",
-    `<h1>${escapeHtml(title)} 최종 완성본</h1>`,
-    `<p>${escapeHtml(finalText)}</p>`,
-    "</body></html>"
-  ].join("");
+  const html = buildJdWordHtml(title, finalText);
   const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -17224,6 +17390,16 @@ function bindEvents() {
         jd.status = "JD 점검 중 오류가 발생했습니다.";
         rerenderJdEnhancement();
       });
+      return;
+    }
+
+    if (event.target.closest("[data-open-jd-guideline-modal]")) {
+      openJdGuidelineModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-jd-guideline-modal]") || event.target.matches("[data-jd-guideline-modal-backdrop]")) {
+      closeJdGuidelineModal();
       return;
     }
 
