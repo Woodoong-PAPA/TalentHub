@@ -44,6 +44,26 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+async function readJsonResponse(response, label) {
+  const responseText = await response.text();
+  const responseTrimmed = responseText.trim();
+
+  if (!responseTrimmed) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(responseTrimmed);
+  } catch (error) {
+    const preview = responseTrimmed.replace(/\s+/g, " ").slice(0, 160);
+    const looksLikeHtml = /^<!doctype html|^<html|^<HTML|^</i.test(responseTrimmed);
+    const detail = looksLikeHtml
+      ? `${label} 응답이 JSON이 아니라 HTML입니다. API route 또는 배포 상태를 확인해주세요.`
+      : `${label} 응답 JSON을 해석하지 못했습니다.`;
+    throw new Error(`${detail} 상태 ${response.status}, 응답 시작: ${preview}`);
+  }
+}
+
 function getSupabaseConfig() {
   return {
     url: (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, ""),
@@ -296,7 +316,7 @@ async function ensureReport(request, providedReport) {
   }
 
   const response = await fetch(`${getRequestOrigin(request)}/api/trending-people?cron=1`);
-  const payload = await response.json();
+  const payload = await readJsonResponse(response, "Today's Talent 리포트 생성");
 
   if (!response.ok || !payload.ok || !payload.report?.people?.length) {
     throw new Error(payload.error || "Trending people report is not available.");
@@ -806,12 +826,20 @@ async function sendEmailViaResend(settings, report) {
     })
   });
   const text = await response.text();
+  let payload = {};
 
-  if (!response.ok) {
-    throw new Error(`메일 발송 실패: ${response.status} ${text.slice(0, 300)}`);
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch (error) {
+    payload = { message: text.slice(0, 300) };
   }
 
-  return text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    const providerMessage = payload.message || payload.error || text.slice(0, 300);
+    throw new Error(`메일 발송 실패: ${response.status} ${providerMessage}`);
+  }
+
+  return payload;
 }
 
 function isDue(settings) {
