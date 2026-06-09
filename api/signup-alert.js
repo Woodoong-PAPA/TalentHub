@@ -73,6 +73,13 @@ function getProviderConfig() {
   };
 }
 
+function getSupabaseConfig() {
+  return {
+    url: (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, ""),
+    key: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+  };
+}
+
 function assertProviderConfigured() {
   const config = getProviderConfig();
 
@@ -81,6 +88,30 @@ function assertProviderConfigured() {
   }
 
   return config;
+}
+
+async function fetchActiveAdminEmailsFromSupabase() {
+  const config = getSupabaseConfig();
+
+  if (!config.url || !config.key) {
+    return [];
+  }
+
+  const response = await fetch(`${config.url}/rest/v1/app_members?select=email&role=eq.admin&status=eq.active`, {
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`관리자 목록 조회 실패: ${response.status} ${detail.slice(0, 200)}`);
+  }
+
+  const rows = await response.json();
+  return normalizeEmailList(rows.map((row) => row.email));
 }
 
 function formatField(value) {
@@ -213,7 +244,16 @@ module.exports = async function signupAlert(request, response) {
 
   try {
     const body = await readJsonBody(request);
-    const recipients = normalizeEmailList(body.admins || body.recipients);
+    const requestRecipients = normalizeEmailList(body.admins || body.recipients);
+    let databaseRecipients = [];
+
+    try {
+      databaseRecipients = await fetchActiveAdminEmailsFromSupabase();
+    } catch (error) {
+      console.warn("Active admin lookup failed. Falling back to request recipients.", error);
+    }
+
+    const recipients = normalizeEmailList([...databaseRecipients, ...requestRecipients]);
     const member = body.member || {};
     const mail = buildSignupAlertMail(recipients, member);
     const result = await sendEmailViaResend(mail);
