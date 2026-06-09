@@ -4165,7 +4165,7 @@ function renderAuth() {
           </div>
           <div class="field-grid">
             <div class="field">
-              <label for="signup-position">직책</label>
+              <label for="signup-position">직급/직책</label>
               <input class="control-input" id="signup-position" name="position" autocomplete="organization-title" />
             </div>
             <div class="field">
@@ -12415,7 +12415,7 @@ function trendingPersonCard(person) {
             </div>
           </div>
           <div class="trending-actions">
-            ${person.linkedinUrl ? `<a class="soft-button compact-button" href="${escapeHtml(person.linkedinUrl)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}
+            ${person.linkedinUrl ? `<a class="soft-button compact-button trending-linkedin" href="${escapeHtml(person.linkedinUrl)}" target="_blank" rel="noreferrer">LinkedIn</a>` : ""}
             ${isAdmin() ? `<button class="ghost-button compact-button" type="button" data-edit-trending-person="${escapeHtml(trendingPersonIdentifier(person))}">프로필 수정</button>` : ""}
             <button class="primary-button compact-button" type="button" data-register-trending-person="${escapeHtml(person.id || person.name)}" ${alreadyRegistered ? "disabled" : ""}>
               ${alreadyRegistered ? "등록됨" : "Pool 등록"}
@@ -16552,6 +16552,60 @@ async function readApiJson(response, label) {
   }
 }
 
+function getActiveAdminEmails() {
+  return normalizeEmailList(
+    state.members
+      .filter((member) => member.role === "admin" && member.status === "active" && isValidEmail(member.email))
+      .map((member) => member.email)
+  );
+}
+
+async function notifyAdminsOfSignup(member) {
+  const adminEmails = getActiveAdminEmails();
+
+  if (!member || !adminEmails.length) {
+    return false;
+  }
+
+  try {
+    const response = await fetch("/api/signup-alert", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        admins: adminEmails,
+        member: {
+          id: member.id,
+          name: member.name,
+          email: member.email,
+          role: member.role,
+          roleLabel: getRoleLabel(member.role),
+          businessUnit: member.businessUnit,
+          department: member.department,
+          position: member.position,
+          phone: member.phone,
+          note: member.note,
+          requestedAt: member.requestedAt
+        }
+      })
+    });
+    const payload = await readApiJson(response, "회원가입 관리자 알림 메일");
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Signup alert mail failed: ${response.status}`);
+    }
+
+    addAuditLog("회원가입 관리자 알림", member.name, `${payload.recipientCount || adminEmails.length}명 발송`, "시스템");
+    persistState();
+    return true;
+  } catch (error) {
+    console.warn("Signup alert mail failed.", error);
+    addAuditLog("회원가입 관리자 알림 실패", member.name || "-", error.message || "메일 발송 실패", "시스템");
+    persistState();
+    return false;
+  }
+}
+
 function collectTrendingMailSettingsFromForm(form) {
   const recipients = normalizeEmailList(form.recipients.value);
   const invalidRecipients = recipients.filter((email) => !isValidEmail(email));
@@ -19007,6 +19061,7 @@ async function handleSignupSubmit(form) {
 
   state.members.unshift(member);
   queueMemberRemoteSave(member);
+  notifyAdminsOfSignup(member);
   state.authView = "login";
   state.authMessage = "가입 신청이 접수되었습니다. 관리자가 승인하면 로그인할 수 있습니다.";
   addAuditLog("회원가입 신청", member.name, `${getRoleLabel(member.role)} 권한 요청`, "가입 신청자");

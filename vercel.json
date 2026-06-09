@@ -85,6 +85,10 @@
       "dest": "/api/screening-mail.js"
     },
     {
+      "src": "/api/signup-alert",
+      "dest": "/api/signup-alert.js"
+    },
+    {
       "src": "/api/recruiting-metrics-mail",
       "dest": "/api/recruiting-metrics-mail.js"
     },

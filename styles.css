@@ -1361,6 +1361,21 @@ tr:last-child td {
   background: #dcecff;
 }
 
+.trending-linkedin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+  line-height: 1;
+}
+
+.trending-linkedin:hover,
+.trending-linkedin:focus,
+.trending-linkedin:visited {
+  text-decoration: none;
+}
+
 .icon-button {
   min-width: 40px;
   padding: 8px 10px;

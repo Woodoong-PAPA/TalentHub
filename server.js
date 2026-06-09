@@ -73,6 +73,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/signup-alert") {
+    const signupAlert = require("./api/signup-alert.js");
+    signupAlert(request, response);
+    return;
+  }
+
   if (request.url.split("?")[0] === "/api/recruiting-metrics-mail") {
     const recruitingMetricsMail = require("./api/recruiting-metrics-mail.js");
     recruitingMetricsMail(request, response);
