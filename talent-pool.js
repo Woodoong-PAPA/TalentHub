@@ -669,6 +669,7 @@ const state = {
   screeningMailPreview: null,
   screeningMailTemplates: {},
   screeningResultPanelOpen: false,
+  screeningTimelineDrag: null,
   poolReturnScrollY: 0,
   poolFilters: {
     query: "",
@@ -706,8 +707,15 @@ const state = {
   interviewReport: {
     scriptText: "",
     scriptFileName: "",
+    scriptStatus: "",
+    scriptLoading: false,
+    scriptProgress: 0,
     templateText: "",
     templateFileName: "",
+    templateStatus: "",
+    templateLoading: false,
+    templateProgress: 0,
+    templateProfile: null,
     prompt: "",
     reportText: "",
     status: ""
@@ -1461,7 +1469,10 @@ function normalizeScreeningFolder(folder = {}) {
       emails: String(folder.interviewPanel?.emails || "").trim(),
       availability: String(folder.interviewPanel?.availability || "").trim(),
       members: normalizeInterviewPanelMembers(folder.interviewPanel || {}),
-      slots: normalizeInterviewPanelSlots(folder.interviewPanel || {})
+      slots: normalizeInterviewPanelSlots(folder.interviewPanel || {}),
+      timelineDate: String(folder.interviewPanel?.timelineDate || "").trim(),
+      timelineStartHour: Number(folder.interviewPanel?.timelineStartHour || 0) || 0,
+      timelineEndHour: Number(folder.interviewPanel?.timelineEndHour || 0) || 0
     },
     applicants: Array.isArray(folder.applicants)
       ? folder.applicants.map(normalizeScreeningApplicant)
@@ -1601,8 +1612,15 @@ function normalizeInterviewReportState(value = {}) {
   return {
     scriptText: String(value.scriptText || "").trim(),
     scriptFileName: String(value.scriptFileName || "").trim(),
+    scriptStatus: String(value.scriptStatus || "").trim(),
+    scriptLoading: Boolean(value.scriptLoading),
+    scriptProgress: Number(value.scriptProgress || 0) || 0,
     templateText: String(value.templateText || "").trim(),
     templateFileName: String(value.templateFileName || "").trim(),
+    templateStatus: String(value.templateStatus || "").trim(),
+    templateLoading: Boolean(value.templateLoading),
+    templateProgress: Number(value.templateProgress || 0) || 0,
+    templateProfile: value.templateProfile && typeof value.templateProfile === "object" ? value.templateProfile : null,
     prompt: String(value.prompt || "").trim(),
     reportText: String(value.reportText || "").trim(),
     status: String(value.status || "").trim()
@@ -2562,6 +2580,8 @@ function restorePersistedState() {
 
   if (persisted.interviewReport && typeof persisted.interviewReport === "object") {
     state.interviewReport = normalizeInterviewReportState(persisted.interviewReport);
+    state.interviewReport.scriptLoading = false;
+    state.interviewReport.templateLoading = false;
   }
 
   if (persisted.recruitingMetrics && typeof persisted.recruitingMetrics === "object") {
@@ -5477,6 +5497,10 @@ function getScreeningStageDisplayLabel(stageOrApplicant) {
     return "서류 스크리닝(평가) 진행 중";
   }
 
+  if (["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(stage)) {
+    return "서류 스크리닝(평가) 통과";
+  }
+
   return SCREENING_STAGE_LABELS[stage] || stage;
 }
 
@@ -6281,10 +6305,7 @@ function renderScreeningApplicantDetailModal(folder) {
     return "";
   }
 
-  const firm = applicant.searchFirmMemberId ? state.members.find((member) => member.id === applicant.searchFirmMemberId) : null;
   const fit = screeningFitDetail(folder, applicant);
-  const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌 등록" : "채용담당자 직접 등록";
-  const sourceMeta = firm ? `${firm.name} · ${firm.email}` : applicant.registeredByName || "-";
   const showFit = applicant.stage !== "reception";
   const canDownloadResume = state.screeningDetailStep === "first" && applicant.resumeAttachment?.dataUrl;
 
@@ -6299,24 +6320,6 @@ function renderScreeningApplicantDetailModal(folder) {
           <button class="ghost-button compact-button" type="button" data-close-screening-applicant-detail>닫기</button>
         </div>
         <div class="trending-modal-body screening-applicant-detail-body">
-          <section class="screening-detail-block screening-applicant-overview-block">
-            <div class="panel-header">
-              <h4>지원자 상세 정보</h4>
-              ${screeningStageChip(applicant)}
-            </div>
-            <div class="screening-detail-list">
-              <div><span>등록 경로</span><strong>${escapeHtml(sourceLabel)}</strong><small>${escapeHtml(sourceMeta)}</small></div>
-              <div><span>출생년도/나이</span><strong>${escapeHtml(formatScreeningBirthAge(applicant))}</strong></div>
-              <div><span>국적</span><strong>${escapeHtml(applicant.nationality || "-")}</strong></div>
-              <div><span>이메일</span><strong>${escapeHtml(applicant.email || "-")}</strong></div>
-              <div><span>휴대폰 번호</span><strong>${escapeHtml(applicant.phone || "-")}</strong></div>
-              <div><span>최초 등록일</span><strong>${escapeHtml(applicant.createdAt || "-")}</strong></div>
-              <div><span>최종 업데이트</span><strong>${escapeHtml(applicant.updatedAt || "-")}</strong></div>
-            </div>
-            ${renderScreeningApplicantProfileSummary(applicant)}
-            ${applicant.summary ? `<p class="screening-detail-note">${escapeHtml(applicant.summary)}</p>` : ""}
-          </section>
-
           <div class="screening-detail-two-column ${showFit ? "has-fit" : ""}">
             <section class="screening-detail-block screening-resume-block">
               <div class="panel-header">
@@ -6329,7 +6332,7 @@ function renderScreeningApplicantDetailModal(folder) {
                     <strong>${escapeHtml(applicant.resumeAttachment.name || "첨부 이력서")}</strong>
                     <small>${escapeHtml(applicant.resumeAttachment.type || "파일 형식 미확인")}</small>
                   </span>
-                  ${canDownloadResume ? `<a class="soft-button compact-button" href="${escapeHtml(applicant.resumeAttachment.dataUrl)}" download="${escapeHtml(applicant.resumeAttachment.name || "resume")}">다운로드</a>` : ""}
+                  ${canDownloadResume ? `<a class="soft-button compact-button screening-resume-download-button" href="${escapeHtml(applicant.resumeAttachment.dataUrl)}" download="${escapeHtml(applicant.resumeAttachment.name || "resume")}">다운로드</a>` : ""}
                 </div>
                 ${renderResumeInlineViewer(applicant.resumeAttachment, applicant)}
               ` : `<div class="empty-state compact-empty">등록된 이력서 첨부 파일이 없습니다.</div>`}
@@ -6337,13 +6340,6 @@ function renderScreeningApplicantDetailModal(folder) {
 
             ${showFit ? renderScreeningFitAnalysisPanel(applicant, fit) : ""}
           </div>
-
-          <section class="screening-detail-block">
-            <div class="panel-header">
-              <h4>진행 이력</h4>
-            </div>
-            ${renderScreeningTimeline(applicant)}
-          </section>
         </div>
       </section>
     </div>
@@ -6772,6 +6768,7 @@ function renderScreeningStructuredApplicantCard(folder, applicant, step) {
         <div class="screening-structured-status">
           ${screeningStageChip(applicant)}
           <span>등록 경로 : ${escapeHtml(sourceLabel)} (${escapeHtml(sourceMeta)})</span>
+          <span>최초 등록일 : ${escapeHtml(applicant.createdAt || getTodayDate())}</span>
         </div>
       </div>
 
@@ -6912,6 +6909,70 @@ function buildScreeningAvailabilityText(slots = [], fallback = "") {
   return slotLines.length ? slotLines.join("\n") : String(fallback || "").trim();
 }
 
+const SCREENING_TIMELINE_HOURS = Array.from({ length: 13 }, (_, index) => index + 8);
+
+function normalizeScreeningTimelineDate(value = "") {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : getTodayDate();
+}
+
+function normalizeScreeningTimelineHour(value, fallback) {
+  const hour = Number(value);
+  return Number.isFinite(hour)
+    ? Math.max(8, Math.min(20, Math.round(hour)))
+    : fallback;
+}
+
+function getScreeningTimelineState(folder = {}) {
+  const panel = folder.interviewPanel || {};
+  const date = normalizeScreeningTimelineDate(panel.timelineDate);
+  const startHour = normalizeScreeningTimelineHour(panel.timelineStartHour, 10);
+  const endHour = Math.max(startHour + 1, normalizeScreeningTimelineHour(panel.timelineEndHour, 14));
+
+  return {
+    date,
+    startHour: Math.min(startHour, 19),
+    endHour: Math.min(endHour, 20)
+  };
+}
+
+function formatScreeningTimelineRange(dateValue, startHour, endHour) {
+  const date = new Date(`${normalizeScreeningTimelineDate(dateValue)}T00:00:00`);
+  const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const weekday = weekdays[date.getDay()] || "";
+  const start = String(normalizeScreeningTimelineHour(startHour, 10)).padStart(2, "0");
+  const end = String(Math.max(Number(startHour) + 1, normalizeScreeningTimelineHour(endHour, 14))).padStart(2, "0");
+
+  return `${year}.${month}.${day}(${weekday}) ${start}:00~${end}:00`;
+}
+
+function renderScreeningAvailabilityTimeline(folder) {
+  const timeline = getScreeningTimelineState(folder);
+  const previewText = formatScreeningTimelineRange(timeline.date, timeline.startHour, timeline.endHour);
+
+  return `
+    <div class="screening-timeline-picker" data-screening-timeline-picker>
+      <label class="field compact-field">
+        <span>면접 날짜</span>
+        <input class="control-input" type="date" name="timelineDate" value="${inputValue(timeline.date)}" data-screening-timeline-date />
+      </label>
+      <input type="hidden" name="timelineStartHour" value="${escapeHtml(timeline.startHour)}" data-screening-timeline-start />
+      <input type="hidden" name="timelineEndHour" value="${escapeHtml(timeline.endHour)}" data-screening-timeline-end />
+      <div class="screening-time-range" data-screening-time-range aria-label="면접 가능 시간대 드래그 선택">
+        ${SCREENING_TIMELINE_HOURS.map((hour) => {
+          const selected = hour >= timeline.startHour && hour < timeline.endHour;
+          return `<button class="screening-time-cell ${selected ? "is-selected" : ""}" type="button" data-screening-time-cell="${hour}">${String(hour).padStart(2, "0")}:00</button>`;
+        }).join("")}
+      </div>
+      <span class="form-help">타임라인을 마우스로 드래그해 가능 시간 범위를 선택하세요.</span>
+      <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="3" readonly>${escapeHtml(previewText)}</textarea>
+    </div>
+  `;
+}
+
 function renderScreeningInterviewerRows(folder) {
   const members = normalizeInterviewPanelMembers(folder.interviewPanel || {});
   const rows = members.length ? members : [{ name: "", email: "" }];
@@ -6941,7 +7002,6 @@ function renderSecondScreeningPanel(folder) {
   const draftApplicants = folder.applicants.filter((applicant) => applicant.stage === "second_draft");
   const passedApplicants = folder.applicants.filter((applicant) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage));
   const canFinalize = canRunSecondScreening(folder);
-  const availabilityText = buildScreeningAvailabilityText(folder.interviewPanel.slots || [], folder.interviewPanel.availability);
 
   return `
     <div class="trending-modal-backdrop" data-screening-result-panel-backdrop>
@@ -6981,13 +7041,9 @@ function renderSecondScreeningPanel(folder) {
               <section class="screening-result-send-block">
                 <div class="panel-header compact-panel-header">
                   <h5>면접 가능 시간대</h5>
-                  <button class="ghost-button compact-button" type="button" data-add-screening-slot>시간대 추가</button>
-                </div>
-                <div class="screening-slot-list" data-screening-slot-list>
-                  ${renderScreeningAvailabilityRows(folder)}
                 </div>
                 <label class="screening-availability-preview-label" for="screening-panel-availability">메일 표기 문구</label>
-                <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="4" readonly>${escapeHtml(availabilityText)}</textarea>
+                ${renderScreeningAvailabilityTimeline(folder)}
               </section>
             </div>
             <div class="form-actions screening-final-form-actions">
@@ -7115,7 +7171,6 @@ function renderScreeningStepContent(folder) {
         </div>
         ${renderApplicantList(folder, applicants, "2차 최종 통과 지원자가 없습니다.", "mail")}
       </section>
-      ${renderScreeningMailQueue(folder)}
     `;
   }
 
@@ -7664,15 +7719,110 @@ function summarizeInterviewScriptText(text) {
   };
 }
 
+function analyzeInterviewTemplateProfile(templateText = "", fileName = "") {
+  const normalized = normalizePolicyText(templateText);
+  const lines = normalized.split("\n");
+  const nonEmptyLines = lines.map((line) => line.trim()).filter(Boolean);
+  const avgLineLength = nonEmptyLines.length
+    ? Math.round(nonEmptyLines.reduce((sum, line) => sum + line.length, 0) / nonEmptyLines.length)
+    : 48;
+  const sectionTitles = nonEmptyLines
+    .filter((line) => line.length <= 34)
+    .filter((line) => /^(#+\s*)?(\d+[.)]\s*)?[\w가-힣][\w가-힣\s\/·()\[\]-]{1,32}$/.test(line))
+    .map((line) => line.replace(/^#+\s*/, "").trim())
+    .filter((line, index, array) => array.indexOf(line) === index)
+    .slice(0, 5);
+  const bulletLine = nonEmptyLines.find((line) => /^[-*ㆍ•]\s+/.test(line));
+  const blankRatio = lines.length ? lines.filter((line) => !line.trim()).length / lines.length : 0.18;
+
+  return {
+    fileName: String(fileName || "").trim(),
+    sectionTitles,
+    bulletPrefix: bulletLine ? bulletLine.trim().slice(0, 1) : "-",
+    estimatedCharsPerLine: Math.max(34, Math.min(76, avgLineLength || 48)),
+    lineHeight: blankRatio > 0.24 ? 1.75 : blankRatio > 0.12 ? 1.6 : 1.45,
+    fontFamily: /[가-힣]/.test(normalized) ? "Malgun Gothic" : "Arial",
+    fontSizePt: avgLineLength > 68 ? 10 : 10.5,
+    layoutNote: sectionTitles.length
+      ? `${sectionTitles.length}개 섹션 제목과 문단 길이 패턴을 반영`
+      : "문단 길이와 줄 간격 패턴을 반영"
+  };
+}
+
+function getInterviewTemplateProfile(report) {
+  if (report.templateProfile && typeof report.templateProfile === "object") {
+    return report.templateProfile;
+  }
+
+  return analyzeInterviewTemplateProfile(report.templateText, report.templateFileName);
+}
+
+function wrapInterviewReportLine(line, maxChars) {
+  const text = String(line || "").trim();
+
+  if (!text || text.length <= maxChars) {
+    return [text];
+  }
+
+  const words = text.split(/\s+/);
+  const wrapped = [];
+  let current = "";
+
+  words.forEach((word) => {
+    if (!current) {
+      current = word;
+      return;
+    }
+
+    if ((current.length + word.length + 1) > maxChars) {
+      wrapped.push(current);
+      current = word;
+      return;
+    }
+
+    current = `${current} ${word}`;
+  });
+
+  if (current) {
+    wrapped.push(current);
+  }
+
+  return wrapped.length ? wrapped : [text];
+}
+
 function buildInterviewReportText() {
   const report = getInterviewReportState();
   const summary = summarizeInterviewScriptText(report.scriptText);
+  const templateProfile = getInterviewTemplateProfile(report);
+  const bullet = templateProfile.bulletPrefix || "-";
+  const maxChars = templateProfile.estimatedCharsPerLine || 52;
+  const sectionTitles = templateProfile.sectionTitles || [];
   const templateNote = report.templateText
-    ? "참고 양식의 구성과 톤을 반영하여 면담 핵심 내용, 판단 근거, 후속 확인 사항 순으로 정리했습니다."
+    ? `참고 양식의 구성과 톤을 반영했습니다. (${templateProfile.layoutNote})`
     : "일반 면담록 양식 기준으로 면담 핵심 내용, 판단 근거, 후속 확인 사항 순으로 정리했습니다.";
   const promptNote = report.prompt
     ? `작성 지시사항: ${report.prompt}`
     : "작성 지시사항: C-level 및 채용 의사결정자가 빠르게 검토할 수 있는 보고서 형태";
+  const sections = [
+    {
+      title: sectionTitles[0] || "1. 면담 요약",
+      lines: summary.summary.length ? summary.summary : ["면담 스크립트 내 핵심 내용을 확인할 수 없습니다."]
+    },
+    {
+      title: sectionTitles[1] || "2. 핵심 확인 사항",
+      lines: summary.keyPoints.length ? summary.keyPoints : ["추가 확인 사항 없음"]
+    },
+    {
+      title: sectionTitles[2] || "3. 후속 검토 필요 사항",
+      lines: summary.followUps.length ? summary.followUps : ["면담 내용상 즉시 확인이 필요한 특이 리스크는 제한적입니다."]
+    },
+    {
+      title: sectionTitles[3] || "4. 종합 의견",
+      lines: [
+        "면담 내용은 후보자의 경험, 관심사, 조건, 리스크를 중심으로 검토 가능한 형태로 정리되었습니다. 최종 판단 전에는 이력서, 직무 요건, 면접 평가 결과와 함께 교차 확인하는 것이 적절합니다."
+      ]
+    }
+  ];
 
   return [
     "면담록 보고서",
@@ -7680,17 +7830,11 @@ function buildInterviewReportText() {
     `작성 기준: ${templateNote}`,
     promptNote,
     "",
-    "1. 면담 요약",
-    ...(summary.summary.length ? summary.summary : ["면담 스크립트 내 핵심 내용을 확인할 수 없습니다."]).map((line) => `- ${line}`),
-    "",
-    "2. 핵심 확인 사항",
-    ...(summary.keyPoints.length ? summary.keyPoints : ["추가 확인 사항 없음"]).map((line) => `- ${line}`),
-    "",
-    "3. 후속 검토 필요 사항",
-    ...(summary.followUps.length ? summary.followUps : ["면담 내용상 즉시 확인이 필요한 특이 리스크는 제한적입니다."]).map((line) => `- ${line}`),
-    "",
-    "4. 종합 의견",
-    "면담 내용은 후보자의 경험, 관심사, 조건, 리스크를 중심으로 검토 가능한 형태로 정리되었습니다. 최종 판단 전에는 이력서, 직무 요건, 면접 평가 결과와 함께 교차 확인하는 것이 적절합니다."
+    ...sections.flatMap((section) => [
+      section.title,
+      ...section.lines.flatMap((line) => wrapInterviewReportLine(line, maxChars).map((wrappedLine) => `${bullet} ${wrappedLine}`)),
+      ""
+    ])
   ].join("\n");
 }
 
@@ -7702,6 +7846,8 @@ function renderInterviewReport() {
   }
 
   const report = getInterviewReportState();
+  const scriptUploadStatus = report.scriptStatus || report.scriptFileName || "파일을 선택하거나 드래그앤드랍";
+  const templateUploadStatus = report.templateStatus || report.templateFileName || "선택 사항";
 
   container.innerHTML = `
     <div class="report-workspace">
@@ -7717,12 +7863,12 @@ function renderInterviewReport() {
           <label class="dropzone report-upload-box" for="interview-report-script-file">
             <input id="interview-report-script-file" type="file" accept=".txt,.pdf,.doc,.docx,.hwp,.hwpx" />
             <strong>스크립트 파일 업로드</strong>
-            <span>${escapeHtml(report.scriptFileName || "파일을 선택하거나 드래그앤드랍")}</span>
+            <span class="report-upload-status">${renderMaybeProgressStatus(scriptUploadStatus, report.scriptLoading, report.scriptProgress)}</span>
           </label>
           <label class="dropzone report-upload-box" for="interview-report-template-file">
             <input id="interview-report-template-file" type="file" accept=".txt,.pdf,.doc,.docx,.hwp,.hwpx" />
             <strong>참고 양식 업로드</strong>
-            <span>${escapeHtml(report.templateFileName || "선택 사항")}</span>
+            <span class="report-upload-status">${renderMaybeProgressStatus(templateUploadStatus, report.templateLoading, report.templateProgress)}</span>
           </label>
         </div>
         <label class="field">
@@ -7762,26 +7908,58 @@ async function loadInterviewReportFile(file, field) {
   }
 
   const report = getInterviewReportState();
-  report.status = `${file.name} 파일을 읽는 중입니다.`;
+  const isScript = field === "script";
+  const statusKey = isScript ? "scriptStatus" : "templateStatus";
+  const loadingKey = isScript ? "scriptLoading" : "templateLoading";
+  const progressKey = isScript ? "scriptProgress" : "templateProgress";
+
+  report[loadingKey] = true;
+  report[progressKey] = 12;
+  report[statusKey] = `${file.name} 파일을 읽는 중입니다.`;
+  report.status = "";
   renderInterviewReport();
 
   try {
     const result = await readInterviewReportUploadText(file);
+    report[progressKey] = 68;
+    report[statusKey] = "문서 텍스트를 정리하는 중입니다.";
+    renderInterviewReport();
+
     const extractedText = normalizeResumeText(result.text || "");
 
     if (!extractedText) {
       throw createResumeParseError("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
     }
 
-    report[field === "script" ? "scriptText" : "templateText"] = extractedText;
-    report[field === "script" ? "scriptFileName" : "templateFileName"] = file.name;
-    report.status = `${file.name} 파일을 불러왔습니다.`;
+    report[isScript ? "scriptText" : "templateText"] = extractedText;
+    report[isScript ? "scriptFileName" : "templateFileName"] = file.name;
+
+    if (!isScript) {
+      report.templateProfile = analyzeInterviewTemplateProfile(extractedText, file.name);
+    }
+
     const sourceLabel = result.meta?.source === "server" ? "서버 보강 추출" : "브라우저 추출";
-    report.status = `${file.name} 파일 내용을 불러왔습니다. (${sourceLabel}, ${extractedText.length.toLocaleString("ko-KR")}자)`;
+    const profileNote = !isScript && report.templateProfile?.layoutNote ? ` · ${report.templateProfile.layoutNote}` : "";
+    report[progressKey] = 100;
+    report[statusKey] = `${file.name} 내용을 불러왔습니다. (${sourceLabel}, ${extractedText.length.toLocaleString("ko-KR")}자${profileNote})`;
+
+    if (report.scriptText.trim()) {
+      report.reportText = buildInterviewReportText();
+      report.status = isScript
+        ? "업로드한 스크립트 기반으로 면담록 보고서 초안을 생성했습니다."
+        : "참고 양식 구조를 반영해 면담록 보고서 초안을 다시 생성했습니다.";
+    } else {
+      report.status = "참고 양식을 불러왔습니다. 스크립트를 입력하거나 업로드하면 보고서가 생성됩니다.";
+    }
+
     persistState();
   } catch (error) {
     console.warn(error);
-    report.status = "파일을 읽는 중 오류가 발생했습니다.";
+    report[progressKey] = 0;
+    report[statusKey] = error.isResumeParseError ? error.message : "파일을 읽는 중 오류가 발생했습니다.";
+    report.status = report[statusKey];
+  } finally {
+    report[loadingKey] = false;
   }
 
   renderInterviewReport();
@@ -7810,6 +7988,7 @@ function generateInterviewReport() {
 
 function buildInterviewReportWordHtml() {
   const report = getInterviewReportState();
+  const templateProfile = getInterviewTemplateProfile(report);
   const generatedAt = getTimestampText();
   const paragraphs = normalizePolicyText(report.reportText)
     .split("\n")
@@ -7834,10 +8013,10 @@ function buildInterviewReportWordHtml() {
   return [
     "<!doctype html><html><head><meta charset=\"utf-8\"><style>",
     "@page { size: A4; margin: 18mm 18mm; }",
-    "body { font-family:'Malgun Gothic',Arial,sans-serif; color:#111827; font-size:10.5pt; line-height:1.6; }",
+    `body { font-family:'${escapeHtml(templateProfile.fontFamily || "Malgun Gothic")}',Arial,sans-serif; color:#111827; font-size:${Number(templateProfile.fontSizePt || 10.5)}pt; line-height:${Number(templateProfile.lineHeight || 1.6)}; }`,
     "h1 { font-size:20pt; margin:0 0 12px; border-bottom:2px solid #111827; padding-bottom:10px; }",
     "h2 { font-size:13pt; margin:18px 0 8px; color:#111827; }",
-    "p { margin:0 0 6px; }",
+    "p { margin:0 0 6px; max-width: 72ch; }",
     ".meta { color:#6b7280; font-size:9pt; margin-bottom:16px; }",
     "</style></head><body>",
     `<div class=\"meta\">생성 시각 ${escapeHtml(generatedAt)} KST</div>`,
@@ -17504,7 +17683,50 @@ function syncScreeningAvailabilityPreview(form) {
     return;
   }
 
+  const dateInput = form.querySelector("[data-screening-timeline-date]");
+  const startInput = form.querySelector("[data-screening-timeline-start]");
+  const endInput = form.querySelector("[data-screening-timeline-end]");
+
+  if (dateInput && startInput && endInput) {
+    const startHour = normalizeScreeningTimelineHour(startInput.value, 10);
+    const endHour = Math.max(startHour + 1, normalizeScreeningTimelineHour(endInput.value, startHour + 1));
+    startInput.value = String(Math.min(startHour, 19));
+    endInput.value = String(Math.min(endHour, 20));
+    output.value = formatScreeningTimelineRange(dateInput.value, startInput.value, endInput.value);
+    form.querySelectorAll("[data-screening-time-cell]").forEach((cell) => {
+      const hour = Number(cell.dataset.screeningTimeCell);
+      cell.classList.toggle("is-selected", hour >= Number(startInput.value) && hour < Number(endInput.value));
+    });
+    return;
+  }
+
   output.value = buildScreeningAvailabilityText(getScreeningAvailabilitySlotsFromForm(form), output.value);
+}
+
+function updateScreeningTimelineSelection(cell, options = {}) {
+  const form = cell?.closest("#screening-final-pass-form");
+  const startInput = form?.querySelector("[data-screening-timeline-start]");
+  const endInput = form?.querySelector("[data-screening-timeline-end]");
+
+  if (!form || !startInput || !endInput) {
+    return;
+  }
+
+  const hour = normalizeScreeningTimelineHour(cell.dataset.screeningTimeCell, 10);
+  const dragStart = Number.isFinite(Number(state.screeningTimelineDrag?.startHour))
+    ? Number(state.screeningTimelineDrag.startHour)
+    : hour;
+  const rangeStart = Math.min(dragStart, hour);
+  const rangeEnd = Math.max(dragStart, hour) + 1;
+
+  startInput.value = String(Math.min(rangeStart, 19));
+  endInput.value = String(Math.min(rangeEnd, 20));
+
+  if (options.startDrag) {
+    state.screeningTimelineDrag = { startHour: hour };
+  }
+
+  syncScreeningAvailabilityPreview(form);
 }
 
 async function attachmentFromFile(file) {
@@ -17864,7 +18086,7 @@ async function submitScreeningApplicant(applicantId) {
   applicant.submittedById = actor?.id || "";
   applicant.submittedByName = actor?.name || getCurrentActorName();
   applicant.updatedAt = getTodayDate();
-  await refreshScreeningApplicantFit(folder, applicant);
+  evaluateApplicantFit(folder, applicant);
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
   addAuditLog("Screening 지원자 최종 제출", applicant.name, `${folder.title} · 1차 스크리닝 이동`);
@@ -17872,6 +18094,18 @@ async function submitScreeningApplicant(applicantId) {
 
   showToast(`${applicant.name} 지원자를 1차 스크리닝으로 제출했습니다.`);
   renderScreening();
+
+  refreshScreeningApplicantFit(folder, applicant)
+    .then(() => {
+      applicant.updatedAt = getTodayDate();
+      folder.updatedAt = getTodayDate();
+      replaceScreeningFolder(folder);
+      persistState();
+      renderScreening();
+    })
+    .catch((error) => {
+      console.warn("Screening fit refresh after submit failed.", error);
+    });
 }
 
 function revertScreeningApplicantStage(applicantId) {
@@ -18032,13 +18266,19 @@ function finalPassSecondScreening(form) {
   })).filter((member) => member.name || member.email);
   const slots = getScreeningAvailabilitySlotsFromForm(form);
   const availability = buildScreeningAvailabilityText(slots, getFormText(form, "availability"));
+  const timelineDate = normalizeScreeningTimelineDate(getFormText(form, "timelineDate"));
+  const timelineStartHour = normalizeScreeningTimelineHour(getFormText(form, "timelineStartHour"), 10);
+  const timelineEndHour = Math.max(timelineStartHour + 1, normalizeScreeningTimelineHour(getFormText(form, "timelineEndHour"), 14));
 
   folder.interviewPanel = {
     names: members.map((member) => member.name).filter(Boolean).join(", "),
     emails: members.map((member) => member.email).filter(Boolean).join(", "),
     availability,
     members,
-    slots
+    slots,
+    timelineDate,
+    timelineStartHour,
+    timelineEndHour
   };
 
   draftApplicants.forEach((applicant) => {
@@ -21152,6 +21392,37 @@ function bindEvents() {
     }
   });
 
+  document.addEventListener("pointerdown", (event) => {
+    const cell = event.target.closest("[data-screening-time-cell]");
+
+    if (!cell) {
+      return;
+    }
+
+    event.preventDefault();
+    state.screeningTimelineDrag = { startHour: Number(cell.dataset.screeningTimeCell) };
+    updateScreeningTimelineSelection(cell, { startDrag: true });
+  });
+
+  document.addEventListener("pointermove", (event) => {
+    if (!state.screeningTimelineDrag) {
+      return;
+    }
+
+    const cell = event.target.closest("[data-screening-time-cell]");
+
+    if (!cell) {
+      return;
+    }
+
+    event.preventDefault();
+    updateScreeningTimelineSelection(cell);
+  });
+
+  document.addEventListener("pointerup", () => {
+    state.screeningTimelineDrag = null;
+  });
+
   document.addEventListener("dragover", (event) => {
     const input = findFileInputForDrop(event.target);
 
@@ -21240,6 +21511,11 @@ function bindEvents() {
     }
 
     if (event.target.matches("[data-screening-slot-input]")) {
+      syncScreeningAvailabilityPreview(event.target.closest("#screening-final-pass-form"));
+      return;
+    }
+
+    if (event.target.matches("[data-screening-timeline-date]")) {
       syncScreeningAvailabilityPreview(event.target.closest("#screening-final-pass-form"));
       return;
     }
