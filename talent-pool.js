@@ -171,9 +171,10 @@ const REMEMBERED_LOGIN_EMAIL_KEY = "samsung-talent-pool-remembered-email-v1";
 const SCREENING_STAGE_LABELS = {
   reception: "지원자 접수",
   registered: "1차 대상",
+  first_draft: "1차 합격 예정",
   first_pass: "1차 합격",
   first_reject: "1차 불합격",
-  second_draft: "2차 통과 예정",
+  second_draft: "2차 합격 예정",
   second_pass: "2차 통과",
   second_reject: "2차 제외",
   contact_requested: "연락처 요청",
@@ -183,6 +184,7 @@ const SCREENING_STAGE_LABELS = {
 const SCREENING_STAGE_ORDER = [
   "reception",
   "registered",
+  "first_draft",
   "first_pass",
   "first_reject",
   "second_draft",
@@ -229,8 +231,8 @@ const INTERVIEW_STATUS_LABELS = {
 };
 const SCREENING_DETAIL_STEPS = [
   { id: "reception", label: "지원자 접수" },
-  { id: "first", label: "1차 스크리닝" },
-  { id: "second", label: "2차 스크리닝" },
+  { id: "first", label: "1차 스크리닝(인사)" },
+  { id: "second", label: "2차 스크리닝(현업)" },
   { id: "mail", label: "전화면접 안내" }
 ];
 
@@ -665,6 +667,7 @@ const state = {
   screeningAccessModalOpen: false,
   screeningApplicantDetailId: "",
   screeningMailPreview: null,
+  screeningMailTemplates: {},
   screeningResultPanelOpen: false,
   poolReturnScrollY: 0,
   poolFilters: {
@@ -681,6 +684,8 @@ const state = {
   aiResults: [],
   aiSearchLoading: false,
   aiSearchFileName: "",
+  aiSearchStatus: "",
+  aiSearchProgress: 0,
   jobFitAnalysis: {
     jdText: "",
     jdFile: null,
@@ -690,6 +695,9 @@ const state = {
     jdLoading: false,
     resumeLoading: false,
     analysisLoading: false,
+    jdProgress: 0,
+    resumeProgress: 0,
+    analysisProgress: 0,
     jdStatus: "",
     resumeStatus: "",
     analysisStatus: "",
@@ -2400,6 +2408,7 @@ function persistState(options = {}) {
         auditLogs: state.auditLogs,
         selectedCandidateId: state.selectedCandidateId,
         selectedScreeningFolderId: state.selectedScreeningFolderId,
+        screeningMailTemplates: state.screeningMailTemplates,
         poolFilters: state.poolFilters,
         dashboardFilters: state.dashboardFilters,
         screeningFilters: state.screeningFilters,
@@ -2475,6 +2484,10 @@ function restorePersistedState() {
 
   if (persisted.screeningFilters && typeof persisted.screeningFilters === "object") {
     state.screeningFilters = { ...state.screeningFilters, ...persisted.screeningFilters };
+  }
+
+  if (persisted.screeningMailTemplates && typeof persisted.screeningMailTemplates === "object") {
+    state.screeningMailTemplates = persisted.screeningMailTemplates;
   }
 
   if (Array.isArray(persisted.members) && persisted.members.length) {
@@ -3561,6 +3574,48 @@ function readFileAsDataUrl(file) {
     reader.addEventListener("error", () => reject(reader.error));
     reader.readAsDataURL(file);
   });
+}
+
+async function readProfilePhotoAsDataUrl(file) {
+  const dataUrl = await readFileAsDataUrl(file);
+
+  if (!dataUrl) {
+    return "";
+  }
+
+  try {
+    const cropped = await cropProfilePhotoCandidate(dataUrl, { allowCenterCrop: true });
+    return cropped?.dataUrl || dataUrl;
+  } catch (error) {
+    console.warn("Profile photo resize failed. Original image will be used.", error);
+    return dataUrl;
+  }
+}
+
+function renderProgressStatus(message, percent = 0) {
+  const clamped = Math.max(0, Math.min(100, Number(percent) || 0));
+
+  return `
+    <span class="ai-progress-status">
+      <span class="ai-progress-status-text">${escapeHtml(message)}</span>
+      <span class="ai-progress-track" aria-hidden="true"><span style="width:${clamped}%"></span></span>
+      <span class="ai-progress-percent">${clamped}%</span>
+    </span>
+  `;
+}
+
+function setProgressStatus(target, message, percent = 0) {
+  const element = typeof target === "string" ? $(target) : target;
+
+  if (!element) {
+    return;
+  }
+
+  element.innerHTML = renderProgressStatus(message, percent);
+}
+
+function renderMaybeProgressStatus(message, isLoading = false, percent = 0) {
+  return isLoading ? renderProgressStatus(message, percent) : escapeHtml(message);
 }
 
 function decodeTextDataUrl(dataUrl = "") {
@@ -5418,6 +5473,10 @@ function getScreeningStageDisplayLabel(stageOrApplicant) {
     return "서류 스크리닝(평가) 진행 중";
   }
 
+  if (stage === "first_pass") {
+    return "서류 스크리닝(평가) 진행 중";
+  }
+
   return SCREENING_STAGE_LABELS[stage] || stage;
 }
 
@@ -5426,7 +5485,8 @@ function screeningStageChip(stageOrApplicant) {
   const chipClass = {
     reception: "chip-amber",
     registered: "chip-blue",
-    first_pass: "chip-green",
+    first_draft: "chip-amber",
+    first_pass: "chip-blue",
     first_reject: "chip-red",
     second_draft: "chip-amber",
     second_pass: "chip-green",
@@ -6316,9 +6376,10 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
   const locked = isScreeningStageSnapshotLocked(applicant, step);
   const revertAction = {
     registered: "접수로 되돌리기",
+    first_draft: "1차 합격 예정 취소",
     first_pass: "1차로 되돌리기",
     first_reject: "1차 재검토",
-    second_draft: "통과 예정 취소",
+    second_draft: "2차 합격 예정 취소",
     second_reject: "2차 재검토",
     second_pass: "2차로 되돌리기",
     contact_requested: "2차로 되돌리기",
@@ -6358,11 +6419,15 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
     actions.push(`<button class="ghost-button danger-button compact-button" type="button" data-screening-second-reject="${applicant.id}">2차 불합격</button>`);
   }
 
-  if (applicant.stage === "second_pass" && applicant.sourceType === "search_firm" && (!applicant.email || !applicant.phone)) {
+  if (applicant.stage === "contact_requested" && applicant.contactRequest) {
+    actions.push(`<button class="soft-button compact-button" type="button" disabled>연락처 요청 완료</button>`);
+  } else if (applicant.stage === "second_pass" && applicant.sourceType === "search_firm" && (!applicant.email || !applicant.phone)) {
     actions.push(`<button class="soft-button compact-button" type="button" data-screening-request-contact="${applicant.id}">서치펌 연락처 요청</button>`);
   }
 
-  if (["second_pass", "contact_ready"].includes(applicant.stage) && applicant.email && applicant.phone && isRecruitingRole()) {
+  if (applicant.stage === "interview_mail_sent" && applicant.phoneInterviewMail) {
+    actions.push(`<button class="primary-button compact-button" type="button" disabled>전화면접 안내 발송 완료</button>`);
+  } else if (["second_pass", "contact_ready"].includes(applicant.stage) && applicant.email && applicant.phone && isRecruitingRole()) {
     actions.push(`<button class="primary-button compact-button" type="button" data-screening-send-interview="${applicant.id}">전화면접 안내 발송</button>`);
   }
 
@@ -6384,7 +6449,7 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
 function getScreeningStepApplicants(folder, step = state.screeningDetailStep) {
   const stageMap = {
     reception: SCREENING_STAGE_ORDER,
-    first: ["registered", "first_pass", "first_reject", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
+    first: ["registered", "first_draft", "first_pass", "first_reject", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
     second: ["first_pass", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
     mail: ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]
   };
@@ -6426,7 +6491,7 @@ function getScreeningApplicantActiveStep(applicant) {
     return "second";
   }
 
-  if (["registered", "first_reject"].includes(applicant.stage)) {
+  if (["registered", "first_draft", "first_reject"].includes(applicant.stage)) {
     return "first";
   }
 
@@ -6488,15 +6553,15 @@ function getScreeningApplicantCardClass(applicant) {
     return "is-rejected";
   }
 
-  if (["first_pass", "second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage)) {
+  if (["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage)) {
     return "is-passed";
   }
 
-  if (applicant.stage === "second_draft") {
+  if (["first_draft", "second_draft"].includes(applicant.stage)) {
     return "is-draft";
   }
 
-  if (applicant.stage === "registered") {
+  if (["registered", "first_pass"].includes(applicant.stage)) {
     return "is-reviewing";
   }
 
@@ -6879,46 +6944,59 @@ function renderSecondScreeningPanel(folder) {
   const availabilityText = buildScreeningAvailabilityText(folder.interviewPanel.slots || [], folder.interviewPanel.availability);
 
   return `
-    <form class="profile-panel" id="screening-final-pass-form">
-      <div class="panel-header">
-        <h4>결과 발송</h4>
-        <span class="small-pill">2차 합격 예정 ${draftApplicants.length}명 · 확정 ${passedApplicants.length}명</span>
-      </div>
-      <input type="hidden" name="folderId" value="${escapeHtml(folder.id)}" />
-      <div class="screening-pass-summary">
-        <strong>합격자 리스트</strong>
-        <div>
-          ${[...draftApplicants, ...passedApplicants].length
-            ? [...draftApplicants, ...passedApplicants].map((applicant) => `<span class="status-chip ${applicant.stage === "second_draft" ? "chip-amber" : "chip-green"}">${escapeHtml(applicant.name)}</span>`).join("")
-            : `<span class="muted-text">2차 합격으로 선택된 지원자가 없습니다.</span>`}
+    <div class="trending-modal-backdrop" data-screening-result-panel-backdrop>
+      <section class="trending-modal screening-result-modal" role="dialog" aria-modal="true" aria-labelledby="screening-result-modal-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="screening-result-modal-title">결과 발송</strong>
+            <span>2차 합격 예정자와 면접위원, 가능 시간대를 확인한 뒤 저장합니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-screening-result-panel>닫기</button>
         </div>
-      </div>
-      <div class="screening-result-send-grid">
-        <section class="screening-result-send-block">
-          <div class="panel-header compact-panel-header">
-            <h5>면접위원</h5>
-            <button class="ghost-button compact-button" type="button" data-add-screening-interviewer>면접위원 추가</button>
-          </div>
-          <div class="screening-interviewer-list" data-screening-interviewer-list>
-            ${renderScreeningInterviewerRows(folder)}
-          </div>
-        </section>
-        <section class="screening-result-send-block">
-          <div class="panel-header compact-panel-header">
-            <h5>면접 가능 시간대</h5>
-            <button class="ghost-button compact-button" type="button" data-add-screening-slot>시간대 추가</button>
-          </div>
-          <div class="screening-slot-list" data-screening-slot-list>
-            ${renderScreeningAvailabilityRows(folder)}
-          </div>
-          <label class="screening-availability-preview-label" for="screening-panel-availability">메일 표기 문구</label>
-          <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="4" readonly>${escapeHtml(availabilityText)}</textarea>
-        </section>
-      </div>
-      <div class="form-actions">
-        <button class="primary-button" type="submit" ${([draftApplicants.length, passedApplicants.length].some(Boolean) && canFinalize) ? "" : "disabled"}>합격자 확정 및 저장</button>
-      </div>
-    </form>
+        <div class="trending-modal-body">
+          <form id="screening-final-pass-form">
+            <div class="panel-header">
+              <h4>합격자 확정 정보</h4>
+              <span class="small-pill">2차 합격 예정 ${draftApplicants.length}명 · 확정 ${passedApplicants.length}명</span>
+            </div>
+            <input type="hidden" name="folderId" value="${escapeHtml(folder.id)}" />
+            <div class="screening-pass-summary">
+              <strong>합격자 리스트</strong>
+              <div>
+                ${[...draftApplicants, ...passedApplicants].length
+                  ? [...draftApplicants, ...passedApplicants].map((applicant) => `<span class="status-chip ${applicant.stage === "second_draft" ? "chip-amber" : "chip-green"}">${escapeHtml(applicant.name)}</span>`).join("")
+                  : `<span class="muted-text">2차 합격으로 선택된 지원자가 없습니다.</span>`}
+              </div>
+            </div>
+            <div class="screening-result-send-grid">
+              <section class="screening-result-send-block">
+                <div class="panel-header compact-panel-header">
+                  <h5>면접위원</h5>
+                  <button class="ghost-button compact-button" type="button" data-add-screening-interviewer>면접위원 추가</button>
+                </div>
+                <div class="screening-interviewer-list" data-screening-interviewer-list>
+                  ${renderScreeningInterviewerRows(folder)}
+                </div>
+              </section>
+              <section class="screening-result-send-block">
+                <div class="panel-header compact-panel-header">
+                  <h5>면접 가능 시간대</h5>
+                  <button class="ghost-button compact-button" type="button" data-add-screening-slot>시간대 추가</button>
+                </div>
+                <div class="screening-slot-list" data-screening-slot-list>
+                  ${renderScreeningAvailabilityRows(folder)}
+                </div>
+                <label class="screening-availability-preview-label" for="screening-panel-availability">메일 표기 문구</label>
+                <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="4" readonly>${escapeHtml(availabilityText)}</textarea>
+              </section>
+            </div>
+            <div class="form-actions screening-final-form-actions">
+              <button class="primary-button" type="submit" ${([draftApplicants.length, passedApplicants.length].some(Boolean) && canFinalize) ? "" : "disabled"}>합격자 확정 및 저장</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -6974,6 +7052,7 @@ function renderScreeningMailPreviewModal() {
             </div>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-mail-preview>취소</button>
+              <button class="ghost-button" type="button" data-save-screening-mail-template>양식 저장</button>
               <button class="primary-button" type="submit">수정 내용으로 발송</button>
             </div>
           </form>
@@ -7013,20 +7092,15 @@ function renderScreeningStepContent(folder) {
     return `
       <section class="profile-panel">
         <div class="panel-header">
-          <h4>2차 스크리닝 리스트</h4>
-          <span class="small-pill">2차 도달 ${applicants.length}명</span>
+          <h4>2차 스크리닝(현업) 리스트</h4>
+          <div class="panel-actions">
+            <button class="primary-button compact-button" type="button" data-open-screening-result-panel ${canOpenResultPanel ? "" : "disabled"}>결과 발송</button>
+            <span class="small-pill">2차 도달 ${applicants.length}명</span>
+          </div>
         </div>
         ${renderApplicantList(folder, applicants, "1차 합격 처리된 지원자가 없습니다.", "second")}
       </section>
-      ${state.screeningResultPanelOpen
-        ? renderSecondScreeningPanel(folder)
-        : `<section class="profile-panel screening-result-launch-panel">
-            <div>
-              <strong>2차 합격자 결과 발송</strong>
-              <span>2차 합격으로 선택한 지원자를 확정하고 면접위원 및 면접 가능 시간대를 입력합니다.</span>
-            </div>
-            <button class="primary-button compact-button" type="button" data-open-screening-result-panel ${canOpenResultPanel ? "" : "disabled"}>결과 발송</button>
-          </section>`}
+      ${state.screeningResultPanelOpen ? renderSecondScreeningPanel(folder) : ""}
     `;
   }
 
@@ -7046,12 +7120,17 @@ function renderScreeningStepContent(folder) {
   }
 
   const applicants = getScreeningStepApplicants(folder, "first");
+  const firstDraftCount = folder.applicants.filter((applicant) => applicant.stage === "first_draft").length;
+  const canFinalizeFirst = canRunFirstScreening(folder) && firstDraftCount;
 
   return `
     <section class="profile-panel">
       <div class="panel-header">
-        <h4>1차 스크리닝 리스트</h4>
-        <span class="small-pill">1차 도달 ${applicants.length}명</span>
+        <h4>1차 스크리닝(인사) 리스트</h4>
+        <div class="panel-actions">
+          <button class="primary-button compact-button" type="button" data-finalize-first-screening ${canFinalizeFirst ? "" : "disabled"}>결과 발송</button>
+          <span class="small-pill">1차 도달 ${applicants.length}명</span>
+        </div>
       </div>
       ${renderApplicantList(folder, applicants, "1차 스크리닝 대상 지원자가 없습니다.", "first")}
     </section>
@@ -8102,6 +8181,7 @@ function renderRegister() {
               <input id="profile-photo" name="photo" type="file" accept="image/*" />
               <div id="photo-preview" class="photo-preview">사진 미리보기</div>
               <span>상세 프로필 상단에 표시됩니다.</span>
+              <button class="ghost-button compact-button" type="button" data-clear-register-photo>선택 취소</button>
             </div>
           </div>
           <div class="field">
@@ -8109,6 +8189,7 @@ function renderRegister() {
             <div class="dropzone compact-upload">
               <input id="resume-file" name="resume" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
               <span id="resume-parse-status" class="form-help">이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.</span>
+              <button class="ghost-button compact-button" type="button" data-clear-register-resume>선택 취소</button>
             </div>
           </div>
           <div class="field">
@@ -8223,6 +8304,7 @@ function renderRegister() {
             <div class="dropzone compact-upload">
               <input id="candidate-other-attachments" name="otherAttachments" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" />
               <span class="form-help">이력서 외 보관이 필요한 자료를 여러 개 첨부할 수 있습니다.</span>
+              <button class="ghost-button compact-button" type="button" data-clear-register-attachments>선택 취소</button>
             </div>
           </div>
         </section>
@@ -8405,6 +8487,11 @@ function renderScreeningCareerRecord(item = {}, index = 0, disabledAttr = "") {
 
 function renderAiSearch() {
   const interpreted = state.aiQuery ? interpretQuery(state.aiQuery) : [];
+  const aiFileStatus = state.aiSearchStatus
+    ? renderMaybeProgressStatus(state.aiSearchStatus, state.aiSearchLoading, state.aiSearchProgress)
+    : state.aiSearchFileName
+      ? `${escapeHtml(state.aiSearchFileName)} 내용을 검색 조건으로 반영했습니다.`
+      : "직무기술서, JD, 포지션 설명 파일을 업로드하면 내용을 읽어 적합도를 분석합니다.";
   const resultContent = state.aiSearchLoading
     ? `<div class="empty-state">자연어 조건을 분석하고 후보자 적합도를 계산하는 중입니다.</div>`
     : state.aiQuery
@@ -8420,7 +8507,7 @@ function renderAiSearch() {
         <textarea class="control-textarea" id="ai-query" placeholder="예: NAND 공정 수율 개선 경험이 있고 Python 데이터 분석이 가능한 3~7년차 엔지니어">${escapeHtml(state.aiQuery)}</textarea>
         <div class="dropzone ai-file-upload">
           <input id="ai-search-file" name="aiSearchFile" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
-          <span id="ai-file-status" class="form-help">${state.aiSearchFileName ? `${escapeHtml(state.aiSearchFileName)} 내용을 검색 조건으로 반영했습니다.` : "직무기술서, JD, 포지션 설명 파일을 업로드하면 내용을 읽어 적합도를 분석합니다."}</span>
+          <span id="ai-file-status" class="form-help">${aiFileStatus}</span>
         </div>
         <button class="primary-button" type="button" id="run-ai-search" ${state.aiSearchLoading ? "disabled" : ""}>${state.aiSearchLoading ? "검색 중" : "검색 실행"}</button>
         ${interpreted.length ? `<div class="tag-row">${interpreted.map((item) => `<span class="status-chip chip-blue">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
@@ -8640,6 +8727,9 @@ function normalizeJobFitState(value = {}) {
     jdLoading: Boolean(value.jdLoading),
     resumeLoading: Boolean(value.resumeLoading),
     analysisLoading: Boolean(value.analysisLoading || value.loading),
+    jdProgress: Math.max(0, Math.min(100, Number(value.jdProgress) || 0)),
+    resumeProgress: Math.max(0, Math.min(100, Number(value.resumeProgress) || 0)),
+    analysisProgress: Math.max(0, Math.min(100, Number(value.analysisProgress) || 0)),
     jdStatus: String(value.jdStatus || "").trim(),
     resumeStatus: String(value.resumeStatus || "").trim(),
     analysisStatus: String(value.analysisStatus || value.status || "").trim(),
@@ -9295,7 +9385,7 @@ function renderJobFitResultsPanel() {
           <button class="ghost-button compact-button" type="button" data-clear-job-fit-results ${hasResults && !jobFit.analysisLoading ? "" : "disabled"}>초기화</button>
         </div>
       </div>
-      ${jobFit.analysisStatus ? `<div class="job-fit-inline-status">${escapeHtml(jobFit.analysisStatus)}</div>` : ""}
+      ${jobFit.analysisStatus ? `<div class="job-fit-inline-status">${renderMaybeProgressStatus(jobFit.analysisStatus, jobFit.analysisLoading, jobFit.analysisProgress)}</div>` : ""}
       <div class="job-fit-result-list">
         ${resultBody}
       </div>
@@ -9375,7 +9465,7 @@ function renderJobFitAnalysis() {
           <div class="dropzone compact-upload">
             <input id="job-fit-jd-file" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
             <span class="form-help">JD 파일을 선택하거나 끌어놓으세요. 파일을 읽으면 아래 입력란에 자동 반영됩니다.</span>
-            ${jobFit.jdStatus ? `<strong class="job-fit-upload-status ${jobFit.jdLoading ? "is-loading" : ""}">${escapeHtml(jobFit.jdStatus)}</strong>` : ""}
+            ${jobFit.jdStatus ? `<strong class="job-fit-upload-status ${jobFit.jdLoading ? "is-loading" : ""}">${renderMaybeProgressStatus(jobFit.jdStatus, jobFit.jdLoading, jobFit.jdProgress)}</strong>` : ""}
           </div>
           ${renderJobFitJdFileList()}
           <textarea class="control-textarea" id="job-fit-jd-text" rows="10" placeholder="직무의 역할, 필수 경험, 우대 요건, 수행 업무를 입력하세요.">${escapeHtml(jobFit.jdText)}</textarea>
@@ -9397,7 +9487,7 @@ function renderJobFitAnalysis() {
           <div class="dropzone job-fit-resume-dropzone">
             <input id="job-fit-resume-files" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
             <span class="form-help">이력서를 추가하거나 삭제한 뒤 평가 분석 시작 버튼을 눌러 결과를 생성합니다.</span>
-            ${jobFit.resumeStatus ? `<strong class="job-fit-upload-status ${jobFit.resumeLoading ? "is-loading" : ""}">${escapeHtml(jobFit.resumeStatus)}</strong>` : ""}
+            ${jobFit.resumeStatus ? `<strong class="job-fit-upload-status ${jobFit.resumeLoading ? "is-loading" : ""}">${renderMaybeProgressStatus(jobFit.resumeStatus, jobFit.resumeLoading, jobFit.resumeProgress)}</strong>` : ""}
           </div>
           <div id="job-fit-resume-list">
             ${renderJobFitResumeList()}
@@ -10045,6 +10135,7 @@ async function handleJobFitJdFileUpload(file) {
   const jobFit = getJobFitState();
   jobFit.analysisLoading = false;
   jobFit.jdLoading = true;
+  jobFit.jdProgress = 16;
   jobFit.jdStatus = `${file.name} 파일을 읽는 중입니다.`;
   jobFit.analysisStatus = "";
   renderJobFitAnalysis();
@@ -10054,6 +10145,9 @@ async function handleJobFitJdFileUpload(file) {
       readResumeText(file),
       readFileAsDataUrl(file)
     ]);
+    jobFit.jdProgress = 72;
+    jobFit.jdStatus = "직무기술서 텍스트를 정리하는 중입니다.";
+    rerenderJobFitWorkspace();
     jobFit.jdText = result.text;
     jobFit.jdFile = {
       name: file.name,
@@ -10064,10 +10158,12 @@ async function handleJobFitJdFileUpload(file) {
     };
     jobFit.results = [];
     jobFit.hasAnalyzed = false;
+    jobFit.jdProgress = 100;
     jobFit.jdStatus = "직무기술서 파일 내용을 입력란에 반영했습니다.";
     jobFit.analysisStatus = "직무기술서가 준비되었습니다. 이력서를 업로드한 뒤 평가 분석을 시작해 주세요.";
   } catch (error) {
     console.warn("JD file could not be read.", error);
+    jobFit.jdProgress = 0;
     jobFit.jdStatus = error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.";
   } finally {
     jobFit.jdLoading = false;
@@ -10085,6 +10181,7 @@ async function handleJobFitResumeUpload(files) {
   const jobFit = getJobFitState();
   jobFit.analysisLoading = false;
   jobFit.resumeLoading = true;
+  jobFit.resumeProgress = 8;
   jobFit.resumeStatus = `${uploadFiles.length}개 이력서를 읽는 중입니다.`;
   jobFit.analysisStatus = "";
   renderJobFitAnalysis();
@@ -10092,7 +10189,12 @@ async function handleJobFitResumeUpload(files) {
   const loadedResumes = [];
   const failedNames = [];
 
-  for (const file of uploadFiles) {
+  for (let index = 0; index < uploadFiles.length; index += 1) {
+    const file = uploadFiles[index];
+    jobFit.resumeProgress = Math.max(12, Math.round(((index + 1) / uploadFiles.length) * 82));
+    jobFit.resumeStatus = `${index + 1}/${uploadFiles.length} ${file.name} 파일을 읽는 중입니다.`;
+    rerenderJobFitWorkspace();
+
     try {
       const [result, dataUrl] = await Promise.all([
         readResumeText(file),
@@ -10116,6 +10218,7 @@ async function handleJobFitResumeUpload(files) {
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
   jobFit.resumeLoading = false;
+  jobFit.resumeProgress = loadedResumes.length ? 100 : 0;
   jobFit.resumeStatus = failedNames.length ? `읽지 못한 파일: ${failedNames.join(", ")}` : "";
   jobFit.analysisStatus = loadedResumes.length
     ? "이력서 풀이 변경되었습니다. 평가 분석 시작 버튼을 눌러 결과를 생성해 주세요."
@@ -10130,6 +10233,7 @@ function removeJobFitResume(resumeId) {
   jobFit.resumes = jobFit.resumes.filter((resume) => resume.id !== resumeId);
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
+  jobFit.resumeProgress = 0;
   jobFit.resumeStatus = "이력서를 삭제했습니다.";
   jobFit.analysisStatus = "이력서 풀이 변경되었습니다. 평가 분석 시작 버튼을 눌러 결과를 다시 생성해 주세요.";
   rerenderJobFitWorkspace();
@@ -10142,6 +10246,7 @@ function clearJobFitJd() {
   jobFit.jdFile = null;
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
+  jobFit.jdProgress = 0;
   jobFit.jdStatus = "직무기술서 입력을 초기화했습니다.";
   jobFit.analysisStatus = "";
   rerenderJobFitWorkspace();
@@ -10154,6 +10259,7 @@ function clearJobFitResumes() {
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
   jobFit.resumeLoading = false;
+  jobFit.resumeProgress = 0;
   jobFit.resumeStatus = "";
   jobFit.analysisStatus = "";
   rerenderJobFitWorkspace();
@@ -10164,6 +10270,7 @@ function clearJobFitResults() {
   jobFit.analysisLoading = false;
   jobFit.results = [];
   jobFit.hasAnalyzed = false;
+  jobFit.analysisProgress = 0;
   jobFit.analysisStatus = "";
   rerenderJobFitWorkspace();
 }
@@ -10178,6 +10285,9 @@ function clearJobFitAll() {
   jobFit.jdLoading = false;
   jobFit.resumeLoading = false;
   jobFit.analysisLoading = false;
+  jobFit.jdProgress = 0;
+  jobFit.resumeProgress = 0;
+  jobFit.analysisProgress = 0;
   jobFit.jdStatus = "";
   jobFit.resumeStatus = "";
   jobFit.analysisStatus = "";
@@ -10210,19 +10320,28 @@ async function runJobFitAnalysis() {
   }
 
   jobFit.analysisLoading = true;
+  jobFit.analysisProgress = 18;
   jobFit.analysisStatus = "평가 분석을 진행 중입니다.";
   renderJobFitAnalysis();
 
   try {
     try {
+      jobFit.analysisProgress = 54;
+      jobFit.analysisStatus = "AI가 JD와 이력서 맥락을 비교하는 중입니다.";
+      rerenderJobFitWorkspace();
       jobFit.results = await analyzeJobFitWithServer(jdText, jobFit.resumes);
+      jobFit.analysisProgress = 100;
       jobFit.analysisStatus = jobFit.results.length
         ? `${jobFit.results.length}개 이력서의 직무적합도 AI 분석을 완료했습니다.`
         : "AI 분석 결과를 생성하지 못했습니다. JD와 이력서 텍스트를 확인해 주세요.";
     } catch (serverError) {
       console.warn("Server job fit analysis failed. Using local report analysis.", serverError);
+      jobFit.analysisProgress = 72;
+      jobFit.analysisStatus = "브라우저 기준 보고서형 분석으로 전환하는 중입니다.";
+      rerenderJobFitWorkspace();
       await new Promise((resolve) => window.setTimeout(resolve, 20));
       refreshJobFitResults();
+      jobFit.analysisProgress = 100;
       jobFit.analysisStatus = jobFit.results.length
         ? `${jobFit.results.length}개 이력서의 직무적합도 분석을 완료했습니다. AI 서버 연결 문제로 브라우저 기준 보고서형 분석을 사용했습니다.`
         : "분석 결과를 생성하지 못했습니다. 업로드한 파일의 텍스트를 확인해 주세요.";
@@ -10234,6 +10353,7 @@ async function runJobFitAnalysis() {
     console.warn("Job fit analysis failed.", error);
     jobFit.results = [];
     jobFit.hasAnalyzed = true;
+    jobFit.analysisProgress = 0;
     jobFit.analysisStatus = "직무적합도 분석 중 오류가 발생했습니다. JD와 이력서 파일의 텍스트를 확인한 뒤 다시 실행해 주세요.";
   } finally {
     jobFit.analysisLoading = false;
@@ -13037,11 +13157,12 @@ function renderCorePerformanceSection(candidate) {
 }
 
 function renderResumeAttachmentSection(candidate) {
+  const canManage = canManageCandidateProfile(candidate);
   const attachments = [
-    ...(Array.isArray(candidate.resumeAttachments) ? candidate.resumeAttachments : []),
-    candidate.resumeAttachment,
-    ...(Array.isArray(candidate.attachments) ? candidate.attachments : [])
-  ].filter((attachment) => attachment?.dataUrl);
+    ...(Array.isArray(candidate.resumeAttachments) ? candidate.resumeAttachments.map((attachment, index) => ({ attachment, kind: "resumeArchive", index, label: "이력서" })) : []),
+    ...(candidate.resumeAttachment?.dataUrl ? [{ attachment: candidate.resumeAttachment, kind: "resume", index: 0, label: "이력서" }] : []),
+    ...(Array.isArray(candidate.attachments) ? candidate.attachments.map((attachment, index) => ({ attachment, kind: "other", index, label: "기타 첨부파일" })) : [])
+  ].filter((item) => item.attachment?.dataUrl);
 
   if (!attachments.length) {
     return `<div class="empty-state compact-empty">등록된 첨부 파일이 없습니다.</div>`;
@@ -13049,18 +13170,92 @@ function renderResumeAttachmentSection(candidate) {
 
   return `
     <div class="attachment-list">
-      ${attachments.map((attachment) => `
+      ${attachments.map(({ attachment, kind, index, label }) => `
         <div class="attachment-row">
           <div>
-            <span class="muted">첨부 파일</span>
+            <span class="muted">${escapeHtml(label)}</span>
             <strong>${escapeHtml(attachment.name || `${candidate.name}_resume`)}</strong>
             <small>${escapeHtml(formatFileSize(attachment.size))}${attachment.uploadedAt ? ` · ${escapeHtml(attachment.uploadedAt)}` : ""}</small>
           </div>
-          <a class="soft-button compact-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || `${candidate.name}_resume`)}">다운로드</a>
+          <div class="member-actions">
+            <a class="soft-button compact-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || `${candidate.name}_resume`)}">다운로드</a>
+            ${canManage ? `<button class="ghost-button danger-button compact-button" type="button" data-remove-candidate-${kind === "other" ? `attachment="${index}"` : kind === "resumeArchive" ? `resume-archive="${index}"` : "resume"}>삭제</button>` : ""}
+          </div>
         </div>
       `).join("")}
     </div>
   `;
+}
+
+function renderEditAttachmentRows(candidate) {
+  const rows = [];
+
+  if (candidate.resumeAttachment?.dataUrl) {
+    rows.push(`
+      <div class="attachment-row">
+        <div>
+          <span class="muted">이력서</span>
+          <strong>${escapeHtml(candidate.resumeAttachment.name || "첨부 이력서")}</strong>
+          <small>${escapeHtml(formatFileSize(candidate.resumeAttachment.size))}</small>
+        </div>
+        <div class="member-actions">
+          <a class="soft-button compact-button" href="${escapeHtml(candidate.resumeAttachment.dataUrl)}" download="${escapeHtml(candidate.resumeAttachment.name || `${candidate.name}_resume`)}">다운로드</a>
+          <button class="ghost-button danger-button compact-button" type="button" data-remove-candidate-resume>삭제</button>
+        </div>
+      </div>
+    `);
+  }
+
+  (candidate.attachments || []).forEach((attachment, index) => {
+    rows.push(`
+      <div class="attachment-row">
+        <div>
+          <span class="muted">기타 첨부파일</span>
+          <strong>${escapeHtml(attachment.name || `첨부파일 ${index + 1}`)}</strong>
+          <small>${escapeHtml(formatFileSize(attachment.size))}</small>
+        </div>
+        <div class="member-actions">
+          ${attachment.dataUrl ? `<a class="soft-button compact-button" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name || `attachment-${index + 1}`)}">다운로드</a>` : ""}
+          <button class="ghost-button danger-button compact-button" type="button" data-remove-candidate-attachment="${index}">삭제</button>
+        </div>
+      </div>
+    `);
+  });
+
+  return rows.length
+    ? `<div class="attachment-list edit-attachment-list">${rows.join("")}</div>`
+    : `<span class="form-help">기존 첨부파일이 없습니다.</span>`;
+}
+
+async function removeCandidateStoredAttachment(kind, index = 0) {
+  const candidate = getCandidate();
+
+  if (!candidate || !canManageCandidateProfile(candidate)) {
+    showToast("첨부파일을 삭제할 권한이 없습니다.");
+    return;
+  }
+
+  if (kind === "resume") {
+    candidate.resumeAttachment = null;
+  } else if (kind === "resumeArchive") {
+    candidate.resumeAttachments = (candidate.resumeAttachments || []).filter((_, itemIndex) => itemIndex !== index);
+  } else {
+    candidate.attachments = (candidate.attachments || []).filter((_, itemIndex) => itemIndex !== index);
+  }
+
+  touchCandidate(candidate);
+  addAuditLog("첨부파일 삭제", candidate.name, kind === "other" ? "기타 첨부파일" : "이력서");
+  persistState();
+
+  try {
+    await upsertCandidateToSupabase(candidate);
+  } catch (error) {
+    console.warn("Candidate attachment remote delete failed.", error);
+    showToast("화면에서는 삭제됐지만 원격 DB 저장 확인에 실패했습니다. 잠시 후 다시 저장해주세요.");
+  }
+
+  showToast("첨부파일을 삭제했습니다.");
+  renderDetail();
 }
 
 function renderOverviewSection(candidate) {
@@ -13288,11 +13483,13 @@ function renderCandidateEditForm(candidate) {
           <div class="field">
             <label for="edit-photo">프로필 사진</label>
             <div class="dropzone profile-upload compact-upload">
+              <input type="hidden" id="edit-photo-remove" name="editPhotoRemove" value="0" />
               <input id="edit-photo" name="editPhoto" type="file" accept="image/*" />
               <div id="edit-photo-preview" class="photo-preview">
                 ${candidate.photoUrl ? `<img src="${escapeHtml(candidate.photoUrl)}" alt="${escapeHtml(candidate.name)} 프로필 사진 미리보기" />` : "사진 미리보기"}
               </div>
               <span>새 사진을 선택하면 저장 후 상세 프로필에 반영됩니다.</span>
+              ${candidate.photoUrl ? `<button class="ghost-button danger-button compact-button" type="button" data-clear-edit-photo>사진 삭제</button>` : ""}
             </div>
           </div>
           <div class="field">
@@ -13300,6 +13497,7 @@ function renderCandidateEditForm(candidate) {
             <div class="dropzone compact-upload">
               <input id="edit-resume-file" name="editResume" type="file" accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx" />
               <span id="edit-resume-parse-status" class="form-help">이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.</span>
+              <button class="ghost-button compact-button" type="button" data-clear-edit-resume-upload>선택 취소</button>
             </div>
           </div>
           <div class="field">
@@ -13317,10 +13515,6 @@ function renderCandidateEditForm(candidate) {
           <div class="field">
             <label for="edit-summary">주요성과/실적</label>
             <textarea class="control-textarea compact-textarea" id="edit-summary" name="editSummary" rows="4">${inputValue(candidate.summary)}</textarea>
-          </div>
-          <div class="field">
-            <label for="edit-skills">키워드</label>
-            <textarea class="control-textarea compact-textarea" id="edit-skills" name="editSkills" rows="3">${inputValue(candidate.skills.join("\n"))}</textarea>
           </div>
           <div class="field">
             <label for="edit-organization">사업부</label>
@@ -13401,6 +13595,17 @@ function renderCandidateEditForm(candidate) {
 
       <section class="edit-section">
         <div class="edit-section-header">
+          <h5>키워드</h5>
+        </div>
+        <div class="field">
+          <label for="edit-skills">키워드</label>
+          <textarea class="control-textarea compact-textarea" id="edit-skills" name="editSkills" rows="3">${inputValue(candidate.skills.join("\n"))}</textarea>
+          <span class="form-help">기술, 도메인, 툴, 핵심 키워드를 줄바꿈 또는 쉼표로 입력합니다.</span>
+        </div>
+      </section>
+
+      <section class="edit-section">
+        <div class="edit-section-header">
           <h5>기타 첨부파일</h5>
         </div>
         <div class="field">
@@ -13408,7 +13613,9 @@ function renderCandidateEditForm(candidate) {
           <div class="dropzone compact-upload">
             <input id="edit-other-attachments" name="editOtherAttachments" type="file" multiple accept=".txt,.md,.csv,.pdf,.doc,.docx,.hwp,.hwpx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" />
             <span class="form-help">새로 선택한 파일은 기존 첨부파일에 추가됩니다. 기존 첨부 ${candidate.attachments?.length || 0}개</span>
+            <button class="ghost-button compact-button" type="button" data-clear-edit-other-attachments>선택 취소</button>
           </div>
+          ${renderEditAttachmentRows(candidate)}
         </div>
       </section>
 
@@ -13603,6 +13810,7 @@ async function saveCandidateEdits(form, options = {}) {
   const formData = new FormData(form);
   const photoFile = formData.get("editPhoto");
   const resumeFile = formData.get("editResume");
+  const shouldRemovePhoto = formData.get("editPhotoRemove") === "1";
   const otherAttachmentFiles = formData.getAll("editOtherAttachments").filter((file) => file && file.size);
   const skills = getFormText(form, "editSkills")
     .split(/[,;\n]+/)
@@ -13637,15 +13845,19 @@ async function saveCandidateEdits(form, options = {}) {
   candidate.years = estimateCareerYears(candidate.career);
   touchCandidate(candidate);
 
+  if (shouldRemovePhoto) {
+    candidate.photoUrl = "";
+  }
+
   if (photoFile && photoFile.size) {
     try {
-      candidate.photoUrl = await readFileAsDataUrl(photoFile);
+      candidate.photoUrl = await readProfilePhotoAsDataUrl(photoFile);
     } catch (error) {
       console.warn("Profile photo could not be read.", error);
       showToast("사진 파일을 읽지 못했습니다. 다른 파일을 선택해주세요.");
       return false;
     }
-  } else if (state.editExtractedPhotoUrl) {
+  } else if (!shouldRemovePhoto && state.editExtractedPhotoUrl) {
     candidate.photoUrl = state.editExtractedPhotoUrl;
   }
 
@@ -16186,9 +16398,7 @@ async function applyResumeProfilePhotoToEditForm(file, status) {
 async function parseResumeIntoRegisterForm(file) {
   const status = $("#resume-parse-status");
 
-  if (status) {
-    status.textContent = "이력서를 읽고 구조화하는 중입니다.";
-  }
+  setProgressStatus(status, "이력서 파일을 읽는 중입니다.", 12);
 
   try {
     const result = await readResumeText(file);
@@ -16207,9 +16417,7 @@ async function parseResumeIntoRegisterForm(file) {
     let parserSource = "브라우저 기본 파서";
 
     try {
-      if (status) {
-        status.textContent = "이력서 내용을 구조화하고 회사 소재국가를 보강하는 중입니다.";
-      }
+      setProgressStatus(status, "AI가 이력서 내용을 구조화하는 중입니다.", 58);
 
       const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
       parsed = mergeParsedResumeResults(serverResult.parsed, deterministicParsed);
@@ -16232,6 +16440,7 @@ async function parseResumeIntoRegisterForm(file) {
       : true;
 
     applyParsedResumeToRegisterForm(parsed, { overwrite });
+    setProgressStatus(status, "입력값과 프로필 사진을 반영하는 중입니다.", 86);
     const profilePhotoApplied = await applyResumeProfilePhotoToRegisterForm(file, status);
 
     if (status) {
@@ -16257,9 +16466,7 @@ async function parseResumeIntoRegisterForm(file) {
 async function parseResumeIntoScreeningApplicantForm(file) {
   const status = $("#screening-resume-parse-status");
 
-  if (status) {
-    status.textContent = "이력서를 읽고 지원자 등록 정보를 구조화하는 중입니다.";
-  }
+  setProgressStatus(status, "이력서 파일을 읽는 중입니다.", 12);
 
   try {
     const result = await readResumeText(file);
@@ -16277,9 +16484,7 @@ async function parseResumeIntoScreeningApplicantForm(file) {
     let parserSource = "브라우저 기본 파서";
 
     try {
-      if (status) {
-        status.textContent = "이력서 내용을 AI로 구조화하고 학력/경력 매핑을 보강하는 중입니다.";
-      }
+      setProgressStatus(status, "AI가 학력/경력 정보를 구조화하는 중입니다.", 58);
 
       const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
       parsed = mergeParsedResumeResults(serverResult.parsed, deterministicParsed);
@@ -16302,6 +16507,7 @@ async function parseResumeIntoScreeningApplicantForm(file) {
       : true;
 
     applyParsedResumeToScreeningApplicantForm(parsed, { overwrite });
+    setProgressStatus(status, "지원자 입력값을 반영하는 중입니다.", 88);
 
     if (status) {
       const quality = result.meta?.textQuality ? ` 텍스트 신뢰도 ${Math.round(result.meta.textQuality)}점.` : "";
@@ -16325,9 +16531,7 @@ async function parseResumeIntoScreeningApplicantForm(file) {
 async function parseResumeIntoEditForm(file) {
   const status = $("#edit-resume-parse-status");
 
-  if (status) {
-    status.textContent = "이력서를 읽고 구조화하는 중입니다.";
-  }
+  setProgressStatus(status, "이력서 파일을 읽는 중입니다.", 12);
 
   try {
     const result = await readResumeText(file);
@@ -16346,9 +16550,7 @@ async function parseResumeIntoEditForm(file) {
     let parserSource = "브라우저 기본 파서";
 
     try {
-      if (status) {
-        status.textContent = "이력서 내용을 구조화하고 회사 소재국가를 보강하는 중입니다.";
-      }
+      setProgressStatus(status, "AI가 이력서 내용을 구조화하는 중입니다.", 58);
 
       const serverResult = await parseResumeWithServer(result.text, file.name, deterministicParsed);
       parsed = mergeParsedResumeResults(serverResult.parsed, deterministicParsed);
@@ -16371,6 +16573,7 @@ async function parseResumeIntoEditForm(file) {
       : true;
 
     applyParsedResumeToEditForm(parsed, { overwrite });
+    setProgressStatus(status, "수정 입력값과 프로필 사진을 반영하는 중입니다.", 86);
     const profilePhotoApplied = await applyResumeProfilePhotoToEditForm(file, status);
 
     if (status) {
@@ -17017,7 +17220,7 @@ async function registerCandidate(eventOrForm) {
 
   if (photoFile && photoFile.size) {
     try {
-      photoUrl = await readFileAsDataUrl(photoFile);
+      photoUrl = await readProfilePhotoAsDataUrl(photoFile);
     } catch (error) {
       console.warn("Profile photo could not be read.", error);
       showToast("사진 파일을 읽지 못했습니다. 다른 파일을 선택해주세요.");
@@ -17619,9 +17822,9 @@ function updateScreeningApplicantStage(applicantId, stage, options = {}) {
   applicant.stage = stage;
   applicant.updatedAt = getTodayDate();
 
-  if (stage === "first_pass" || stage === "first_reject") {
+  if (stage === "first_draft" || stage === "first_pass" || stage === "first_reject") {
     applicant.firstScreening = {
-      decision: stage === "first_pass" ? "pass" : "reject",
+      decision: stage === "first_reject" ? "reject" : stage === "first_pass" ? "pass" : "draft_pass",
       by: actor,
       at: getTimestampText(),
       note: options.note || ""
@@ -17640,14 +17843,6 @@ function updateScreeningApplicantStage(applicantId, stage, options = {}) {
 
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
-
-  if (stage === "first_pass") {
-    state.screeningDetailStep = "second";
-    state.screeningResultPanelOpen = false;
-  } else if (stage === "second_pass") {
-    state.screeningDetailStep = "mail";
-    state.screeningResultPanelOpen = false;
-  }
 
   addAuditLog("Screening 단계 변경", applicant.name, `${folder.title} · ${SCREENING_STAGE_LABELS[stage]}`);
   persistState();
@@ -17675,10 +17870,6 @@ async function submitScreeningApplicant(applicantId) {
   addAuditLog("Screening 지원자 최종 제출", applicant.name, `${folder.title} · 1차 스크리닝 이동`);
   persistState();
 
-  if (!isSearchFirmRole(actor)) {
-    state.screeningDetailStep = "first";
-  }
-
   showToast(`${applicant.name} 지원자를 1차 스크리닝으로 제출했습니다.`);
   renderScreening();
 }
@@ -17694,6 +17885,7 @@ function revertScreeningApplicantStage(applicantId) {
 
   const previousStageMap = {
     registered: "reception",
+    first_draft: "registered",
     first_pass: "registered",
     first_reject: "registered",
     second_draft: "first_pass",
@@ -17720,7 +17912,6 @@ function revertScreeningApplicantStage(applicantId) {
     applicant.submittedById = "";
     applicant.submittedByName = "";
     applicant.firstScreening = null;
-    state.screeningDetailStep = "reception";
   } else if (targetStage === "registered") {
     applicant.firstScreening = {
       ...(applicant.firstScreening || {}),
@@ -17729,7 +17920,6 @@ function revertScreeningApplicantStage(applicantId) {
       at: getTimestampText(),
       note: "1차 판정 번복"
     };
-    state.screeningDetailStep = "first";
   } else if (targetStage === "first_pass") {
     applicant.secondScreening = {
       ...(applicant.secondScreening || {}),
@@ -17738,7 +17928,6 @@ function revertScreeningApplicantStage(applicantId) {
       at: getTimestampText(),
       note: "2차 판정 번복"
     };
-    state.screeningDetailStep = "second";
   } else if (targetStage === "second_draft") {
     applicant.secondScreening = {
       ...(applicant.secondScreening || {}),
@@ -17747,7 +17936,6 @@ function revertScreeningApplicantStage(applicantId) {
       at: getTimestampText(),
       note: "전화면접 단계에서 2차 통과 예정으로 되돌림"
     };
-    state.screeningDetailStep = "second";
   }
 
   folder.updatedAt = getTodayDate();
@@ -17755,6 +17943,42 @@ function revertScreeningApplicantStage(applicantId) {
   addAuditLog("Screening 단계 되돌리기", applicant.name, `${SCREENING_STAGE_LABELS[previousStage]} → ${SCREENING_STAGE_LABELS[targetStage]}`);
   persistState();
   showToast(`${applicant.name} 지원자를 ${SCREENING_STAGE_LABELS[targetStage]} 단계로 이동했습니다.`);
+  renderScreening();
+}
+
+function finalizeFirstScreeningResults() {
+  const folder = getSelectedScreeningFolder();
+
+  if (!folder || !canRunFirstScreening(folder)) {
+    showToast("1차 스크리닝 결과 발송 권한이 없습니다.");
+    return;
+  }
+
+  const draftApplicants = folder.applicants.filter((applicant) => applicant.stage === "first_draft");
+
+  if (!draftApplicants.length) {
+    showToast("1차 합격 예정으로 선택된 지원자가 없습니다.");
+    return;
+  }
+
+  const actor = getCurrentActorName();
+  draftApplicants.forEach((applicant) => {
+    applicant.stage = "first_pass";
+    applicant.updatedAt = getTodayDate();
+    applicant.firstScreening = {
+      ...(applicant.firstScreening || {}),
+      decision: "pass",
+      by: actor,
+      at: getTimestampText()
+    };
+  });
+
+  folder.updatedAt = getTodayDate();
+  replaceScreeningFolder(folder);
+  state.screeningResultPanelOpen = false;
+  addAuditLog("Screening 1차 결과 발송", folder.title, `${draftApplicants.length}명 2차 스크리닝 이동`);
+  persistState();
+  showToast(`${draftApplicants.length}명을 2차 스크리닝으로 이동했습니다.`);
   renderScreening();
 }
 
@@ -17830,7 +18054,6 @@ function finalPassSecondScreening(form) {
 
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
-  state.screeningDetailStep = "mail";
   state.screeningResultPanelOpen = false;
   syncInterviewCasesFromScreening();
   addAuditLog("Screening 결과 발송 정보 저장", folder.title, draftApplicants.length ? `${draftApplicants.length}명 2차 합격 확정` : "결과 발송 정보 저장");
@@ -17899,10 +18122,11 @@ function getSearchFirmMember(applicant) {
 async function sendScreeningMail(payload) {
   const response = await fetch("/api/screening-mail", {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const result = await response.json().catch(() => ({}));
+  const result = await readApiJson(response, "Screening 메일 발송");
 
   if (!response.ok || !result.ok) {
     throw new Error(result.error || "메일 발송에 실패했습니다.");
@@ -17998,8 +18222,38 @@ function openScreeningMailPreview(type, applicantId) {
     return;
   }
 
+  const template = state.screeningMailTemplates?.[preview.type];
+  if (template) {
+    preview.subject = template.subject || preview.subject;
+    preview.body = template.body || preview.body;
+  }
+
   state.screeningMailPreview = preview;
   renderScreening();
+}
+
+function saveScreeningMailTemplateFromPreview(form) {
+  const preview = state.screeningMailPreview;
+
+  if (!preview) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const subject = String(formData.get("subject") || "").trim();
+  const body = String(formData.get("body") || "").trim();
+
+  if (!subject || !body) {
+    showToast("저장할 제목과 본문을 입력해주세요.");
+    return;
+  }
+
+  state.screeningMailTemplates = {
+    ...(state.screeningMailTemplates || {}),
+    [preview.type]: { subject, body, savedAt: getTimestampText(), savedBy: getCurrentActorName() }
+  };
+  persistState();
+  showToast("메일 양식을 저장했습니다.");
 }
 
 async function sendScreeningMailPreview(form) {
@@ -18752,6 +19006,10 @@ async function executeAiSearchWithQuery(query, options = {}) {
   }
 
   state.aiSearchLoading = true;
+  state.aiSearchProgress = options.fileName ? 62 : 42;
+  state.aiSearchStatus = options.fileName
+    ? "파일 내용을 기반으로 후보자 적합도를 계산하는 중입니다."
+    : "자연어 조건을 분석하고 후보자 적합도를 계산하는 중입니다.";
   state.aiResults = runLocalAiSearch(state.aiQuery);
   renderAiSearch();
 
@@ -18765,9 +19023,15 @@ async function executeAiSearchWithQuery(query, options = {}) {
       time: "2026-06-04 09:35"
     });
     persistState();
+    state.aiSearchProgress = 100;
+    state.aiSearchStatus = options.fileName
+      ? `${options.fileName} 기반 AI 검색을 완료했습니다.`
+      : "AI 검색을 완료했습니다.";
     showToast(options.fileName ? "직무기술서 기반 AI 검색 결과가 갱신되었습니다." : "AI 검색 결과가 갱신되었습니다.");
   } catch (error) {
     console.warn("AI search execution failed.", error);
+    state.aiSearchProgress = 100;
+    state.aiSearchStatus = "AI 서버 연결 문제로 로컬 검색 결과를 표시합니다.";
     showToast("AI 검색 중 오류가 발생해 로컬 검색 결과를 표시합니다.");
   } finally {
     state.aiSearchLoading = false;
@@ -18777,6 +19041,8 @@ async function executeAiSearchWithQuery(query, options = {}) {
 
 async function executeAiSearch() {
   state.aiSearchFileName = "";
+  state.aiSearchStatus = "";
+  state.aiSearchProgress = 0;
   await executeAiSearchWithQuery($("#ai-query")?.value.trim() || "");
 }
 
@@ -18789,10 +19055,12 @@ async function handleAiSearchFileUpload(file) {
 
   state.aiSearchFileName = file.name;
   state.aiSearchLoading = true;
+  state.aiSearchProgress = 16;
+  state.aiSearchStatus = "직무기술서 파일을 읽는 중입니다.";
   state.aiResults = [];
 
   if (status) {
-    status.textContent = "직무기술서 파일을 읽고 검색 조건을 구성하는 중입니다.";
+    setProgressStatus(status, state.aiSearchStatus, state.aiSearchProgress);
   }
 
   renderAiSearch();
@@ -18802,15 +19070,22 @@ async function handleAiSearchFileUpload(file) {
 
     if (!result.text || result.text.length < 20) {
       state.aiSearchLoading = false;
+      state.aiSearchProgress = 0;
+      state.aiSearchStatus = "파일에서 읽을 수 있는 직무기술서 텍스트가 부족합니다.";
       renderAiSearch();
       showToast("파일에서 읽을 수 있는 직무기술서 텍스트가 부족합니다.");
       return;
     }
 
+    state.aiSearchProgress = 48;
+    state.aiSearchStatus = "직무기술서 파일을 검색 조건으로 구성하는 중입니다.";
+    renderAiSearch();
     await executeAiSearchWithQuery(buildAiQueryFromUploadedFile(result.text, file.name), { fileName: file.name });
   } catch (error) {
     console.warn("AI search file could not be read.", error);
     state.aiSearchLoading = false;
+    state.aiSearchProgress = 0;
+    state.aiSearchStatus = error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.";
     renderAiSearch();
     showToast(error.isResumeParseError ? error.message : "직무기술서 파일을 읽지 못했습니다.");
   }
@@ -19894,6 +20169,14 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-save-screening-mail-template]")) {
+      const form = event.target.closest("#screening-mail-preview-form");
+      if (form) {
+        saveScreeningMailTemplateFromPreview(form);
+      }
+      return;
+    }
+
     const screeningStepButton = event.target.closest("[data-screening-detail-step]");
     if (screeningStepButton) {
       const folder = getSelectedScreeningFolder();
@@ -19923,7 +20206,7 @@ function bindEvents() {
 
     const firstPassButton = event.target.closest("[data-screening-first-pass]");
     if (firstPassButton) {
-      updateScreeningApplicantStage(firstPassButton.dataset.screeningFirstPass, "first_pass");
+      updateScreeningApplicantStage(firstPassButton.dataset.screeningFirstPass, "first_draft");
       return;
     }
 
@@ -19942,6 +20225,17 @@ function bindEvents() {
     const secondRejectButton = event.target.closest("[data-screening-second-reject]");
     if (secondRejectButton) {
       updateScreeningApplicantStage(secondRejectButton.dataset.screeningSecondReject, "second_reject");
+      return;
+    }
+
+    if (event.target.closest("[data-finalize-first-screening]")) {
+      finalizeFirstScreeningResults();
+      return;
+    }
+
+    if (event.target.closest("[data-close-screening-result-panel]") || event.target.matches("[data-screening-result-panel-backdrop]")) {
+      state.screeningResultPanelOpen = false;
+      renderScreening();
       return;
     }
 
@@ -20450,6 +20744,86 @@ function bindEvents() {
     const removeScreeningCareerButton = event.target.closest("[data-remove-screening-career]");
     if (removeScreeningCareerButton) {
       removeScreeningCareerRecord(Number(removeScreeningCareerButton.dataset.removeScreeningCareer));
+      return;
+    }
+
+    if (event.target.closest("[data-clear-register-photo]")) {
+      const input = $("#profile-photo");
+      const preview = $("#photo-preview");
+      if (input) input.value = "";
+      if (preview) preview.textContent = "사진 미리보기";
+      state.registerExtractedPhotoUrl = "";
+      showToast("선택한 프로필 사진을 지웠습니다.");
+      return;
+    }
+
+    if (event.target.closest("[data-clear-register-resume]")) {
+      const input = $("#resume-file");
+      const status = $("#resume-parse-status");
+      if (input) input.value = "";
+      if (status) status.textContent = "이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.";
+      showToast("선택한 이력서를 지웠습니다.");
+      return;
+    }
+
+    if (event.target.closest("[data-clear-register-attachments]")) {
+      const input = $("#candidate-other-attachments");
+      if (input) input.value = "";
+      showToast("선택한 기타 첨부파일을 지웠습니다.");
+      return;
+    }
+
+    if (event.target.closest("[data-clear-edit-photo]")) {
+      const input = $("#edit-photo");
+      const removeInput = $("#edit-photo-remove");
+      const preview = $("#edit-photo-preview");
+      if (input) input.value = "";
+      if (removeInput) removeInput.value = "1";
+      if (preview) preview.textContent = "저장 시 사진이 삭제됩니다.";
+      state.editExtractedPhotoUrl = "";
+      showToast("저장하면 프로필 사진이 삭제됩니다.");
+      return;
+    }
+
+    if (event.target.closest("[data-clear-edit-resume-upload]")) {
+      const input = $("#edit-resume-file");
+      const status = $("#edit-resume-parse-status");
+      if (input) input.value = "";
+      if (status) status.textContent = "이력서를 업로드하면 읽을 수 있는 정보만 아래 입력란에 자동 입력됩니다.";
+      showToast("선택한 이력서를 지웠습니다.");
+      return;
+    }
+
+    if (event.target.closest("[data-clear-edit-other-attachments]")) {
+      const input = $("#edit-other-attachments");
+      if (input) input.value = "";
+      showToast("선택한 기타 첨부파일을 지웠습니다.");
+      return;
+    }
+
+    const removeCandidateResumeArchiveButton = event.target.closest("[data-remove-candidate-resume-archive]");
+    if (removeCandidateResumeArchiveButton) {
+      removeCandidateStoredAttachment("resumeArchive", Number(removeCandidateResumeArchiveButton.dataset.removeCandidateResumeArchive)).catch((error) => {
+        console.warn(error);
+        showToast("첨부파일 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    if (event.target.closest("[data-remove-candidate-resume]")) {
+      removeCandidateStoredAttachment("resume").catch((error) => {
+        console.warn(error);
+        showToast("이력서 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    const removeCandidateAttachmentButton = event.target.closest("[data-remove-candidate-attachment]");
+    if (removeCandidateAttachmentButton) {
+      removeCandidateStoredAttachment("other", Number(removeCandidateAttachmentButton.dataset.removeCandidateAttachment)).catch((error) => {
+        console.warn(error);
+        showToast("첨부파일 삭제 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -21006,9 +21380,11 @@ function bindEvents() {
 
     if (event.target.id === "edit-photo") {
       const preview = $("#edit-photo-preview");
+      const removeInput = $("#edit-photo-remove");
       const file = event.target.files?.[0];
 
       if (preview && file) {
+        if (removeInput) removeInput.value = "0";
         state.editExtractedPhotoUrl = "";
         preview.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="업로드한 얼굴 프로필 사진 미리보기" />`;
       }
