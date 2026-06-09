@@ -8074,7 +8074,7 @@ async function loadInterviewReportFile(file, field) {
     }
 
     report.reportText = "";
-    persistState();
+    persistState({ skipRemoteSync: true });
   } catch (error) {
     console.warn(error);
     report[progressKey] = 0;
@@ -8165,7 +8165,7 @@ async function loadInterviewReportTemplateFiles(fileList) {
     ? `일부 샘플을 읽지 못했습니다: ${failedNames.join(", ")}`
     : "면담록 샘플을 저장했습니다. 생성 버튼을 누르면 스크립트와 샘플을 종합 분석합니다.";
   report.reportText = "";
-  persistState();
+  persistState({ skipRemoteSync: true });
   renderInterviewReport();
 }
 
@@ -8190,7 +8190,7 @@ function removeInterviewTemplateSample(sampleId) {
     ? `면담록 샘플 ${report.templateSamples.length}개가 저장되어 있습니다.`
     : "저장된 면담록 샘플이 없습니다.";
   report.reportText = "";
-  persistState();
+  persistState({ skipRemoteSync: true });
   renderInterviewReport();
 }
 
@@ -8215,7 +8215,7 @@ function generateInterviewReport() {
     : templateCorpus
       ? "스크립트와 직접 입력 양식 기준을 분석해 보고서를 생성했습니다."
       : "스크립트 내용을 기준으로 면담록 보고서를 생성했습니다.";
-  persistState();
+  persistState({ skipRemoteSync: true });
   addAuditLog("면담록 보고서 생성", "면담록 생성", `스크립트 및 샘플 ${sampleCount}개 기반 보고서 생성`);
   renderInterviewReport();
 }
@@ -8281,7 +8281,7 @@ function downloadInterviewReportDocument() {
 
 function resetInterviewReport() {
   state.interviewReport = normalizeInterviewReportState();
-  persistState();
+  persistState({ skipRemoteSync: true });
   renderInterviewReport();
 }
 
@@ -15696,13 +15696,11 @@ async function extractDocumentTextWithServer(file, options = {}) {
 
 async function readInterviewReportUploadText(file) {
   const errors = [];
-  const extension = getFileExtension(file?.name);
-  const preferServer = ["docx", "doc", "hwp", "hwpx", "pdf"].includes(extension);
 
   const readWithBrowser = async () => {
     const browserResult = await withTimeout(
       () => readResumeText(file),
-      16000,
+      22000,
       "브라우저 파일 텍스트 추출 시간이 초과되었습니다."
     );
     const text = normalizeResumeText(browserResult.text || "");
@@ -15741,27 +15739,36 @@ async function readInterviewReportUploadText(file) {
     throw new Error("서버 추출 결과가 비어 있습니다.");
   };
 
-  const attempts = preferServer ? [readWithServer, readWithBrowser] : [readWithBrowser, readWithServer];
+  const attempts = [readWithBrowser, readWithServer];
+  let remaining = attempts.length;
 
-  for (const attempt of attempts) {
-    try {
-      return await attempt();
-    } catch (error) {
-      errors.push(error);
-    }
-  }
+  return new Promise((resolve, reject) => {
+    attempts.forEach((attempt) => {
+      Promise.resolve()
+        .then(attempt)
+        .then(resolve)
+        .catch((error) => {
+          errors.push(error);
+          remaining -= 1;
 
-  const warnings = errors.flatMap((error) => error?.warnings || []);
-  const message = errors
-    .map((error) => error?.message)
-    .filter(Boolean)
-    .join(" / ");
-  const error = createResumeParseError(
-    message || "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
-    warnings
-  );
-  error.cause = errors.at(-1);
-  throw error;
+          if (remaining > 0) {
+            return;
+          }
+
+          const warnings = errors.flatMap((item) => item?.warnings || []);
+          const message = errors
+            .map((item) => item?.message)
+            .filter(Boolean)
+            .join(" / ");
+          const parseError = createResumeParseError(
+            message || "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
+            warnings
+          );
+          parseError.cause = errors.at(-1);
+          reject(parseError);
+        });
+    });
+  });
 }
 
 function firstMatch(text, patterns) {
