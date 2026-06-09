@@ -5370,6 +5370,40 @@ tr:last-child td {
   margin: 0 auto;
 }
 
+.interview-template-sample-list {
+  display: grid;
+  gap: 8px;
+}
+
+.interview-template-sample-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 10px;
+  background: var(--surface-soft);
+}
+
+.interview-template-sample-row span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.interview-template-sample-row strong,
+.interview-template-sample-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.interview-template-sample-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .report-output-textarea {
   min-height: 520px;
 }
