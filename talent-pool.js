@@ -3637,6 +3637,17 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function waitForUiPaint() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => window.setTimeout(resolve, 0));
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
 async function readProfilePhotoAsDataUrl(file) {
   const dataUrl = await readFileAsDataUrl(file);
 
@@ -8013,8 +8024,17 @@ async function loadInterviewReportFile(file, field) {
   renderInterviewReport();
 
   try {
-    const result = await readInterviewReportUploadText(file);
-    report[progressKey] = 68;
+    await waitForUiPaint();
+    report[progressKey] = 24;
+    report[statusKey] = `${file.name} 문서 텍스트 추출을 시작합니다.`;
+    renderInterviewReport();
+
+    const result = await withTimeout(
+      () => readInterviewReportUploadText(file),
+      52000,
+      "파일 읽기 시간이 초과되었습니다. 문서가 너무 크거나 암호화되어 있으면 텍스트로 붙여넣거나 DOCX/PDF로 다시 업로드해주세요."
+    );
+    report[progressKey] = 72;
     report[statusKey] = "문서 텍스트를 정리하는 중입니다.";
     renderInterviewReport();
 
@@ -8091,7 +8111,12 @@ async function loadInterviewReportTemplateFiles(fileList) {
     renderInterviewReport();
 
     try {
-      const result = await readInterviewReportUploadText(file);
+      await waitForUiPaint();
+      const result = await withTimeout(
+        () => readInterviewReportUploadText(file),
+        52000,
+        "샘플 파일 읽기 시간이 초과되었습니다. 문서가 너무 크거나 암호화되어 있으면 다른 샘플을 업로드해주세요."
+      );
       const extractedText = normalizeResumeText(result.text || "");
 
       if (!extractedText) {
@@ -15590,11 +15615,12 @@ async function readResumeText(file) {
   });
 }
 
-function withTimeout(promise, timeoutMs, message) {
+function withTimeout(task, timeoutMs, message) {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       reject(new Error(message || "작업 시간이 초과되었습니다."));
     }, timeoutMs);
+    const promise = typeof task === "function" ? Promise.resolve().then(task) : Promise.resolve(task);
 
     promise
       .then((value) => {
@@ -15608,19 +15634,38 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
-async function extractDocumentTextWithServer(file) {
+async function extractDocumentTextWithServer(file, options = {}) {
   const dataUrl = await readFileAsDataUrl(file);
-  const response = await fetch("/api/extract-text", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      fileName: file.name,
-      mimeType: file.type || "",
-      dataUrl
-    })
-  });
+  const timeoutMs = Number(options.timeoutMs || 0);
+  const controller = typeof AbortController !== "undefined" && timeoutMs > 0 ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response;
+
+  try {
+    response = await fetch("/api/extract-text", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      signal: controller?.signal,
+      body: JSON.stringify({
+        fileName: file.name,
+        mimeType: file.type || "",
+        dataUrl
+      })
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("서버 파일 텍스트 추출 시간이 초과되었습니다.");
+    }
+
+    throw error;
+  } finally {
+    if (timer) {
+      window.clearTimeout(timer);
+    }
+  }
+
   const responseText = await response.text();
   let payload = {};
 
@@ -15651,11 +15696,13 @@ async function extractDocumentTextWithServer(file) {
 
 async function readInterviewReportUploadText(file) {
   const errors = [];
+  const extension = getFileExtension(file?.name);
+  const preferServer = ["docx", "doc", "hwp", "hwpx", "pdf"].includes(extension);
 
-  try {
+  const readWithBrowser = async () => {
     const browserResult = await withTimeout(
-      readResumeText(file),
-      12000,
+      () => readResumeText(file),
+      16000,
       "브라우저 파일 텍스트 추출 시간이 초과되었습니다."
     );
     const text = normalizeResumeText(browserResult.text || "");
@@ -15670,24 +15717,51 @@ async function readInterviewReportUploadText(file) {
       };
     }
 
-    errors.push(new Error("브라우저 추출 결과가 비어 있습니다."));
-  } catch (error) {
-    errors.push(error);
+    throw new Error("브라우저 추출 결과가 비어 있습니다.");
+  };
+
+  const readWithServer = async () => {
+    const serverResult = await withTimeout(
+      () => extractDocumentTextWithServer(file, { timeoutMs: 26000 }),
+      30000,
+      "서버 파일 텍스트 추출 시간이 초과되었습니다."
+    );
+    const text = normalizeResumeText(serverResult.text || "");
+
+    if (text) {
+      return {
+        text,
+        meta: {
+          ...(serverResult.meta || {}),
+          source: "server"
+        }
+      };
+    }
+
+    throw new Error("서버 추출 결과가 비어 있습니다.");
+  };
+
+  const attempts = preferServer ? [readWithServer, readWithBrowser] : [readWithBrowser, readWithServer];
+
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (error) {
+      errors.push(error);
+    }
   }
 
-  try {
-    return await extractDocumentTextWithServer(file);
-  } catch (serverError) {
-    const browserError = errors.find(Boolean);
-    const error = createResumeParseError(
-      serverError.message ||
-        browserError?.message ||
-        "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
-      browserError?.warnings || []
-    );
-    error.cause = serverError;
-    throw error;
-  }
+  const warnings = errors.flatMap((error) => error?.warnings || []);
+  const message = errors
+    .map((error) => error?.message)
+    .filter(Boolean)
+    .join(" / ");
+  const error = createResumeParseError(
+    message || "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
+    warnings
+  );
+  error.cause = errors.at(-1);
+  throw error;
 }
 
 function firstMatch(text, patterns) {
