@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = {
   updatedBy: ""
 };
 const LEGACY_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
+const APP_BASE_URL = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "https://talentpool-dx.com";
 
 function loadLocalEnv() {
   try {
@@ -778,12 +779,13 @@ function buildReportHtml(report) {
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#f9fafb">
         <tr>
           <td align="center" style="padding:28px 14px">
-            <table role="presentation" width="760" cellspacing="0" cellpadding="0" style="width:100%;max-width:760px;border-collapse:collapse">
+            <table role="presentation" width="980" cellspacing="0" cellpadding="0" style="width:100%;max-width:980px;border-collapse:collapse">
               <tr>
                 <td>
                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;margin:0 0 18px;border:1px solid #e5e8eb;border-radius:12px;background:#ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
                     <tr>
-                      <td style="padding:20px">
+                      <td style="padding:22px">
+                        <a href="${escapeHtml(APP_BASE_URL)}" target="_blank" style="display:inline-block;margin:0 0 10px;color:#191f28;font-size:16px;font-weight:900;text-decoration:none">Talent Pool</a>
                         <p style="margin:0 0 6px;color:#8b95a1;font-size:12px;font-weight:800;letter-spacing:0;text-transform:uppercase">Daily News Radar</p>
                         <h2 style="margin:0 0 10px;color:#191f28;font-size:28px;line-height:1.25">Today's Talent</h2>
                         <p style="margin:0;color:#4e5968;font-size:15px;line-height:1.6">${escapeHtml(reportDate)} 00:00~24:00 기사 기준</p>

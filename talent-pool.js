@@ -16676,7 +16676,12 @@ async function sendTrendingMailTest() {
       body: JSON.stringify({
         action: "test",
         settings,
-        report: state.trendingReport,
+        report: {
+          reportDate: state.trendingReport?.targetDate ||
+            state.trendingReport?.reportDate ||
+            state.trendingSelectedDate ||
+            ""
+        },
         requestedBy: getCurrentActorName()
       })
     });
