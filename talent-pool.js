@@ -8615,6 +8615,471 @@ function resetInterviewReport() {
   renderInterviewReport();
 }
 
+function getInterviewReportUploadLabel(upload) {
+  const normalizedUpload = normalizeInterviewReportUpload(upload);
+
+  if (!normalizedUpload) {
+    return "";
+  }
+
+  return `${normalizedUpload.name}${normalizedUpload.size ? ` (${formatFileSize(normalizedUpload.size)})` : ""}`;
+}
+
+function getInterviewReportSampleRows(report) {
+  return getInterviewTemplateSamples(report)
+    .map((sample) => ({
+      ...sample,
+      readable: Boolean(sample.text || canReadInterviewReportUpload(sample))
+    }));
+}
+
+function renderInterviewTemplateSampleList(report) {
+  const samples = getInterviewReportSampleRows(report);
+
+  if (!samples.length) {
+    return `<div class="empty-state compact-empty">저장된 면담록 샘플이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="interview-template-sample-list">
+      ${samples.map((sample, index) => `
+        <div class="interview-template-sample-row">
+          <span>
+            <strong>${escapeHtml(sample.name || `샘플 ${index + 1}`)}</strong>
+            <small>${escapeHtml([formatFileSize(sample.size), sample.readable ? "생성 시 분석" : "재업로드 필요"].filter(Boolean).join(" · "))}</small>
+          </span>
+          <button class="ghost-button danger-button compact-button" type="button" data-remove-interview-template-sample="${escapeHtml(sample.id)}">삭제</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderInterviewReportPromptModal(report) {
+  if (!state.interviewReportPromptModalOpen) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-interview-report-prompt-backdrop>
+      <section class="trending-modal interview-report-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="interview-report-prompt-title">
+        <div class="modal-header">
+          <div>
+            <p class="section-kicker">REPORT PROMPT</p>
+            <h4 id="interview-report-prompt-title">보고서 작성 프롬프트</h4>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-interview-report-prompt>닫기</button>
+        </div>
+        <label class="field">
+          <span>작성 지시사항</span>
+          <textarea id="interview-report-prompt" class="control-textarea" rows="8" placeholder="예: 임원 보고용으로 핵심 역량, 리스크, 후속 확인 사항을 간결하게 정리">${escapeHtml(report.prompt || "")}</textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="primary-button" type="button" data-close-interview-report-prompt>저장</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderInterviewReport() {
+  const container = $("#interview-report-content");
+
+  if (!container) {
+    return;
+  }
+
+  const report = getInterviewReportState();
+  const samples = getInterviewReportSampleRows(report);
+  const hasScript = Boolean(report.scriptText.trim() || canReadInterviewReportUpload(report.scriptFile));
+  const hasSamples = samples.some((sample) => sample.readable);
+  const isBusy = Boolean(report.scriptLoading || report.templateLoading);
+  const canGenerateReport = hasScript && hasSamples && !isBusy;
+  const scriptStatus = report.scriptStatus || getInterviewReportUploadLabel(report.scriptFile) || "파일을 선택하거나 드래그앤드랍";
+  const templateStatus = report.templateStatus || (samples.length ? `저장된 샘플 ${samples.length}개` : "복수 샘플 선택 가능");
+
+  container.innerHTML = `
+    <div class="report-workspace">
+      <section class="content-panel report-input-panel">
+        <div class="panel-header">
+          <div>
+            <h4>면담 스크립트</h4>
+            <span>스크립트 파일과 면담록 작성 우수사례 샘플을 업로드하면 보고서를 생성할 수 있습니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-reset-interview-report>초기화</button>
+        </div>
+        <div class="interview-report-grid">
+          <div class="dropzone report-upload-box">
+            <input id="interview-report-script-file" type="file" accept=".txt,.pdf,.doc,.docx,.hwp,.hwpx" />
+            <strong>스크립트 파일 업로드</strong>
+            <span class="report-upload-status">${renderMaybeProgressStatus(scriptStatus, report.scriptLoading, report.scriptProgress)}</span>
+          </div>
+          <div class="dropzone report-upload-box">
+            <input id="interview-report-template-file" type="file" accept=".txt,.pdf,.doc,.docx,.hwp,.hwpx" multiple />
+            <strong>면담록 작성 양식 샘플 업로드</strong>
+            <span class="report-upload-status">${renderMaybeProgressStatus(templateStatus, report.templateLoading, report.templateProgress)}</span>
+          </div>
+        </div>
+        <div class="report-prompt-row">
+          <button class="ghost-button" type="button" data-open-interview-report-prompt>보고서 작성 프롬프트</button>
+          <span>${escapeHtml(report.prompt ? "작성 프롬프트가 저장되어 있습니다." : "필요 시 보고서 작성 방향을 추가로 입력할 수 있습니다.")}</span>
+        </div>
+        ${renderInterviewTemplateSampleList(report)}
+        <div class="member-actions">
+          <button class="primary-button" type="button" data-generate-interview-report ${canGenerateReport ? "" : "disabled"}>면담록 보고서 생성</button>
+          <button class="ghost-button" type="button" data-download-interview-report ${report.reportText ? "" : "disabled"}>Word 다운로드</button>
+        </div>
+        ${report.status ? `<p class="job-fit-inline-status">${escapeHtml(report.status)}</p>` : ""}
+      </section>
+      <section class="content-panel generated-report-panel">
+        <div class="panel-header">
+          <div>
+            <h4>생성된 면담록 보고서</h4>
+            <span>필요 시 문구를 직접 다듬은 후 다운로드할 수 있습니다.</span>
+          </div>
+        </div>
+        <textarea id="interview-report-output" class="control-textarea report-output-textarea" rows="22" placeholder="면담록 보고서 생성 결과가 여기에 표시됩니다.">${escapeHtml(report.reportText || "")}</textarea>
+      </section>
+      ${renderInterviewReportPromptModal(report)}
+    </div>
+  `;
+}
+
+async function loadInterviewReportFile(file, field) {
+  if (!file) {
+    return;
+  }
+
+  const report = getInterviewReportState();
+  const isScript = field === "script";
+  const upload = createInterviewReportStoredUpload(file);
+
+  if (!upload) {
+    showToast("파일을 저장하지 못했습니다. 다시 선택해주세요.");
+    return;
+  }
+
+  if (isScript) {
+    report.scriptFile = upload;
+    report.scriptFileName = upload.name;
+    report.scriptText = "";
+    report.scriptProgress = 100;
+    report.scriptLoading = false;
+    report.scriptStatus = `${upload.name} 스크립트 파일을 저장했습니다.`;
+    report.status = "스크립트 파일이 저장되었습니다. 보고서 생성 버튼을 누르면 내용을 읽어 분석합니다.";
+  } else {
+    const sample = normalizeInterviewTemplateSample({
+      id: upload.id,
+      name: upload.name,
+      size: upload.size,
+      type: upload.type,
+      storeKey: upload.storeKey,
+      text: "",
+      uploadedAt: upload.uploadedAt
+    });
+
+    if (sample) {
+      report.templateSamples = [
+        ...getInterviewTemplateSamples(report).filter((item) => item.id !== sample.id),
+        sample
+      ];
+    }
+
+    report.templateProgress = 100;
+    report.templateLoading = false;
+    report.templateProfile = null;
+    report.templateStatus = `${upload.name} 샘플 파일을 저장했습니다.`;
+    report.status = `면담록 작성 우수사례 샘플 ${getInterviewTemplateSamples(report).length}개가 저장되었습니다.`;
+  }
+
+  report.reportText = "";
+  persistState({ skipRemoteSync: true });
+  renderInterviewReport();
+}
+
+async function loadInterviewReportTemplateFiles(fileList) {
+  const files = [...(fileList || [])].filter((file) => file && file.size);
+
+  if (!files.length) {
+    return;
+  }
+
+  const report = getInterviewReportState();
+  const samples = files
+    .map((file) => {
+      const upload = createInterviewReportStoredUpload(file);
+
+      if (!upload) {
+        return null;
+      }
+
+      return normalizeInterviewTemplateSample({
+        id: upload.id,
+        name: upload.name,
+        size: upload.size,
+        type: upload.type,
+        storeKey: upload.storeKey,
+        text: "",
+        uploadedAt: upload.uploadedAt
+      });
+    })
+    .filter(Boolean);
+
+  if (!samples.length) {
+    showToast("샘플 파일을 저장하지 못했습니다. 다시 선택해주세요.");
+    return;
+  }
+
+  const existing = getInterviewTemplateSamples(report);
+  const merged = [...existing];
+
+  samples.forEach((sample) => {
+    const index = merged.findIndex((item) => item.id === sample.id || item.name === sample.name);
+
+    if (index >= 0) {
+      merged[index] = sample;
+      return;
+    }
+
+    merged.push(sample);
+  });
+
+  report.templateSamples = merged;
+  report.templateLoading = false;
+  report.templateProgress = 100;
+  report.templateProfile = null;
+  report.templateStatus = `면담록 작성 우수사례 샘플 ${samples.length}개를 저장했습니다. 총 ${merged.length}개 샘플이 준비되었습니다.`;
+  report.status = "샘플 파일이 저장되었습니다. 보고서 생성 버튼을 누르면 스크립트와 함께 분석합니다.";
+  report.reportText = "";
+  persistState({ skipRemoteSync: true });
+  renderInterviewReport();
+}
+
+function extractInterviewReportSectionTitles(templateText = "") {
+  return normalizePolicyText(templateText)
+    .split("\n")
+    .map((line) => line.replace(/^[-*#\d.)\s]+/, "").trim())
+    .filter((line) => line.length >= 2 && line.length <= 28)
+    .filter((line) => /(개요|요약|평가|역량|경험|리스크|확인|의견|종합|면담|후속|검토)/.test(line))
+    .filter((line, index, array) => array.indexOf(line) === index)
+    .slice(0, 5);
+}
+
+function splitInterviewReportSentences(text = "") {
+  return normalizePolicyText(text)
+    .split(/\n+|(?<=[.!?。]|다\.|요\.|음\.)\s+/)
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function buildInterviewReportText() {
+  const report = getInterviewReportState();
+  const scriptText = normalizePolicyText(report.scriptText || "");
+  const templateCorpus = getInterviewTemplateCorpus(report);
+  const sentences = splitInterviewReportSentences(scriptText);
+  const sectionTitles = extractInterviewReportSectionTitles(templateCorpus);
+  const promptLine = report.prompt ? `작성 프롬프트: ${report.prompt}` : "작성 프롬프트: 우수사례 샘플의 구조를 참고해 핵심 내용 중심으로 정리";
+  const summaryLines = sentences.slice(0, 4);
+  const evidenceLines = sentences.filter((line) => line.length >= 18).slice(0, 5);
+  const riskLines = sentences
+    .filter((line) => /(확인|검토|보완|우려|리스크|추가|필요|조건|질문|협의)/.test(line))
+    .slice(0, 4);
+  const sections = [
+    {
+      title: sectionTitles[0] || "1. 면담 개요",
+      lines: summaryLines.length ? summaryLines : ["면담 스크립트의 주요 내용을 확인할 수 없습니다."]
+    },
+    {
+      title: sectionTitles[1] || "2. 핵심 발언 및 확인 내용",
+      lines: evidenceLines.length ? evidenceLines : summaryLines
+    },
+    {
+      title: sectionTitles[2] || "3. 후보자 역량 및 경험 판단",
+      lines: evidenceLines.slice(0, 3).map((line) => `${line} 근거로 직무 관련 경험과 설명 내용을 확인`)
+    },
+    {
+      title: sectionTitles[3] || "4. 리스크 및 추가 확인 사항",
+      lines: riskLines.length ? riskLines : ["추가 확인이 필요한 특이 리스크는 스크립트상 명확히 확인되지 않음"]
+    },
+    {
+      title: sectionTitles[4] || "5. 종합 의견",
+      lines: [
+        "면담 내용의 핵심 발언, 경험 근거, 추가 확인 사항을 중심으로 정리",
+        "최종 판단 전 직무 요구사항과 면접 평가 결과를 함께 교차 검토 필요"
+      ]
+    }
+  ];
+
+  return [
+    "면담록 보고서",
+    "",
+    promptLine,
+    templateCorpus ? `참고 샘플: ${getInterviewTemplateSamples(report).length}개 우수사례 양식 참고` : "참고 샘플: 없음",
+    "",
+    ...sections.flatMap((section) => [
+      section.title,
+      ...section.lines.filter(Boolean).slice(0, 6).map((line) => `- ${line}`),
+      ""
+    ])
+  ].join("\n").trim();
+}
+
+async function generateInterviewReport() {
+  const report = getInterviewReportState();
+  const samples = getInterviewReportSampleRows(report);
+
+  if (!report.scriptText.trim() && !canReadInterviewReportUpload(report.scriptFile)) {
+    showToast("면담 스크립트 파일을 먼저 업로드해 주세요.");
+    return;
+  }
+
+  if (!samples.some((sample) => sample.readable)) {
+    showToast("면담록 작성 우수사례 샘플 파일을 먼저 업로드해 주세요.");
+    return;
+  }
+
+  report.scriptLoading = true;
+  report.templateLoading = true;
+  report.scriptProgress = report.scriptText.trim() ? 100 : 20;
+  report.templateProgress = 20;
+  report.status = "면담 스크립트와 우수사례 샘플을 분석하는 중입니다.";
+  renderInterviewReport();
+
+  try {
+    if (!report.scriptText.trim()) {
+      const result = await readStoredInterviewReportUploadText(report.scriptFile, "면담 스크립트");
+      report.scriptText = result.text;
+      report.scriptProgress = 100;
+      report.scriptStatus = `${report.scriptFile?.name || "스크립트 파일"} 내용을 읽었습니다.`;
+      renderInterviewReport();
+    }
+
+    const loadedSamples = [];
+
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index];
+
+      if (sample.text) {
+        loadedSamples.push(sample);
+      } else if (sample.readable) {
+        const result = await readStoredInterviewReportUploadText(sample, `면담록 샘플 ${sample.name}`);
+        loadedSamples.push({
+          ...sample,
+          text: result.text,
+          profile: analyzeInterviewTemplateProfile(result.text, sample.name)
+        });
+      }
+
+      report.templateProgress = Math.max(30, Math.round(((index + 1) / samples.length) * 95));
+      report.templateStatus = `${index + 1}/${samples.length}개 샘플 분석 중`;
+      renderInterviewReport();
+    }
+
+    report.templateSamples = loadedSamples;
+    report.templateProfile = analyzeInterviewTemplateProfile(getInterviewTemplateCorpus(report), getInterviewTemplateSourceLabel(report));
+    report.reportText = buildInterviewReportText();
+    report.scriptLoading = false;
+    report.templateLoading = false;
+    report.scriptProgress = 100;
+    report.templateProgress = 100;
+    report.status = `스크립트와 우수사례 샘플 ${loadedSamples.length}개를 참고해 면담록 보고서를 생성했습니다.`;
+    persistState({ skipRemoteSync: true });
+    addAuditLog("면담록 보고서 생성", "면담록 생성", `스크립트 및 샘플 ${loadedSamples.length}개 기반 보고서 생성`);
+  } catch (error) {
+    console.warn("Interview report generation failed.", error);
+    report.scriptLoading = false;
+    report.templateLoading = false;
+    report.status = error.isResumeParseError ? error.message : "면담록 보고서 생성 중 파일 분석에 실패했습니다.";
+  }
+
+  renderInterviewReport();
+}
+
+function buildInterviewReportWordHtml() {
+  const report = getInterviewReportState();
+  const generatedAt = getTimestampText();
+  const paragraphs = normalizePolicyText(report.reportText)
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        return "<br>";
+      }
+
+      if (trimmed === "면담록 보고서") {
+        return `<h1>${escapeHtml(trimmed)}</h1>`;
+      }
+
+      if (/^\d+\./.test(trimmed)) {
+        return `<h2>${escapeHtml(trimmed)}</h2>`;
+      }
+
+      return `<p>${escapeHtml(trimmed)}</p>`;
+    })
+    .join("");
+
+  return [
+    "<!doctype html><html><head><meta charset=\"utf-8\"><style>",
+    "@page { size: A4; margin: 18mm 18mm; }",
+    "body { font-family:'Malgun Gothic',Arial,sans-serif; color:#111827; font-size:10.5pt; line-height:1.6; }",
+    "h1 { font-size:20pt; margin:0 0 12px; border-bottom:2px solid #111827; padding-bottom:10px; }",
+    "h2 { font-size:13pt; margin:18px 0 8px; }",
+    "p { margin:0 0 6px; }",
+    ".meta { color:#6b7280; font-size:9pt; margin-bottom:16px; }",
+    "</style></head><body>",
+    `<div class=\"meta\">생성 시각 ${escapeHtml(generatedAt)} KST</div>`,
+    paragraphs,
+    "</body></html>"
+  ].join("");
+}
+
+function downloadInterviewReportDocument() {
+  const report = getInterviewReportState();
+
+  if (!report.reportText.trim()) {
+    showToast("다운로드할 면담록 보고서가 없습니다.");
+    return;
+  }
+
+  const blob = new Blob([buildInterviewReportWordHtml()], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `면담록_보고서_${getTodayDate()}.doc`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  addAuditLog("면담록 보고서 다운로드", "면담록 생성", "Word 문서 다운로드");
+}
+
+function removeInterviewTemplateSample(sampleId) {
+  const report = getInterviewReportState();
+  const removed = getInterviewTemplateSamples(report).find((sample) => sample.id === sampleId);
+
+  if (removed?.storeKey) {
+    interviewReportFileStore.delete(removed.storeKey);
+  }
+
+  report.templateSamples = getInterviewTemplateSamples(report).filter((sample) => sample.id !== sampleId);
+  report.templateProfile = null;
+  report.templateStatus = report.templateSamples.length
+    ? `면담록 샘플 ${report.templateSamples.length}개가 저장되어 있습니다.`
+    : "저장된 면담록 샘플이 없습니다.";
+  report.reportText = "";
+  persistState({ skipRemoteSync: true });
+  renderInterviewReport();
+}
+
+function resetInterviewReport() {
+  interviewReportFileStore.clear();
+  state.interviewReportPromptModalOpen = false;
+  state.interviewReport = normalizeInterviewReportState();
+  persistState({ skipRemoteSync: true });
+  renderInterviewReport();
+}
+
 function getRecruitingMetricsState() {
   state.recruitingMetrics = normalizeRecruitingMetricsState(state.recruitingMetrics);
   return state.recruitingMetrics;
