@@ -5904,6 +5904,138 @@ tr:last-child td {
   background: var(--surface);
 }
 
+.metrics-tab-list {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px;
+  background: var(--surface-soft);
+}
+
+.metrics-tab {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.metrics-tab.is-active {
+  background: var(--surface);
+  color: var(--blue-700);
+  box-shadow: var(--shadow-sm);
+}
+
+.metrics-sheet-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.metrics-sheet-toolbar > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.metrics-sheet-toolbar strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.metrics-sheet-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.metrics-sheet-wrap {
+  max-height: 62vh;
+}
+
+.metrics-sheet-table {
+  min-width: 1440px;
+}
+
+.metrics-sheet-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.metrics-row-number,
+.metrics-action-column {
+  width: 64px;
+  min-width: 64px;
+  text-align: center !important;
+  white-space: nowrap;
+}
+
+.metrics-column-header {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 28px;
+  align-items: center;
+  gap: 6px;
+}
+
+.metrics-column-input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+  outline: 0;
+}
+
+.tiny-icon-button {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.metrics-sheet-cell {
+  display: block;
+  width: 100%;
+  min-width: 140px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 9px;
+  resize: vertical;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  outline: 0;
+}
+
+.metrics-sheet-cell:focus,
+.metrics-column-input:focus {
+  border-color: var(--blue);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.12);
+}
+
+.metrics-row-delete {
+  min-width: 54px;
+}
+
 .detail-card-list {
   display: grid;
   gap: 0;
@@ -6147,6 +6279,19 @@ tr:last-child td {
 
   .metrics-control-grid {
     grid-template-columns: 1fr;
+  }
+
+  .metrics-sheet-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .metrics-tab-list {
+    width: 100%;
+  }
+
+  .metrics-tab {
+    flex: 1;
   }
 
   .screening-card-tags {
