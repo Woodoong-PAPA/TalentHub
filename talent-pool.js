@@ -27,7 +27,7 @@ const MENU_CONFIG = [
   { view: "recruiting-metrics", label: "채용 지표", description: "사업부별 채용 실적 취합과 보고" },
   { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
   { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
-  { view: "jd-enhance", label: "JD 고도화", description: "작성 가이드라인 기반 JD 점검과 문구 개선" },
+  { view: "jd-enhance", label: "채용공고 작성", description: "작성 가이드라인 기반 JD 점검과 문구 개선" },
   { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
@@ -40,6 +40,7 @@ const SCREENING_DELETED_FOLDERS_SETTING_KEY = "screening_deleted_folder_ids";
 const ROLE_PERMISSIONS_SETTING_KEY = "role_permissions";
 const INTERVIEW_CASES_SETTING_KEY = "interview_cases";
 const RECRUITING_METRICS_SETTING_KEY = "recruiting_metrics";
+const JD_ENHANCEMENT_SETTING_KEY = "jd_enhancement";
 const ROLE_PERMISSION_TABLE_VIEWS = new Set([
   "dashboard",
   "pool",
@@ -810,7 +811,8 @@ const state = {
     fileLoading: false,
     status: "",
     fileStatus: "",
-    appliedSuggestionIds: []
+    appliedSuggestionIds: [],
+    savedDocuments: []
   },
   policySources: [],
   policyChatMessages: [],
@@ -860,7 +862,7 @@ const viewTitles = {
   register: "Add Talent",
   "ai-search": "AI Search",
   "job-fit": "직무적합도 분석",
-  "jd-enhance": "JD 고도화",
+  "jd-enhance": "채용공고 작성",
   "policy-chat": "채용 AI 챗봇",
   trending: "Today's Talent",
   detail: "상세 프로필",
@@ -2296,7 +2298,16 @@ function normalizeMenuLabels(labels = {}) {
 
   return Object.fromEntries(
     Object.entries(labels)
-      .map(([view, label]) => [String(view || "").trim(), String(label || "").trim()])
+      .map(([view, label]) => {
+        const normalizedView = String(view || "").trim();
+        const normalizedLabel = String(label || "").trim();
+
+        if (normalizedView === "jd-enhance" && ["JD 고도화", "JD Advancement", "직무기술서 작성"].includes(normalizedLabel)) {
+          return [normalizedView, "채용공고 작성"];
+        }
+
+        return [normalizedView, normalizedLabel];
+      })
       .filter(([view, label]) => DEFAULT_MENU_ORDER.includes(view) && label)
       .map(([view, label]) => [view, label.slice(0, 40)])
   );
@@ -3533,6 +3544,17 @@ function buildRecruitingMetricsPayload() {
   };
 }
 
+function buildJdEnhancementPayload() {
+  const jd = normalizeJdEnhancementState(state.jdEnhancement);
+
+  return {
+    guidelineText: jd.guidelineText,
+    savedDocuments: jd.savedDocuments,
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentActorName()
+  };
+}
+
 function buildScreeningDeletedFoldersPayload() {
   return {
     ids: normalizeIdList(state.screeningDeletedFolderIds),
@@ -3645,6 +3667,20 @@ async function syncRecruitingMetricsToSupabase() {
   return true;
 }
 
+async function syncJdEnhancementToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(JD_ENHANCEMENT_SETTING_KEY, buildJdEnhancementPayload())])
+  });
+
+  return true;
+}
+
 function applyAppSettingsFromSupabaseRows(rows = []) {
   const settings = Array.isArray(rows) ? rows : [];
   const menuOrderSetting = settings.find((row) => row.setting_key === MENU_SETTING_KEY);
@@ -3652,6 +3688,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   const rolePermissionsSetting = settings.find((row) => row.setting_key === ROLE_PERMISSIONS_SETTING_KEY);
   const interviewCasesSetting = settings.find((row) => row.setting_key === INTERVIEW_CASES_SETTING_KEY);
   const recruitingMetricsSetting = settings.find((row) => row.setting_key === RECRUITING_METRICS_SETTING_KEY);
+  const jdEnhancementSetting = settings.find((row) => row.setting_key === JD_ENHANCEMENT_SETTING_KEY);
 
   if (deletedFoldersSetting?.payload) {
     const remoteDeletedIds = normalizeIdList(
@@ -3693,6 +3730,15 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
   if (recruitingMetricsSetting?.payload?.metrics) {
     state.recruitingMetrics = normalizeRecruitingMetricsState(recruitingMetricsSetting.payload.metrics);
+  }
+
+  if (jdEnhancementSetting?.payload) {
+    const currentJd = getJdEnhancementState();
+    state.jdEnhancement = normalizeJdEnhancementState({
+      ...currentJd,
+      guidelineText: jdEnhancementSetting.payload.guidelineText || currentJd.guidelineText,
+      savedDocuments: mergeSavedJdDocuments(currentJd.savedDocuments, jdEnhancementSetting.payload.savedDocuments || [])
+    });
   }
 
   if (!menuOrderSetting) {
@@ -3818,6 +3864,7 @@ async function syncStateToSupabase() {
       await syncRolePermissionsToSupabase();
       await syncInterviewCasesToSupabase();
       await syncRecruitingMetricsToSupabase();
+      await syncJdEnhancementToSupabase();
     } catch (error) {
       console.warn("App settings could not be synced.", error);
     }
@@ -3844,7 +3891,8 @@ async function loadStateFromSupabase() {
       SCREENING_DELETED_FOLDERS_SETTING_KEY,
       ROLE_PERMISSIONS_SETTING_KEY,
       INTERVIEW_CASES_SETTING_KEY,
-      RECRUITING_METRICS_SETTING_KEY
+      RECRUITING_METRICS_SETTING_KEY,
+      JD_ENHANCEMENT_SETTING_KEY
     ].join(",");
     const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows] = await Promise.all([
       supabaseRequest("candidates?select=*&order=updated_at.desc"),
@@ -12711,6 +12759,53 @@ function normalizeJdReviewItem(item = {}, index = 0) {
   };
 }
 
+function inferJdDocumentTitle(finalText = "", sourceFileName = "") {
+  const firstLine = normalizeResumeText(finalText)
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  const sourceTitle = String(sourceFileName || "").replace(/\.[^.]+$/, "").trim();
+  const title = firstLine || sourceTitle || "채용공고 작성 결과";
+
+  return `${title.slice(0, 48)}${title.length > 48 ? "..." : ""}`;
+}
+
+function normalizeSavedJdEnhancementDocument(value = {}, index = 0) {
+  const finalText = normalizeResumeText(value.finalText || value.revisedDocument || "");
+  const jdText = normalizeResumeText(value.jdText || "");
+  const sourceFileName = String(value.sourceFileName || value.jdFile?.name || "").trim();
+
+  if (!finalText && !jdText) {
+    return null;
+  }
+
+  return {
+    id: String(value.id || createId("jd-saved")).trim(),
+    title: String(value.title || inferJdDocumentTitle(finalText || jdText, sourceFileName) || `채용공고 ${index + 1}`).trim(),
+    sourceFileName,
+    createdAt: String(value.createdAt || getTimestampText()).trim(),
+    updatedAt: String(value.updatedAt || value.createdAt || getTimestampText()).trim(),
+    createdBy: String(value.createdBy || getCurrentActorName()).trim(),
+    guidelineText: normalizeResumeText(value.guidelineText || DEFAULT_JD_GUIDELINE),
+    jdText,
+    finalText,
+    reviewItems: Array.isArray(value.reviewItems)
+      ? value.reviewItems.map(normalizeJdReviewItem).filter((item) => item.title).slice(0, 20)
+      : [],
+    score: Math.max(0, Math.min(100, Math.round(Number(value.score || 0)))),
+    summary: String(value.summary || "").trim()
+  };
+}
+
+function mergeSavedJdDocuments(localItems = [], remoteItems = []) {
+  return mergeByLatest(localItems, remoteItems, normalizeSavedJdEnhancementDocument)
+    .sort((a, b) =>
+      dateSortValue(b.updatedAt || b.createdAt) - dateSortValue(a.updatedAt || a.createdAt) ||
+      String(b.id).localeCompare(String(a.id))
+    )
+    .slice(0, 30);
+}
+
 function normalizeJdEnhancementState(value = {}) {
   return {
     guidelineText: normalizeResumeText(value.guidelineText || DEFAULT_JD_GUIDELINE),
@@ -12739,6 +12834,12 @@ function normalizeJdEnhancementState(value = {}) {
     guidelineDraft: String(value.guidelineDraft || value.guidelineText || DEFAULT_JD_GUIDELINE).replace(/\r\n?/g, "\n"),
     appliedSuggestionIds: Array.isArray(value.appliedSuggestionIds)
       ? value.appliedSuggestionIds.map((id) => String(id || "")).filter(Boolean)
+      : [],
+    savedDocuments: Array.isArray(value.savedDocuments)
+      ? value.savedDocuments.map(normalizeSavedJdEnhancementDocument).filter(Boolean).sort((a, b) =>
+          dateSortValue(b.updatedAt || b.createdAt) - dateSortValue(a.updatedAt || a.createdAt) ||
+          String(b.id).localeCompare(String(a.id))
+        ).slice(0, 30)
       : []
   };
 }
@@ -13669,6 +13770,32 @@ function renderJdReviewItems() {
   `;
 }
 
+function renderSavedJdDocuments() {
+  const savedDocuments = getJdEnhancementState().savedDocuments || [];
+
+  if (!savedDocuments.length) {
+    return `<div class="empty-state compact-empty">저장된 채용공고 작성 결과물이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="job-fit-saved-list">
+      ${savedDocuments.map((document) => `
+        <article class="job-fit-saved-card">
+          <div>
+            <strong>${escapeHtml(document.title)}</strong>
+            <span>${escapeHtml(document.createdAt || document.updatedAt || "")} · ${escapeHtml(document.createdBy || "작성자 미기재")}${document.score ? ` · 품질점수 ${document.score}점` : ""}</span>
+            ${document.sourceFileName ? `<span>원본 파일: ${escapeHtml(document.sourceFileName)}</span>` : ""}
+          </div>
+          <div class="job-fit-result-actions">
+            <button class="ghost-button compact-button" type="button" data-load-jd-document="${escapeHtml(document.id)}">불러오기</button>
+            <button class="danger-button compact-button" type="button" data-delete-jd-document="${escapeHtml(document.id)}">삭제</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderJdEnhancement() {
   const container = $("#jd-enhance-content");
 
@@ -13679,6 +13806,7 @@ function renderJdEnhancement() {
   const jd = getJdEnhancementState();
   const canRun = Boolean(jd.guidelineText.trim() && jd.jdText.trim() && !jd.loading && !jd.fileLoading);
   const canDownload = Boolean(jd.finalText.trim());
+  const canSave = Boolean((jd.finalText || jd.jdText || "").trim() && !jd.loading && !jd.fileLoading);
   const hasSuggestions = jd.reviewItems.some((item) => item.suggestedText && item.status !== "pass");
 
   container.innerHTML = `
@@ -13717,7 +13845,10 @@ function renderJdEnhancement() {
               <strong>최종 완성본</strong>
               <span>추천 문구를 적용하면 이 영역에 반영됩니다.</span>
             </div>
-            <button class="ghost-button compact-button" type="button" data-download-jd-final ${canDownload ? "" : "disabled"}>Word 다운로드</button>
+            <div class="job-fit-result-actions">
+              <button class="ghost-button compact-button" type="button" data-save-jd-document ${canSave ? "" : "disabled"}>결과 저장</button>
+              <button class="ghost-button compact-button" type="button" data-download-jd-final ${canDownload ? "" : "disabled"}>Word 다운로드</button>
+            </div>
           </div>
           <textarea class="control-textarea" id="jd-enhance-final-text" rows="18" placeholder="JD 점검 시작 버튼을 누르면 원문이 먼저 표시되고, 제안 적용 후 최종본으로 정리됩니다.">${escapeHtml(jd.finalText)}</textarea>
         </section>
@@ -13736,6 +13867,16 @@ function renderJdEnhancement() {
         ${jd.status ? `<div class="job-fit-inline-status">${escapeHtml(jd.status)}</div>` : ""}
         ${jd.summary ? `<p class="jd-review-summary">${escapeHtml(jd.summary)}</p>` : ""}
         ${renderJdReviewItems()}
+      </section>
+
+      <section class="form-panel job-fit-saved-panel">
+        <div class="job-fit-panel-header">
+          <div>
+            <strong>저장된 채용공고 작성 결과</strong>
+            <span>저장한 결과물을 나중에 다시 불러와 수정하거나 다운로드할 수 있습니다.</span>
+          </div>
+        </div>
+        ${renderSavedJdDocuments()}
       </section>
       ${renderJdGuidelineModal()}
     </div>
@@ -13802,6 +13943,7 @@ function syncJdEnhancementActionState() {
   const runButton = document.querySelector("[data-run-jd-enhance]");
   const clearButton = document.querySelector("[data-clear-jd-enhance-input]");
   const downloadButton = document.querySelector("[data-download-jd-final]");
+  const saveButton = document.querySelector("[data-save-jd-document]");
 
   if (runButton) {
     runButton.disabled = !canRun;
@@ -13813,6 +13955,10 @@ function syncJdEnhancementActionState() {
 
   if (downloadButton) {
     downloadButton.disabled = !jd.finalText.trim();
+  }
+
+  if (saveButton) {
+    saveButton.disabled = !((jd.finalText || jd.jdText || "").trim()) || jd.loading || jd.fileLoading;
   }
 }
 
@@ -14030,6 +14176,107 @@ function saveJdGuideline() {
   jd.status = "JD 작성 가이드라인 원문을 저장했습니다. 다음 점검부터 최신 가이드라인이 반영됩니다.";
   addAuditLog("JD 가이드라인 저장", "JD 고도화", getCurrentActorName());
   rerenderJdEnhancement();
+}
+
+async function saveJdDocumentResult() {
+  const jd = getJdEnhancementState();
+  const finalText = normalizeResumeText(jd.finalText || jd.jdText);
+
+  if (!finalText) {
+    showToast("저장할 채용공고 작성 결과물이 없습니다.");
+    return;
+  }
+
+  const saved = normalizeSavedJdEnhancementDocument({
+    id: createId("jd-saved"),
+    title: inferJdDocumentTitle(finalText, jd.jdFile?.name || ""),
+    sourceFileName: jd.jdFile?.name || "",
+    createdAt: getTimestampText(),
+    updatedAt: getTimestampText(),
+    createdBy: getCurrentActorName(),
+    guidelineText: jd.guidelineText,
+    jdText: jd.jdText,
+    finalText,
+    reviewItems: jd.reviewItems,
+    score: jd.score,
+    summary: jd.summary
+  });
+
+  if (!saved) {
+    showToast("저장할 채용공고 작성 결과물이 없습니다.");
+    return;
+  }
+
+  jd.savedDocuments = mergeSavedJdDocuments([saved, ...(jd.savedDocuments || [])], []);
+  jd.status = "채용공고 작성 결과물을 저장했습니다.";
+  addAuditLog("채용공고 작성 결과 저장", saved.title, getCurrentActorName());
+
+  try {
+    await syncJdEnhancementToSupabase();
+    jd.status = REMOTE_SYNC_ENABLED
+      ? "채용공고 작성 결과물을 계정 기반 저장소에 저장했습니다."
+      : "채용공고 작성 결과물을 저장했습니다.";
+  } catch (error) {
+    console.warn("Saved JD document could not be synced.", error);
+    jd.status = "채용공고 작성 결과물을 로컬에 저장했습니다. 원격 저장소 동기화는 실패했습니다.";
+  }
+
+  rerenderJdEnhancement();
+  showToast("채용공고 작성 결과물이 저장되었습니다.");
+}
+
+function loadSavedJdDocument(documentId) {
+  const jd = getJdEnhancementState();
+  const saved = (jd.savedDocuments || []).find((document) => document.id === documentId);
+
+  if (!saved) {
+    showToast("저장된 채용공고 작성 결과물을 찾지 못했습니다.");
+    return;
+  }
+
+  const savedDocuments = jd.savedDocuments;
+  state.jdEnhancement = normalizeJdEnhancementState({
+    ...jd,
+    guidelineText: saved.guidelineText || jd.guidelineText,
+    jdText: saved.jdText,
+    jdFile: null,
+    finalText: saved.finalText,
+    reviewItems: saved.reviewItems,
+    score: saved.score,
+    summary: saved.summary,
+    revisedDocument: "",
+    loading: false,
+    fileLoading: false,
+    status: "저장된 채용공고 작성 결과물을 불러왔습니다.",
+    fileStatus: saved.sourceFileName ? `저장 당시 원본 파일: ${saved.sourceFileName}` : "",
+    appliedSuggestionIds: [],
+    savedDocuments
+  });
+  rerenderJdEnhancement();
+  showToast("채용공고 작성 결과물을 불러왔습니다.");
+}
+
+async function deleteSavedJdDocument(documentId) {
+  const jd = getJdEnhancementState();
+  const beforeCount = jd.savedDocuments.length;
+  jd.savedDocuments = jd.savedDocuments.filter((document) => document.id !== documentId);
+
+  if (jd.savedDocuments.length === beforeCount) {
+    showToast("삭제할 저장 결과물을 찾지 못했습니다.");
+    return;
+  }
+
+  jd.status = "저장된 채용공고 작성 결과물을 삭제했습니다.";
+
+  try {
+    await syncJdEnhancementToSupabase();
+  } catch (error) {
+    console.warn("Saved JD document deletion could not be synced.", error);
+    jd.status = "저장 결과물을 로컬에서 삭제했습니다. 원격 저장소 동기화는 실패했습니다.";
+  }
+
+  rerenderJdEnhancement();
+  showToast("저장된 채용공고 작성 결과물을 삭제했습니다.");
 }
 
 function isJdDocumentHeading(line) {
@@ -25665,6 +25912,29 @@ function bindEvents() {
 
     if (event.target.closest("[data-download-jd-final]")) {
       downloadJdFinalDocument();
+      return;
+    }
+
+    if (event.target.closest("[data-save-jd-document]")) {
+      saveJdDocumentResult().catch((error) => {
+        console.warn("JD document save failed.", error);
+        showToast("채용공고 작성 결과 저장 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    const loadJdDocumentButton = event.target.closest("[data-load-jd-document]");
+    if (loadJdDocumentButton) {
+      loadSavedJdDocument(loadJdDocumentButton.dataset.loadJdDocument);
+      return;
+    }
+
+    const deleteJdDocumentButton = event.target.closest("[data-delete-jd-document]");
+    if (deleteJdDocumentButton) {
+      deleteSavedJdDocument(deleteJdDocumentButton.dataset.deleteJdDocument).catch((error) => {
+        console.warn("Saved JD document delete failed.", error);
+        showToast("저장된 채용공고 작성 결과 삭제 중 오류가 발생했습니다.");
+      });
       return;
     }
 
