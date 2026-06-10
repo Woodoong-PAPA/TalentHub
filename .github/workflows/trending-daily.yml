@@ -83,3 +83,14 @@ jobs:
             fi
           done
           exit 1
+
+      - name: Send recruiting metrics collection request
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'both') }}
+        run: |
+          for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
+            if curl --fail --silent --show-error --retry 2 --retry-delay 20 \
+              "$origin/api/recruiting-metrics-request-cron"; then
+              exit 0
+            fi
+          done
+          exit 1

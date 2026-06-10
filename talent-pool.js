@@ -789,6 +789,8 @@ const state = {
     requestMailDraft: null,
     requestRecipients: [],
     requestSubject: "[TalentHub] 채용 실적 상세 데이터시트 작성 요청",
+    requestLastSentKey: "",
+    requestLastSentAt: "",
     saveStatus: "",
     recipients: [],
     subject: "[TalentHub] 주간 채용 지표 취합",
@@ -1987,6 +1989,8 @@ function normalizeRecruitingMetricsState(value = {}) {
     subject: String(value.subject || "[TalentHub] 주간 채용 지표 취합").trim(),
     requestRecipients: normalizeEmailList(value.requestRecipients || []),
     requestSubject: String(value.requestSubject || "[TalentHub] 채용 실적 상세 데이터시트 작성 요청").trim(),
+    requestLastSentKey: String(value.requestLastSentKey || "").trim(),
+    requestLastSentAt: String(value.requestLastSentAt || "").trim(),
     mailStatus: String(value.mailStatus || "").trim(),
     autoSendOnComplete: Boolean(value.autoSendOnComplete),
     lastAutoSentWeek: String(value.lastAutoSentWeek || "").trim()
