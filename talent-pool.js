@@ -166,6 +166,10 @@ const POLICY_CHAT_MAX_CONTEXT_CHARS = 1800;
 const JOB_FIT_MAX_JD_CHARS = 16000;
 const JOB_FIT_MAX_RESUME_CHARS = 50000;
 const JOB_FIT_MAX_KEYWORD_TOKENS = 180;
+const INTERVIEW_REPORT_SERVER_UPLOAD_LIMIT_BYTES = 8 * 1024 * 1024;
+const INTERVIEW_REPORT_MAX_SCRIPT_CHARS = 90000;
+const INTERVIEW_REPORT_MAX_TEMPLATE_CHARS = 36000;
+const INTERVIEW_REPORT_MAX_SENTENCES = 140;
 const VISIT_STATS_KEY = "samsung-talent-pool-visit-stats-v1";
 const REMEMBERED_LOGIN_EMAIL_KEY = "samsung-talent-pool-remembered-email-v1";
 const SCREENING_STAGE_LABELS = {
@@ -8869,7 +8873,75 @@ function splitInterviewReportSentences(text = "") {
   return normalizePolicyText(text)
     .split(/\n+|(?<=[.!?。]|다\.|요\.|음\.)\s+/)
     .map((line) => line.replace(/^[-*]\s*/, "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, INTERVIEW_REPORT_MAX_SENTENCES);
+}
+
+function trimInterviewReportAnalysisText(text = "", maxChars = INTERVIEW_REPORT_MAX_SCRIPT_CHARS) {
+  const normalized = normalizePolicyText(text);
+
+  if (!normalized || normalized.length <= maxChars) {
+    return {
+      text: normalized,
+      truncated: false,
+      originalLength: normalized.length
+    };
+  }
+
+  const headLength = Math.round(maxChars * 0.72);
+  const tailLength = maxChars - headLength;
+  const head = normalized.slice(0, headLength).trim();
+  const tail = normalized.slice(-tailLength).trim();
+
+  return {
+    text: `${head}\n\n[중간부 일부 생략: 원문 ${normalized.length.toLocaleString()}자 중 보고서 생성용 핵심 구간만 분석]\n\n${tail}`.trim(),
+    truncated: true,
+    originalLength: normalized.length
+  };
+}
+
+function getInterviewReportTextLimitNotice(kind, result) {
+  if (!result?.truncated) {
+    return "";
+  }
+
+  return `${kind} 원문이 ${result.originalLength.toLocaleString()}자로 길어 보고서 생성용 핵심 구간 ${result.text.length.toLocaleString()}자만 우선 분석했습니다.`;
+}
+
+function setInterviewReportProgress(report, area, percent, status = "") {
+  const progressKey = area === "template" ? "templateProgress" : "scriptProgress";
+  const statusKey = area === "template" ? "templateStatus" : "scriptStatus";
+
+  report[progressKey] = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+
+  if (status) {
+    report[statusKey] = status;
+  }
+}
+
+function startInterviewReportProgressPulse(report, area, start, end, status) {
+  setInterviewReportProgress(report, area, start, status);
+  renderInterviewReport();
+
+  if (typeof window === "undefined" || typeof window.setInterval !== "function") {
+    return () => {};
+  }
+
+  let current = start;
+  const step = Math.max(1, Math.round((end - start) / 8));
+  const timer = window.setInterval(() => {
+    current = Math.min(end, current + step);
+    setInterviewReportProgress(report, area, current, status);
+    renderInterviewReport();
+
+    if (current >= end) {
+      window.clearInterval(timer);
+    }
+  }, 900);
+
+  return () => {
+    window.clearInterval(timer);
+  };
 }
 
 function buildInterviewReportText() {
@@ -8940,55 +9012,139 @@ async function generateInterviewReport() {
 
   report.scriptLoading = true;
   report.templateLoading = true;
-  report.scriptProgress = report.scriptText.trim() ? 100 : 20;
-  report.templateProgress = 20;
+  report.scriptProgress = report.scriptText.trim() ? 52 : 24;
+  report.templateProgress = 12;
+  report.scriptStatus = report.scriptText.trim()
+    ? "입력된 스크립트를 분석용으로 정리하는 중입니다."
+    : `${report.scriptFile?.name || "스크립트 파일"} 텍스트를 추출하는 중입니다.`;
+  report.templateStatus = "면담록 샘플 분석을 준비하는 중입니다.";
   report.status = "면담 스크립트와 우수사례 샘플을 분석하는 중입니다.";
   renderInterviewReport();
+  await waitForUiPaint();
 
   try {
+    const notices = [];
+
     if (!report.scriptText.trim()) {
-      const result = await readStoredInterviewReportUploadText(report.scriptFile, "면담 스크립트");
-      report.scriptText = result.text;
-      report.scriptProgress = 100;
-      report.scriptStatus = `${report.scriptFile?.name || "스크립트 파일"} 내용을 읽었습니다.`;
+      const stopScriptPulse = startInterviewReportProgressPulse(
+        report,
+        "script",
+        24,
+        48,
+        `${report.scriptFile?.name || "스크립트 파일"} 텍스트를 추출하는 중입니다.`
+      );
+      let result;
+
+      try {
+        result = await readStoredInterviewReportUploadText(report.scriptFile, "면담 스크립트");
+      } finally {
+        stopScriptPulse();
+      }
+
+      const preparedScript = trimInterviewReportAnalysisText(result.text, INTERVIEW_REPORT_MAX_SCRIPT_CHARS);
+      const limitNotice = getInterviewReportTextLimitNotice("스크립트", preparedScript);
+
+      if (limitNotice) {
+        notices.push(limitNotice);
+      }
+
+      report.scriptText = preparedScript.text;
+      report.scriptProgress = 58;
+      report.scriptStatus = limitNotice || `${report.scriptFile?.name || "스크립트 파일"} 내용을 읽었습니다.`;
       renderInterviewReport();
+      await waitForUiPaint();
+    } else {
+      const preparedScript = trimInterviewReportAnalysisText(report.scriptText, INTERVIEW_REPORT_MAX_SCRIPT_CHARS);
+      const limitNotice = getInterviewReportTextLimitNotice("스크립트", preparedScript);
+
+      if (limitNotice) {
+        notices.push(limitNotice);
+      }
+
+      report.scriptText = preparedScript.text;
+      report.scriptProgress = 58;
+      report.scriptStatus = limitNotice || "입력된 스크립트를 분석용으로 정리했습니다.";
+      renderInterviewReport();
+      await waitForUiPaint();
     }
 
     const loadedSamples = [];
 
     for (let index = 0; index < samples.length; index += 1) {
       const sample = samples[index];
+      const baseProgress = Math.max(20, Math.round((index / samples.length) * 72) + 18);
+
+      report.templateProgress = baseProgress;
+      report.templateStatus = `${index + 1}/${samples.length}개 샘플 텍스트 추출 중`;
+      renderInterviewReport();
+      await waitForUiPaint();
 
       if (sample.text) {
-        loadedSamples.push(sample);
-      } else if (sample.readable) {
-        const result = await readStoredInterviewReportUploadText(sample, `면담록 샘플 ${sample.name}`);
+        const preparedSample = trimInterviewReportAnalysisText(sample.text, INTERVIEW_REPORT_MAX_TEMPLATE_CHARS);
         loadedSamples.push({
           ...sample,
-          text: result.text,
-          profile: analyzeInterviewTemplateProfile(result.text, sample.name)
+          text: preparedSample.text,
+          profile: analyzeInterviewTemplateProfile(preparedSample.text, sample.name)
+        });
+      } else if (sample.readable) {
+        const stopTemplatePulse = startInterviewReportProgressPulse(
+          report,
+          "template",
+          baseProgress,
+          Math.min(86, baseProgress + 18),
+          `${index + 1}/${samples.length}개 샘플 텍스트 추출 중`
+        );
+        let result;
+
+        try {
+          result = await readStoredInterviewReportUploadText(sample, `면담록 샘플 ${sample.name}`);
+        } finally {
+          stopTemplatePulse();
+        }
+
+        const preparedSample = trimInterviewReportAnalysisText(result.text, INTERVIEW_REPORT_MAX_TEMPLATE_CHARS);
+        loadedSamples.push({
+          ...sample,
+          text: preparedSample.text,
+          profile: analyzeInterviewTemplateProfile(preparedSample.text, sample.name)
         });
       }
 
-      report.templateProgress = Math.max(30, Math.round(((index + 1) / samples.length) * 95));
-      report.templateStatus = `${index + 1}/${samples.length}개 샘플 분석 중`;
+      report.templateProgress = Math.max(35, Math.round(((index + 1) / samples.length) * 88));
+      report.templateStatus = `${index + 1}/${samples.length}개 샘플 분석 완료`;
       renderInterviewReport();
+      await waitForUiPaint();
     }
 
     report.templateSamples = loadedSamples;
+    report.scriptProgress = 82;
+    report.templateProgress = 92;
+    report.status = "면담록 보고서 문안을 조립하는 중입니다.";
+    renderInterviewReport();
+    await waitForUiPaint();
+
     report.templateProfile = analyzeInterviewTemplateProfile(getInterviewTemplateCorpus(report), getInterviewTemplateSourceLabel(report));
     report.reportText = buildInterviewReportText();
     report.scriptLoading = false;
     report.templateLoading = false;
     report.scriptProgress = 100;
     report.templateProgress = 100;
-    report.status = `스크립트와 우수사례 샘플 ${loadedSamples.length}개를 참고해 면담록 보고서를 생성했습니다.`;
+    report.scriptStatus = "스크립트 분석 완료";
+    report.templateStatus = `우수사례 샘플 ${loadedSamples.length}개 분석 완료`;
+    report.status = [
+      `스크립트와 우수사례 샘플 ${loadedSamples.length}개를 참고해 면담록 보고서를 생성했습니다.`,
+      ...notices
+    ].join(" ");
     persistState({ skipRemoteSync: true });
     addAuditLog("면담록 보고서 생성", "면담록 생성", `스크립트 및 샘플 ${loadedSamples.length}개 기반 보고서 생성`);
   } catch (error) {
     console.warn("Interview report generation failed.", error);
     report.scriptLoading = false;
     report.templateLoading = false;
+    report.scriptProgress = report.scriptText.trim() ? report.scriptProgress : 0;
+    report.templateProgress = samples.some((sample) => sample.text) ? report.templateProgress : 0;
+    report.scriptStatus = report.scriptText.trim() ? report.scriptStatus : getInterviewReportUploadLabel(report.scriptFile);
+    report.templateStatus = samples.length ? `저장된 샘플 ${samples.length}개` : "복수 샘플 선택 가능";
     report.status = error.isResumeParseError ? error.message : "면담록 보고서 생성 중 파일 분석에 실패했습니다.";
   }
 
@@ -17259,11 +17415,15 @@ async function extractDocumentTextWithServer(file, options = {}) {
 
 async function readInterviewReportUploadText(file) {
   const errors = [];
+  const isServerUploadAllowed = Number(file?.size || 0) <= INTERVIEW_REPORT_SERVER_UPLOAD_LIMIT_BYTES;
 
   const readWithBrowser = async () => {
     const browserResult = await withTimeout(
-      () => readResumeText(file),
-      22000,
+      async () => {
+        await waitForUiPaint();
+        return readResumeText(file);
+      },
+      36000,
       "브라우저 파일 텍스트 추출 시간이 초과되었습니다."
     );
     const text = normalizeResumeText(browserResult.text || "");
@@ -17282,6 +17442,10 @@ async function readInterviewReportUploadText(file) {
   };
 
   const readWithServer = async () => {
+    if (!isServerUploadAllowed) {
+      throw new Error(`서버 추출 제한(${formatFileSize(INTERVIEW_REPORT_SERVER_UPLOAD_LIMIT_BYTES)})보다 큰 파일입니다. 브라우저에서 직접 추출합니다.`);
+    }
+
     const serverResult = await withTimeout(
       () => extractDocumentTextWithServer(file, { timeoutMs: 26000 }),
       30000,
@@ -17302,36 +17466,30 @@ async function readInterviewReportUploadText(file) {
     throw new Error("서버 추출 결과가 비어 있습니다.");
   };
 
-  const attempts = [readWithBrowser, readWithServer];
-  let remaining = attempts.length;
+  const attempts = isServerUploadAllowed
+    ? [readWithServer, readWithBrowser]
+    : [readWithBrowser];
 
-  return new Promise((resolve, reject) => {
-    attempts.forEach((attempt) => {
-      Promise.resolve()
-        .then(attempt)
-        .then(resolve)
-        .catch((error) => {
-          errors.push(error);
-          remaining -= 1;
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (error) {
+      errors.push(error);
+      await waitForUiPaint();
+    }
+  }
 
-          if (remaining > 0) {
-            return;
-          }
-
-          const warnings = errors.flatMap((item) => item?.warnings || []);
-          const message = errors
-            .map((item) => item?.message)
-            .filter(Boolean)
-            .join(" / ");
-          const parseError = createResumeParseError(
-            message || "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
-            warnings
-          );
-          parseError.cause = errors.at(-1);
-          reject(parseError);
-        });
-    });
-  });
+  const warnings = errors.flatMap((item) => item?.warnings || []);
+  const message = errors
+    .map((item) => item?.message)
+    .filter(Boolean)
+    .join(" / ");
+  const parseError = createResumeParseError(
+    message || "파일에서 읽을 수 있는 텍스트를 추출하지 못했습니다.",
+    warnings
+  );
+  parseError.cause = errors.at(-1);
+  throw parseError;
 }
 
 async function readStoredInterviewReportUploadText(upload, label = "파일") {
