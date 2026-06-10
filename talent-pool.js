@@ -4129,6 +4129,10 @@ function formatYearMonth(value) {
 function formatDisplayPeriodPart(value) {
   const normalized = String(value || "").trim();
 
+  if (/^(현재|재직\s*중|present|current|ongoing)$/i.test(normalized)) {
+    return "현재";
+  }
+
   if (!normalized || normalized === "0" || normalized === "00" || normalized === "0000-00") {
     return "";
   }
@@ -4178,6 +4182,10 @@ function formatEducationDegreeShort(degree) {
   if (!normalized) {
     return "";
   }
+
+  if (/박사|ph\.?\s*d|doctor/i.test(normalized)) return "박";
+  if (/석사|master|m\.?\s*s|m\.?\s*a|mba/i.test(normalized)) return "석";
+  if (/학사|bachelor|b\.?\s*s|b\.?\s*a/i.test(normalized)) return "학";
 
   if (normalized.includes("박")) return "박";
   if (normalized.includes("석")) return "석";
@@ -8981,15 +8989,18 @@ function normalizeJobFitResume(resume = {}) {
   const parsedProfile = needsProfileExtraction
     ? normalizeParsedResumeForForm(parseResumeText(text, fileName))
     : {};
+  const enhancedProfile = needsProfileExtraction
+    ? extractEnhancedJobFitResumeProfile(text, fileName)
+    : {};
   const education = normalizeJobFitEducationRecords(
     hasResumeEducation
       ? resume.education
-      : parsedProfile.education
+      : chooseBetterJobFitRecords(enhancedProfile.education, parsedProfile.education)
   );
   const career = normalizeJobFitCareerRecords(
     hasResumeCareer
       ? resume.career
-      : parsedProfile.career
+      : chooseBetterJobFitRecords(enhancedProfile.career, parsedProfile.career)
   );
 
   return {
@@ -8999,14 +9010,405 @@ function normalizeJobFitResume(resume = {}) {
     type: String(resume.type || "").trim(),
     dataUrl: String(resume.dataUrl || resume.downloadUrl || "").trim(),
     text,
-    candidateName: getBestJobFitCandidateName(existingName, parsedProfile.name, inferCandidateNameFromResume(text, fileName)),
+    candidateName: getBestJobFitCandidateName(existingName, enhancedProfile.name, parsedProfile.name, inferCandidateNameFromResume(text, fileName)),
     education,
     career,
     uploadedAt: resume.uploadedAt || getTimestampText()
   };
 }
 
+function chooseBetterJobFitRecords(primary = [], fallback = []) {
+  const primaryRecords = Array.isArray(primary) ? primary.filter(hasAnyRecordValue) : [];
+  const fallbackRecords = Array.isArray(fallback) ? fallback.filter(hasAnyRecordValue) : [];
+  const scoreRecords = (records) => records.reduce((sum, item) =>
+    sum + Object.values(item || {}).filter((value) => cleanParsedValue(value)).length, 0);
+
+  return scoreRecords(primaryRecords) >= scoreRecords(fallbackRecords)
+    ? primaryRecords
+    : fallbackRecords;
+}
+
+function normalizeEnhancedResumeLine(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[•·●◆■▶▷]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitEnhancedResumeLines(text) {
+  const normalized = normalizeResumeText(text)
+    .replace(/\r/g, "\n")
+    .replace(/[|]/g, "\n")
+    .replace(/([가-힣A-Za-z])\s{3,}([가-힣A-Za-z])/g, "$1\n$2");
+
+  return normalized
+    .split(/\n+/)
+    .map(normalizeEnhancedResumeLine)
+    .filter(Boolean)
+    .slice(0, 800);
+}
+
+function extractEnhancedSectionLines(lines, headerPattern, boundaryPattern) {
+  const sectionLines = [];
+  let inSection = false;
+
+  lines.forEach((line) => {
+    if (headerPattern.test(line)) {
+      inSection = true;
+      const withoutHeader = normalizeEnhancedResumeLine(line.replace(headerPattern, ""));
+
+      if (withoutHeader) {
+        sectionLines.push(withoutHeader);
+      }
+      return;
+    }
+
+    if (inSection && boundaryPattern.test(line)) {
+      inSection = false;
+      return;
+    }
+
+    if (inSection) {
+      sectionLines.push(line);
+    }
+  });
+
+  return sectionLines;
+}
+
+function normalizeEnhancedSchoolName(value) {
+  const text = normalizeEnhancedResumeLine(value);
+
+  if (!text) {
+    return "";
+  }
+
+  const replacements = [
+    [/카이스트|Korea Advanced Institute of Science and Technology/gi, "KAIST"],
+    [/서울대(?!학교)|Seoul National University/gi, "서울대학교"],
+    [/연세대(?!학교)/g, "연세대학교"],
+    [/고려대(?!학교)/g, "고려대학교"],
+    [/한양대(?!학교)/g, "한양대학교"],
+    [/성균관대(?!학교)/g, "성균관대학교"],
+    [/포스텍|포항공대|Pohang University of Science and Technology/gi, "POSTECH"]
+  ];
+
+  return replacements.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), text);
+}
+
+function extractEnhancedPeriod(value) {
+  const text = String(value || "");
+  const current = /(현재|재직|present|current|ongoing)/i.test(text);
+  const normalized = text
+    .replace(/(\d{4})\s*년\s*(\d{1,2})?\s*월?/g, (_, year, month) => `${year}-${month || "0"}`)
+    .replace(/(\d{4})\s*[.\/]\s*(\d{1,2})/g, "$1-$2");
+  const matches = [...normalized.matchAll(/(\d{4})(?:\s*[-]\s*(\d{1,2}))?/g)]
+    .map((match) => normalizeDatePart(match[1], match[2] || "0"));
+
+  return {
+    start: matches[0] || "",
+    end: current ? "현재" : matches[1] || ""
+  };
+}
+
+function removeEnhancedPeriodText(value) {
+  return normalizeEnhancedResumeLine(value)
+    .replace(/(?:19|20)\d{2}\s*(?:년|[.\-/])?\s*(?:\d{1,2})?\s*(?:월)?\s*(?:~|～|-|–|—|to)\s*(?:현재|재직\s*중|present|current|(?:19|20)\d{2}\s*(?:년|[.\-/])?\s*(?:\d{1,2})?\s*(?:월)?)/gi, " ")
+    .replace(/(?:19|20)\d{2}\s*(?:년|[.\-/])?\s*(?:\d{1,2})?\s*(?:월)?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectEnhancedDegree(value) {
+  const text = String(value || "");
+
+  if (/박사|ph\.?\s*d|doctor/i.test(text)) return "박사";
+  if (/석사|master|m\.?\s*s|m\.?\s*a|mba/i.test(text)) return "석사";
+  if (/학사|bachelor|b\.?\s*s|b\.?\s*a/i.test(text)) return "학사";
+  return "";
+}
+
+function extractEnhancedSchool(value) {
+  const text = normalizeEnhancedSchoolName(value);
+  const match = text.match(/(KAIST|POSTECH|UNIST|DGIST|GIST|[가-힣A-Za-z .&-]+?(?:대학교|대학원|대학|University|College|Institute))/i);
+
+  return normalizeEnhancedSchoolName(match?.[1] || "");
+}
+
+function extractEnhancedMajor(value, school, degree) {
+  const text = normalizeEnhancedResumeLine(value);
+  const explicit = text.match(/(?:전공|Major)\s*[:：]?\s*([가-힣A-Za-z0-9 /&.+-]{2,40})/i)?.[1] || "";
+
+  if (explicit) {
+    return normalizeEnhancedResumeLine(explicit)
+      .replace(/[()]/g, "")
+      .trim();
+  }
+
+  let stripped = removeEnhancedPeriodText(text);
+  [school, normalizeEnhancedSchoolName(school), degree, "박사", "석사", "학사", "Ph.D", "Master", "Bachelor"].filter(Boolean)
+    .forEach((token) => {
+      stripped = stripped.replace(new RegExp(escapeRegExp(token), "gi"), " ");
+    });
+  stripped = stripped
+    .replace(/졸업|수료|취득|지도교수\s*[:：]?\s*[가-힣A-Za-z\s]+/g, " ")
+    .replace(/[()[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const parts = stripped
+    .split(/[,;/]/)
+    .map(normalizeEnhancedResumeLine)
+    .filter(Boolean);
+  const major = parts.find((part) =>
+    /(학과|전공|공학|과학|디자인|경영|경제|통계|컴퓨터|전자|전기|기계|로봇|Robotics|Science|Engineering|Design|Business|Statistics)/i.test(part)
+  ) || parts.at(-1) || "";
+
+  return normalizeEnhancedResumeLine(major).slice(0, 60);
+}
+
+function parseEnhancedEducationLine(line) {
+  if (/고등학교/.test(line)) {
+    return null;
+  }
+
+  const degree = detectEnhancedDegree(line);
+  const school = extractEnhancedSchool(line);
+
+  if (!degree && !school) {
+    return null;
+  }
+
+  const period = extractEnhancedPeriod(line);
+  const major = extractEnhancedMajor(line, school, degree);
+
+  return {
+    degree,
+    school,
+    major,
+    start: period.start,
+    end: period.end
+  };
+}
+
+function extractEnhancedEducation(text, lines) {
+  const sectionLines = extractEnhancedSectionLines(
+    lines,
+    /^(?:학력|교육|Education|Academic Background|Education Background)\s*[:：\-]*/i,
+    /^(?:경력|상세\s*경력|Professional Experience|Work Experience|Experience|Career|프로젝트|Project|기술|Skills|자격|Certification|수상|Awards?)/i
+  );
+  const candidates = [...sectionLines, ...lines]
+    .filter((line) =>
+      /(박사|석사|학사|Ph\.?\s*D|Master|Bachelor|대학교|대학원|University|College|KAIST|POSTECH|전공|Major)/i.test(line) &&
+      !/(경력|Experience|회사|근무|재직|Project|프로젝트)/i.test(line)
+    );
+  const records = candidates
+    .map(parseEnhancedEducationLine)
+    .filter(Boolean)
+    .filter(hasAnyRecordValue);
+  const byKey = new Map();
+
+  records.forEach((record) => {
+    const key = [record.degree, record.school, record.major, record.start, record.end].join("|").toLowerCase();
+
+    if (!byKey.has(key)) {
+      byKey.set(key, record);
+    }
+  });
+
+  return [...byKey.values()]
+    .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
+    .slice(0, 5);
+}
+
+function looksLikeEnhancedCareerCompany(value) {
+  return /(삼성|LG|SK|현대|네이버|NAVER|카카오|Kakao|크래프톤|Bluehole|본엔젤스|미래로봇|뉴로메카트로닉스|아모레퍼시픽|백화점|전자|SDS|로보틱스|연구소|기술연구소|테크|랩|Labs?|Studio|Group|Inc\.?|Corp\.?|Corporation|Research|Technology|Technologies|Company|Co\.?)/i.test(value);
+}
+
+function looksLikeEnhancedCareerRole(value) {
+  return /(사원|주임|대리|과장|차장|부장|상무|전무|부사장|사장|회장|대표|고문|이사회|의장|창업자|교수|연구원|선임|책임|수석|엔지니어|개발자|디자이너|매니저|Manager|Director|Engineer|Developer|Designer|Researcher|Scientist|Professor|Principal|Staff|Senior|Lead|Associate|Founder|CEO|CTO|CFO|COO|Head|VP)/i.test(value);
+}
+
+function looksLikeEnhancedDepartment(value) {
+  const text = normalizeEnhancedResumeLine(value);
+
+  if (!text || looksLikeEnhancedCareerRole(text)) {
+    return false;
+  }
+
+  return /(팀|그룹|센터|실|본부|사업부|부문|부서|연구소|랩|Lab|Team|Group|Center|Division|Department|Office|Unit|TF|조직|파트|Chapter|Squad|Cell|Tribe)/i.test(text);
+}
+
+function splitEnhancedCareerParts(value) {
+  return removeEnhancedPeriodText(value)
+    .split(/[,;|\t/]+/)
+    .map(normalizeEnhancedResumeLine)
+    .filter(Boolean);
+}
+
+function extractEnhancedCompany(line, parts) {
+  const partCompany = parts.find(looksLikeEnhancedCareerCompany);
+
+  if (partCompany) {
+    return partCompany;
+  }
+
+  const match = line.match(/([가-힣A-Za-z0-9 .&+-]{2,45}(?:전자|로보틱스|연구소|기술연구소|메카트로닉스|백화점|퍼시픽|SDS|랩|Labs?|Studio|Group|Inc\.?|Corp\.?|Corporation|Research|Technology|Technologies|Company|Co\.?))/i);
+  return normalizeEnhancedResumeLine(match?.[1] || "");
+}
+
+function parseEnhancedCareerLine(line) {
+  const period = extractEnhancedPeriod(line);
+  const parts = splitEnhancedCareerParts(line);
+  const company = extractEnhancedCompany(line, parts);
+
+  if (!company && !period.start) {
+    return null;
+  }
+
+  const roleParts = parts
+    .filter((part) => part !== company)
+    .filter((part) => !/^(대한민국|한국|미국|일본|중국|Korea|USA|United States)$/i.test(part));
+  const rankParts = [];
+  const departmentParts = [];
+
+  roleParts.forEach((part) => {
+    if (looksLikeEnhancedDepartment(part)) {
+      departmentParts.push(part);
+    } else if (looksLikeEnhancedCareerRole(part)) {
+      rankParts.push(part);
+    }
+  });
+
+  if (!rankParts.length) {
+    const roleMatch = line.match(/(CL\d|사원|주임|대리|과장|차장|부장|상무|전무|대표|고문|의장|창업자|교수|선임\s*연구원|책임\s*연구원|수석\s*연구원|연구원|엔지니어|개발자|디자이너|Manager|Director|Engineer|Developer|Designer|Researcher|Scientist|Professor|Principal|Staff|Senior|Lead|Associate|Founder|CEO|CTO|Head)/i);
+
+    if (roleMatch) {
+      rankParts.push(roleMatch[1]);
+    }
+  }
+
+  if (!departmentParts.length) {
+    const departmentMatch = line.match(/([가-힣A-Za-z0-9 .&+-]{2,35}(?:팀|그룹|센터|실|본부|사업부|부문|연구소|랩|Lab|Team|Group|Center|Division|Department|Office|Unit|TF))/i);
+
+    if (departmentMatch && departmentMatch[1] !== company) {
+      departmentParts.push(departmentMatch[1]);
+    }
+  }
+
+  return {
+    country: "",
+    company,
+    rank: uniqueTextParts(rankParts).join(", "),
+    position: uniqueTextParts(departmentParts.filter((part) => part !== company)).join(", "),
+    start: period.start,
+    end: period.end,
+    achievements: ""
+  };
+}
+
+function extractEnhancedCareer(text, lines) {
+  const sectionLines = extractEnhancedSectionLines(
+    lines,
+    /^(?:상세\s*)?(?:경력|경력사항|경력정보|Professional Experience|Work Experience|Experience|Career)\s*[:：\-]*/i,
+    /^(?:학력|Education|프로젝트|Project|기술|Skills|자격|Certification|수상|Awards?|논문|Publication)/i
+  );
+  const sourceLines = sectionLines.length ? sectionLines : lines;
+  const candidates = [];
+
+  sourceLines.forEach((line, index) => {
+    const previous = sourceLines[index - 1] || "";
+    const next = sourceLines[index + 1] || "";
+    const nextAfter = sourceLines[index + 2] || "";
+    const hasPeriod = Boolean(extractEnhancedPeriod(line).start);
+    const companyLike = looksLikeEnhancedCareerCompany(line);
+    const roleLike = looksLikeEnhancedCareerRole(line);
+
+    if ((hasPeriod && (companyLike || roleLike)) || (companyLike && (hasPeriod || roleLike || extractEnhancedPeriod(next).start))) {
+      candidates.push([previous, line, next, nextAfter].filter(Boolean).join(" "));
+    } else if (sectionLines.length && (hasPeriod || companyLike || roleLike)) {
+      candidates.push([line, next].filter(Boolean).join(" "));
+    }
+  });
+
+  const records = candidates
+    .map(parseEnhancedCareerLine)
+    .filter(Boolean)
+    .filter((record) => record.company || record.rank || record.position)
+    .filter((record) => !/(대학교|대학원|University|College|학사|석사|박사|전공)/i.test(record.company || ""));
+  const byKey = new Map();
+
+  records.forEach((record) => {
+    const key = [record.company, record.rank, record.position, record.start, record.end].join("|").toLowerCase();
+
+    if (!byKey.has(key)) {
+      byKey.set(key, record);
+    }
+  });
+
+  return [...byKey.values()]
+    .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)))
+    .slice(0, 8);
+}
+
+function extractEnhancedJobFitResumeProfile(text, fileName = "") {
+  try {
+    const lines = splitEnhancedResumeLines(text);
+    const labeledName = normalizeInferredCandidateName(findLabeledValue(lines, ["이름", "성명", "Name", "Full Name"]));
+    const simpleName = lines
+      .slice(0, 80)
+      .map((line) => normalizeInferredCandidateName(line.match(/\b([가-힣]{2,5})\b/)?.[1] || line))
+      .find(Boolean);
+
+    return {
+      name: labeledName || simpleName || inferCandidateNameFromResume(text, fileName),
+      education: extractEnhancedEducation(text, lines),
+      career: extractEnhancedCareer(text, lines)
+    };
+  } catch (error) {
+    console.warn("Enhanced job fit resume profile extraction failed.", error);
+    return {
+      name: inferCandidateNameFromResume(text, fileName),
+      education: [],
+      career: []
+    };
+  }
+}
+
+function normalizeEnhancedCareerRoleFields(rank, position) {
+  const rankParts = [];
+  const departmentParts = [];
+
+  [rank, position]
+    .flatMap((value) => String(value || "").split(/\s*,\s*/))
+    .map(normalizeEnhancedResumeLine)
+    .filter(Boolean)
+    .forEach((value) => {
+      if (looksLikeEnhancedDepartment(value)) {
+        departmentParts.push(value);
+      } else if (looksLikeEnhancedCareerRole(value)) {
+        rankParts.push(value);
+      } else if (!rankParts.length && value.length <= 35) {
+        rankParts.push(value);
+      } else if (value.length <= 35) {
+        departmentParts.push(value);
+      }
+    });
+
+  return {
+    rank: uniqueTextParts(rankParts).join(", "),
+    position: uniqueTextParts(departmentParts).join(", ")
+  };
+}
+
 function normalizeJobFitDegree(value) {
+  const koreanDegreeText = String(value || "").trim();
+
+  if (/박사|ph\.?\s*d|doctor/i.test(koreanDegreeText)) return "박사";
+  if (/석사|master|m\.?\s*s|m\.?\s*a|mba/i.test(koreanDegreeText)) return "석사";
+  if (/학사|bachelor|b\.?\s*s|b\.?\s*a/i.test(koreanDegreeText)) return "학사";
+
   const text = String(value || "").trim();
 
   if (/박사|ph\.?d|doctor/i.test(text)) return "박사";
@@ -9033,10 +9435,9 @@ function normalizeJobFitEducationRecords(records = []) {
 function normalizeJobFitCareerRecords(records = []) {
   return (Array.isArray(records) ? records : [])
     .map((item) => {
-      const roleFields = normalizeCareerRoleFields(
-        item?.rank,
-        item?.position || item?.title || item?.department || ""
-      );
+      const rawRank = cleanParsedValue(item?.rank || item?.title || "");
+      const rawPosition = cleanParsedValue(item?.position || item?.department || item?.organization || item?.team || item?.division || "");
+      const roleFields = normalizeEnhancedCareerRoleFields(rawRank, rawPosition);
 
       return {
         country: cleanParsedValue(item?.country),
@@ -16449,6 +16850,18 @@ function parseResumeText(text, filename = "") {
 }
 
 function normalizeParsedDate(value) {
+  const koreanDateText = String(value || "").trim();
+
+  if (/^(현재|재직\s*중|present|current|ongoing)$/i.test(koreanDateText)) {
+    return "현재";
+  }
+
+  const koreanMonthMatch = koreanDateText.match(/(\d{4})\s*(?:년|[.\-/])\s*(\d{1,2})\s*(?:월)?/);
+
+  if (koreanMonthMatch) {
+    return `${koreanMonthMatch[1]}-${koreanMonthMatch[2].padStart(2, "0")}`;
+  }
+
   const text = String(value || "").trim();
 
   if (!text || text === "0") {
@@ -18687,12 +19100,102 @@ function getSearchFirmMember(applicant) {
   return state.members.find((member) => member.id === applicant.searchFirmMemberId || member.id === applicant.registeredById) || null;
 }
 
+function compactScreeningMailApplicant(applicant = {}) {
+  return {
+    id: String(applicant.id || "").trim(),
+    name: String(applicant.name || "").trim(),
+    email: String(applicant.email || "").trim(),
+    phone: String(applicant.phone || "").trim(),
+    sourceType: String(applicant.sourceType || "").trim(),
+    registeredById: String(applicant.registeredById || "").trim(),
+    registeredByName: String(applicant.registeredByName || "").trim(),
+    searchFirmMemberId: String(applicant.searchFirmMemberId || "").trim()
+  };
+}
+
+function compactScreeningMailPanel(panel = {}) {
+  return {
+    availability: String(panel.availability || "").trim(),
+    names: Array.isArray(panel.names) ? panel.names.map((item) => String(item || "").trim()).filter(Boolean) : [],
+    emails: normalizeEmailList(panel.emails || []),
+    members: Array.isArray(panel.members)
+      ? panel.members.map((member) => ({
+        name: String(member?.name || "").trim(),
+        email: String(member?.email || "").trim(),
+        role: String(member?.role || "").trim(),
+        level: String(member?.level || "").trim()
+      })).filter((member) => member.name || member.email)
+      : []
+  };
+}
+
+function compactScreeningMailFolder(folder = {}) {
+  return {
+    id: String(folder.id || "").trim(),
+    title: String(folder.title || "").trim(),
+    positionName: String(folder.positionName || folder.title || "").trim(),
+    department: String(folder.department || "").trim(),
+    jobRole: String(folder.jobRole || "").trim(),
+    interviewPanel: compactScreeningMailPanel(folder.interviewPanel || {})
+  };
+}
+
+function compactInterviewMailCase(interviewCase = {}) {
+  return {
+    id: String(interviewCase.id || "").trim(),
+    candidateName: String(interviewCase.candidateName || "").trim(),
+    positionName: String(interviewCase.positionName || "").trim(),
+    department: String(interviewCase.department || "").trim()
+  };
+}
+
+function compactInterviewMailStage(stage = {}) {
+  return {
+    id: String(stage.id || "").trim(),
+    label: String(stage.label || "").trim(),
+    requirement: String(stage.requirement || "").trim(),
+    documents: Array.isArray(stage.documents)
+      ? stage.documents.map((item) => ({
+        owner: String(item?.owner || "").trim(),
+        label: String(item?.label || "").trim()
+      })).filter((item) => item.owner || item.label)
+      : []
+  };
+}
+
+function compactInterviewMailStageData(stageData = {}) {
+  return {
+    confirmedAt: String(stageData.confirmedAt || "").trim(),
+    panel: Array.isArray(stageData.panel)
+      ? stageData.panel.map((member) => ({
+        name: String(member?.name || "").trim(),
+        email: String(member?.email || "").trim(),
+        role: String(member?.role || "").trim(),
+        level: String(member?.level || "").trim()
+      })).filter((member) => member.name || member.email)
+      : []
+  };
+}
+
+function compactScreeningMailPayload(payload = {}) {
+  return {
+    ...payload,
+    folder: payload.folder ? compactScreeningMailFolder(payload.folder) : undefined,
+    applicant: payload.applicant ? compactScreeningMailApplicant(payload.applicant) : undefined,
+    interviewPanel: payload.interviewPanel ? compactScreeningMailPanel(payload.interviewPanel) : undefined,
+    interviewCase: payload.interviewCase ? compactInterviewMailCase(payload.interviewCase) : undefined,
+    stage: payload.stage ? compactInterviewMailStage(payload.stage) : undefined,
+    stageData: payload.stageData ? compactInterviewMailStageData(payload.stageData) : undefined
+  };
+}
+
 async function sendScreeningMail(payload) {
+  const compactPayload = compactScreeningMailPayload(payload);
   const response = await fetch("/api/screening-mail", {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(compactPayload)
   });
   const result = await readApiJson(response, "Screening 메일 발송");
 
