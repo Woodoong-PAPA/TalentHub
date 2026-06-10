@@ -12824,6 +12824,109 @@ function renderHighlightedPolicyQuote(citation) {
     .join("");
 }
 
+function renderPolicyCitationChip(citationId) {
+  const citation = findPolicyCitation(citationId);
+
+  if (!citation) {
+    return "";
+  }
+
+  return `<button class="policy-citation-chip" type="button" data-policy-citation="${escapeHtml(citation.id)}" aria-label="${escapeHtml(`${citation.sourceTitle} 근거 ${citation.number}`)}">${citation.number}</button>`;
+}
+
+function getPolicyActiveCitation() {
+  return findPolicyCitation(state.policyChatSelectedCitationId);
+}
+
+function getPolicyActiveSource() {
+  const citation = getPolicyActiveCitation();
+  const citationSource = citation ? findPolicySource(citation.sourceId) : null;
+
+  return citationSource || state.policySources[0] || null;
+}
+
+function renderPolicySourceDocument(source, citation) {
+  if (!source) {
+    return "";
+  }
+
+  const content = normalizePolicyText(source.content);
+
+  if (!content) {
+    return "";
+  }
+
+  const targets = citation?.sourceId === source.id
+    ? (Array.isArray(citation.keySentences) && citation.keySentences.length ? citation.keySentences : [citation.quote])
+        .map((sentence) => String(sentence || "").trim())
+        .filter(Boolean)
+    : [];
+  let segments = [{ text: content, highlighted: false }];
+
+  targets.forEach((target) => {
+    segments = segments.flatMap((segment) => {
+      if (segment.highlighted || !segment.text) {
+        return [segment];
+      }
+
+      const index = segment.text.indexOf(target);
+
+      if (index < 0) {
+        return [segment];
+      }
+
+      return [
+        { text: segment.text.slice(0, index), highlighted: false },
+        { text: segment.text.slice(index, index + target.length), highlighted: true },
+        { text: segment.text.slice(index + target.length), highlighted: false }
+      ].filter((item) => item.text);
+    });
+  });
+
+  return segments
+    .map((segment) => segment.highlighted
+      ? `<mark class="policy-citation-highlight">${escapeHtml(segment.text)}</mark>`
+      : escapeHtml(segment.text))
+    .join("");
+}
+
+function renderPolicySourceReader() {
+  const citation = getPolicyActiveCitation();
+  const source = getPolicyActiveSource();
+  const sourceMeta = source
+    ? [source.fileName || source.sourceType, source.updatedAt].filter(Boolean).join(" · ")
+    : "";
+
+  return `
+    <section class="policy-source-reader" aria-label="채용 기준 출처">
+      <div class="policy-notebook-panel-header">
+        <strong>출처</strong>
+        <button class="icon-button policy-panel-icon-button" type="button" data-open-policy-sources aria-label="소스 데이터 관리">⌗</button>
+      </div>
+      <div class="policy-source-reader-body">
+        <div class="policy-source-title-block">
+          <h4>${escapeHtml(source?.title || "채용 기준 문서")}</h4>
+          ${sourceMeta ? `<span>${escapeHtml(sourceMeta)}</span>` : ""}
+        </div>
+        <button class="policy-source-guide-pill" type="button" data-open-policy-sources>
+          <span class="policy-source-guide-mark" aria-hidden="true"></span>
+          <strong>소스 가이드</strong>
+          <span class="policy-source-guide-count">${state.policySources.length}개</span>
+        </button>
+        ${citation?.sourceId === source?.id ? `
+          <article class="policy-source-focus">
+            <span>선택된 근거 문구</span>
+            <p>${renderHighlightedPolicyQuote(citation)}</p>
+          </article>
+        ` : ""}
+        ${source?.content
+          ? `<pre class="policy-source-document">${renderPolicySourceDocument(source, citation)}</pre>`
+          : `<div class="empty-state">등록된 채용 기준 소스가 없습니다.</div>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderPolicySourceForm() {
   const editingSource = findPolicySource(state.policyEditingSourceId);
 
@@ -12947,8 +13050,7 @@ function renderPolicyMessage(message) {
     <article class="policy-message is-assistant">
       ${(message.answerItems || []).map((item) => `
         <div class="policy-answer-item">
-          <p>${escapeHtml(item.text)}</p>
-          ${item.citationId ? `<button class="soft-button compact-button" type="button" data-policy-citation="${escapeHtml(item.citationId)}">근거 보기</button>` : ""}
+          <p>${escapeHtml(item.text)} ${item.citationId ? renderPolicyCitationChip(item.citationId) : ""}</p>
         </div>
       `).join("")}
     </article>
@@ -12964,14 +13066,7 @@ function renderPolicyCitationPanel() {
   const citation = citationContext?.citation || null;
 
   if (!citation) {
-    return `
-      <aside class="policy-citation-panel">
-        <div class="policy-citation-empty">
-          <strong>근거 원문</strong>
-          <span>답변의 근거 보기 버튼을 누르면 원본 문구가 이 영역에 표시됩니다.</span>
-        </div>
-      </aside>
-    `;
+    return "";
   }
 
   const referenceText = [citationContext.question, citationContext.answerText].filter(Boolean).join(" ");
@@ -12996,6 +13091,7 @@ function renderPolicyCitationPanel() {
         <button class="ghost-button compact-button" type="button" data-close-policy-citation>닫기</button>
       </div>
       <blockquote>${renderHighlightedPolicyQuote(renderCitation)}</blockquote>
+      <button class="soft-button compact-button policy-citation-source-button" type="button" data-open-policy-sources>소스 보기</button>
     </aside>
   `;
 }
@@ -13022,24 +13118,30 @@ function renderPolicyChat() {
     : "";
 
   content.innerHTML = `
-    <div class="policy-chat-layout">
-      <section class="content-panel policy-chat-panel">
-        <div class="panel-header">
-          <h4>채용 기준 Q&A</h4>
+    <div class="policy-chat-layout policy-notebook-layout">
+      ${renderPolicySourceReader()}
+
+      <section class="policy-chat-panel policy-notebook-chat-panel">
+        <div class="policy-notebook-panel-header">
+          <strong>채팅</strong>
           <div class="policy-chat-actions">
             <button class="ghost-button compact-button" type="button" data-open-policy-sources>소스 데이터 ${state.policySources.length}개</button>
             <button class="ghost-button compact-button" type="button" data-clear-policy-chat>대화 초기화</button>
           </div>
         </div>
-        <div class="policy-chat-notice">등록된 소스에 없는 내용은 답변하지 않습니다. 근거 버튼으로 원문 문구를 확인할 수 있습니다.</div>
-        <div class="policy-message-list">${messages}${loadingMessage}</div>
-        <form id="policy-chat-form" class="policy-chat-form">
-          <textarea class="control-textarea" id="policy-chat-question" name="question" placeholder="예: 경력직 면접위원 구성 기준은 어떻게 돼?">${escapeHtml(state.policyChatQuestion)}</textarea>
-          <button class="primary-button" type="submit" ${state.policyChatLoading ? "disabled" : ""}>${state.policyChatLoading ? "답변 정리 중" : "질문하기"}</button>
-        </form>
+        <div class="policy-chat-workspace">
+          ${renderPolicyCitationPanel()}
+          <div class="policy-message-list">${messages}${loadingMessage}</div>
+          <form id="policy-chat-form" class="policy-chat-form">
+            <textarea class="control-textarea" id="policy-chat-question" name="question" placeholder="질문하거나 창작하세요">${escapeHtml(state.policyChatQuestion)}</textarea>
+            <div class="policy-chat-form-footer">
+              <span>소스 ${state.policySources.length}개</span>
+              <button class="primary-button policy-chat-submit" type="submit" ${state.policyChatLoading ? "disabled" : ""} aria-label="질문하기">${state.policyChatLoading ? "정리 중" : "➜"}</button>
+            </div>
+          </form>
+          <p class="policy-chat-disclaimer">등록된 소스에 없는 내용은 답변하지 않습니다. 번호 근거를 누르면 원문 문구를 확인할 수 있습니다.</p>
+        </div>
       </section>
-
-      ${renderPolicyCitationPanel()}
     </div>
     ${renderPolicySourceModal()}
   `;
