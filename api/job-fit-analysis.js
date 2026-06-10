@@ -116,10 +116,11 @@ function compactRecordList(records, limit) {
       degree: String(record.degree || ""),
       school: String(record.school || ""),
       major: String(record.major || ""),
+      affiliation: String(record.affiliation || record.organization || record.department || ""),
       country: String(record.country || ""),
       company: String(record.company || ""),
       rank: String(record.rank || ""),
-      position: String(record.position || ""),
+      position: String(record.position || record.department || record.organization || record.team || record.division || ""),
       start: String(record.start || ""),
       end: String(record.end || ""),
       achievements: String(record.achievements || "").slice(0, 900)
@@ -138,6 +139,8 @@ function compactResume(resume) {
   return {
     id,
     candidateName: String(resume.candidateName || "").trim(),
+    source: String(resume.source || "").trim(),
+    candidateId: String(resume.candidateId || resume.candidate_id || "").trim(),
     education: compactRecordList(resume.education, 5),
     career: compactRecordList(resume.career, 8),
     text
@@ -217,6 +220,8 @@ async function callOpenAI(jdText, resumes) {
     "comment에는 후보자명, 핵심 충족 근거, 부족하거나 불확실한 부분, 포지션과의 종합 적합성 판단을 자연스럽게 포함한다.",
     "comment와 recommendation에는 다음 단계를 진행하라, 합격시키라, 인터뷰를 하라, 추가 자료를 받아라 같은 직접적인 채용 액션 지시를 쓰지 않는다.",
     "recommendation은 빈 문자열로 반환한다.",
+    "source가 pool인 항목은 Talent Pool에 저장된 구조화 프로필이다. education과 career 배열의 값을 이력서 텍스트보다 우선해 근거로 활용한다.",
+    "학력은 degree, school, major, affiliation, start, end를 함께 보고 판단하고, 경력은 company, rank, position, start, end, achievements를 함께 보고 판단한다.",
     "점수는 0~100으로 산정하고 등급은 A 90점 이상, B 80점 이상, C 60점 이상, D 40점 이상, E 40점 미만 기준으로 부여한다. 결과는 적합도 높은 순서로 반환한다.",
     "",
     "직무기술서:",

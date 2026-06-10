@@ -2829,6 +2829,63 @@ tr:last-child td {
   text-decoration: underline;
 }
 
+.job-fit-pool-picker-modal {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.job-fit-pool-picker-body {
+  display: grid;
+  gap: 14px;
+}
+
+.job-fit-pool-picker-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.job-fit-pool-candidate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.job-fit-pool-candidate input {
+  margin-top: 3px;
+}
+
+.job-fit-pool-candidate.is-disabled {
+  color: var(--muted);
+  background: var(--surface-soft);
+}
+
+.job-fit-pool-candidate-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.job-fit-pool-candidate-main strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.job-fit-pool-candidate-main small,
+.job-fit-pool-candidate-main em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .job-fit-upload-status,
 .job-fit-inline-status {
   display: block;
