@@ -3831,6 +3831,24 @@ tr:last-child td {
   text-align: left;
 }
 
+.interview-case-select {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.interview-case-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
 .interview-case-card:hover,
 .interview-case-card.is-active {
   border-color: var(--blue);

@@ -701,6 +701,7 @@ const state = {
     mineOnly: false
   },
   interviewCases: [],
+  interviewDeletedCaseIds: [],
   selectedInterviewCaseId: "",
   selectedInterviewStage: "phone",
   interviewMailPreview: null,
@@ -1752,6 +1753,14 @@ function normalizeInterviewCase(interviewCase = {}) {
     candidateName: String(interviewCase.candidateName || interviewCase.name || "").trim(),
     company: String(interviewCase.company || "").trim(),
     currentRole: String(interviewCase.currentRole || "").trim(),
+    birthYear: String(interviewCase.birthYear || interviewCase.birth_year || "").trim(),
+    nationality: String(interviewCase.nationality || "").trim(),
+    education: Array.isArray(interviewCase.education)
+      ? interviewCase.education.map(normalizeEducationRecord).filter(hasAnyRecordValue)
+      : [],
+    career: Array.isArray(interviewCase.career)
+      ? interviewCase.career.map(normalizeCareerRecord).filter(hasAnyRecordValue)
+      : [],
     email: String(interviewCase.email || "").trim().toLowerCase(),
     phone: String(interviewCase.phone || "").trim(),
     businessUnit: normalizeBusinessUnit(interviewCase.businessUnit) || "",
@@ -1763,6 +1772,8 @@ function normalizeInterviewCase(interviewCase = {}) {
     finalDecision: String(interviewCase.finalDecision || "").trim(),
     offerSignedAt: String(interviewCase.offerSignedAt || interviewCase.offer_signed_at || "").trim(),
     offerSignedBy: String(interviewCase.offerSignedBy || interviewCase.offer_signed_by || "").trim(),
+    recruitingMetricRowId: String(interviewCase.recruitingMetricRowId || interviewCase.recruiting_metric_row_id || "").trim(),
+    offerSyncedToMetricsAt: String(interviewCase.offerSyncedToMetricsAt || interviewCase.offer_synced_to_metrics_at || "").trim(),
     joinedAt: String(interviewCase.joinedAt || interviewCase.joined_at || "").trim(),
     joinedBy: String(interviewCase.joinedBy || interviewCase.joined_by || "").trim(),
     createdAt: interviewCase.createdAt || getTodayDate(),
@@ -2046,6 +2057,10 @@ function createInterviewCaseFromScreening(folder, applicant) {
     candidateName: applicant.name,
     company: applicant.company,
     currentRole: applicant.currentRole,
+    birthYear: applicant.birthYear,
+    nationality: applicant.nationality,
+    education: applicant.education,
+    career: applicant.career,
     email: applicant.email,
     phone: applicant.phone,
     businessUnit: folder.businessUnit,
@@ -2058,7 +2073,38 @@ function createInterviewCaseFromScreening(folder, applicant) {
   });
 }
 
+function getDeletedInterviewCaseIdSet() {
+  return new Set(normalizeIdList(state.interviewDeletedCaseIds));
+}
+
+function isInterviewCaseDeletedId(interviewCaseId) {
+  return getDeletedInterviewCaseIdSet().has(String(interviewCaseId || "").trim());
+}
+
+function filterDeletedInterviewCases(interviewCases = []) {
+  const deletedIds = getDeletedInterviewCaseIdSet();
+
+  if (!deletedIds.size) {
+    return Array.isArray(interviewCases) ? interviewCases : [];
+  }
+
+  return (Array.isArray(interviewCases) ? interviewCases : []).filter((interviewCase) => interviewCase?.id && !deletedIds.has(interviewCase.id));
+}
+
+function rememberDeletedInterviewCaseId(interviewCaseId) {
+  const id = String(interviewCaseId || "").trim();
+
+  if (!id) {
+    return;
+  }
+
+  state.interviewDeletedCaseIds = normalizeIdList([...(state.interviewDeletedCaseIds || []), id]);
+  state.interviewCases = filterDeletedInterviewCases(state.interviewCases);
+}
+
 function syncInterviewCasesFromScreening() {
+  state.interviewDeletedCaseIds = normalizeIdList(state.interviewDeletedCaseIds);
+  state.interviewCases = filterDeletedInterviewCases(state.interviewCases);
   const existingKeys = new Set(state.interviewCases.map((item) => `${item.sourceFolderId}:${item.sourceApplicantId}`));
   let changed = false;
 
@@ -2067,6 +2113,12 @@ function syncInterviewCasesFromScreening() {
       .filter((applicant) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage))
       .forEach((applicant) => {
         const key = `${folder.id}:${applicant.id}`;
+        const nextCaseId = `interview-${folder.id}-${applicant.id}`;
+
+        if (isInterviewCaseDeletedId(nextCaseId)) {
+          return;
+        }
+
         const existingCase = state.interviewCases.find((item) => `${item.sourceFolderId}:${item.sourceApplicantId}` === key);
 
         if (existingCase) {
@@ -2074,12 +2126,20 @@ function syncInterviewCasesFromScreening() {
           const nextPhone = String(applicant.phone || "").trim();
           const nextCompany = String(applicant.company || "").trim();
           const nextRole = String(applicant.currentRole || "").trim();
+          const nextBirthYear = String(applicant.birthYear || "").trim();
+          const nextNationality = String(applicant.nationality || "").trim();
+          const nextEducation = Array.isArray(applicant.education) ? applicant.education.map(normalizeEducationRecord).filter(hasAnyRecordValue) : [];
+          const nextCareer = Array.isArray(applicant.career) ? applicant.career.map(normalizeCareerRecord).filter(hasAnyRecordValue) : [];
 
           if (
             (nextEmail && existingCase.email !== nextEmail) ||
             (nextPhone && existingCase.phone !== nextPhone) ||
             (nextCompany && existingCase.company !== nextCompany) ||
             (nextRole && existingCase.currentRole !== nextRole) ||
+            (nextBirthYear && existingCase.birthYear !== nextBirthYear) ||
+            (nextNationality && existingCase.nationality !== nextNationality) ||
+            (nextEducation.length && JSON.stringify(existingCase.education || []) !== JSON.stringify(nextEducation)) ||
+            (nextCareer.length && JSON.stringify(existingCase.career || []) !== JSON.stringify(nextCareer)) ||
             existingCase.businessUnit !== folder.businessUnit ||
             existingCase.department !== folder.department ||
             existingCase.positionName !== (folder.positionName || folder.title)
@@ -2088,6 +2148,10 @@ function syncInterviewCasesFromScreening() {
             existingCase.phone = nextPhone || existingCase.phone;
             existingCase.company = nextCompany || existingCase.company;
             existingCase.currentRole = nextRole || existingCase.currentRole;
+            existingCase.birthYear = nextBirthYear || existingCase.birthYear;
+            existingCase.nationality = nextNationality || existingCase.nationality;
+            existingCase.education = nextEducation.length ? nextEducation : existingCase.education;
+            existingCase.career = nextCareer.length ? nextCareer : existingCase.career;
             existingCase.businessUnit = folder.businessUnit;
             existingCase.department = folder.department;
             existingCase.positionName = folder.positionName || folder.title;
@@ -2135,12 +2199,14 @@ function canViewInterviewCase(interviewCase, member = getCurrentMember()) {
 function getVisibleInterviewCases() {
   return state.interviewCases
     .map(normalizeInterviewCase)
+    .filter((item) => !isInterviewCaseDeletedId(item.id))
     .filter((item) => canViewInterviewCase(item))
     .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || a.candidateName.localeCompare(b.candidateName, "ko"));
 }
 
 function ensureInterviewDefaults() {
-  state.interviewCases = state.interviewCases.map(normalizeInterviewCase);
+  state.interviewDeletedCaseIds = normalizeIdList(state.interviewDeletedCaseIds);
+  state.interviewCases = filterDeletedInterviewCases(state.interviewCases.map(normalizeInterviewCase));
   const changed = syncInterviewCasesFromScreening();
   const visibleCases = getVisibleInterviewCases();
 
@@ -2776,6 +2842,7 @@ function persistState(options = {}) {
         screeningFolders: state.screeningFolders,
         screeningDeletedFolderIds: state.screeningDeletedFolderIds,
         interviewCases: state.interviewCases,
+        interviewDeletedCaseIds: state.interviewDeletedCaseIds,
         selectedInterviewCaseId: state.selectedInterviewCaseId,
         selectedInterviewStage: state.selectedInterviewStage,
         auditLogs: state.auditLogs,
@@ -2835,8 +2902,12 @@ function restorePersistedState() {
     state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
   }
 
+  if (Array.isArray(persisted.interviewDeletedCaseIds)) {
+    state.interviewDeletedCaseIds = normalizeIdList(persisted.interviewDeletedCaseIds);
+  }
+
   if (Array.isArray(persisted.interviewCases)) {
-    state.interviewCases = persisted.interviewCases.map(normalizeInterviewCase);
+    state.interviewCases = filterDeletedInterviewCases(persisted.interviewCases.map(normalizeInterviewCase));
   }
 
   if (Array.isArray(persisted.auditLogs)) {
@@ -3528,7 +3599,8 @@ function buildRolePermissionsPayload() {
 
 function buildInterviewCasesPayload() {
   return {
-    cases: state.interviewCases.map(normalizeInterviewCase),
+    cases: filterDeletedInterviewCases(state.interviewCases.map(normalizeInterviewCase)),
+    deletedCaseIds: normalizeIdList(state.interviewDeletedCaseIds),
     selectedInterviewCaseId: state.selectedInterviewCaseId || "",
     selectedInterviewStage: state.selectedInterviewStage || "phone",
     updatedAt: new Date().toISOString(),
@@ -3709,10 +3781,22 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   }
 
   if (interviewCasesSetting?.payload) {
+    const remoteDeletedCaseIds = normalizeIdList(
+      interviewCasesSetting.payload.deletedCaseIds ||
+      interviewCasesSetting.payload.deleted_case_ids ||
+      interviewCasesSetting.payload.interviewDeletedCaseIds ||
+      []
+    );
+
+    if (remoteDeletedCaseIds.length) {
+      state.interviewDeletedCaseIds = normalizeIdList([...(state.interviewDeletedCaseIds || []), ...remoteDeletedCaseIds]);
+      state.interviewCases = filterDeletedInterviewCases(state.interviewCases);
+    }
+
     const cases = interviewCasesSetting.payload.cases || interviewCasesSetting.payload.interviewCases || [];
 
     if (Array.isArray(cases)) {
-      state.interviewCases = mergeByLatest(state.interviewCases, cases, normalizeInterviewCase)
+      state.interviewCases = filterDeletedInterviewCases(mergeByLatest(state.interviewCases, cases, normalizeInterviewCase))
         .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || String(b.id).localeCompare(String(a.id)));
     }
 
@@ -3796,6 +3880,8 @@ async function syncStateToSupabase() {
     await ensureMemberPasswordHashes();
     const candidateRows = state.candidates.map(candidateToSupabaseRow);
     state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
+    state.interviewDeletedCaseIds = normalizeIdList(state.interviewDeletedCaseIds);
+    state.interviewCases = filterDeletedInterviewCases(state.interviewCases);
     const screeningFolderRows = state.screeningFolders.map(screeningFolderToSupabaseRow);
     const auditRows = state.auditLogs.map(auditLogToSupabaseRow);
     const memberRows = state.members.map(memberToSupabaseRow);
@@ -7942,14 +8028,19 @@ function renderInterviewCaseList(cases) {
   return `
     <div class="interview-case-list">
       ${cases.map((interviewCase) => `
-        <button class="interview-case-card ${interviewCase.id === state.selectedInterviewCaseId ? "is-active" : ""}" type="button" data-select-interview-case="${escapeHtml(interviewCase.id)}">
+        <article class="interview-case-card ${interviewCase.id === state.selectedInterviewCaseId ? "is-active" : ""}">
+          <button class="interview-case-select" type="button" data-select-interview-case="${escapeHtml(interviewCase.id)}">
           <span>
             <strong>${escapeHtml(interviewCase.candidateName || "-")}</strong>
             <small>${escapeHtml([interviewCase.company, interviewCase.currentRole].filter(Boolean).join(" · ") || "지원자 정보 미입력")}</small>
           </span>
           <em>${escapeHtml([interviewCase.businessUnit, interviewCase.positionName].filter(Boolean).join(" · ") || "포지션 미입력")}</em>
           ${interviewCaseStatusChip(interviewCase)}
-        </button>
+          </button>
+          <div class="interview-case-actions">
+            <button class="ghost-button danger-button compact-button" type="button" data-delete-interview-case="${escapeHtml(interviewCase.id)}">삭제</button>
+          </div>
+        </article>
       `).join("")}
     </div>
   `;
@@ -8274,6 +8365,7 @@ function renderInterviewStagePanel(interviewCase, stageId) {
         </section>
       </div>
       <div class="interview-action-row">
+        ${stage.status === "passed" ? `<button class="ghost-button" type="button" data-interview-revert-stage data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">${escapeHtml(config.label)} 합격 취소</button>` : ""}
         <button class="ghost-button" type="button" data-send-interview-mail="request" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">입력 요청 메일</button>
         <button class="ghost-button" type="button" data-send-interview-mail="schedule" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" ${stage.confirmedAt ? "" : "disabled"}>확정 일정 안내</button>
         <button class="soft-button" type="button" data-interview-pass-stage data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">${escapeHtml(config.label)} 합격</button>
@@ -8313,6 +8405,7 @@ function renderInterviewFinalPanel(interviewCase) {
       </div>
       ${offerActions}
       <div class="member-actions">
+        ${interviewCase.status === "passed" ? `<button class="ghost-button compact-button" type="button" data-revert-final-interview-case="${escapeHtml(interviewCase.id)}">최종 합격 취소</button>` : ""}
         <button class="primary-button compact-button" type="button" data-finalize-interview-case="passed" data-interview-case-id="${escapeHtml(interviewCase.id)}">면접 합격 확정</button>
         <button class="ghost-button danger-button compact-button" type="button" data-finalize-interview-case="failed" data-interview-case-id="${escapeHtml(interviewCase.id)}">면접 불합격 확정</button>
       </div>
@@ -11716,12 +11809,144 @@ async function sendRecruitingMetricsMail() {
   renderRecruitingMetrics();
 }
 
+function getDateOnly(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : text;
+}
+
+function setRecruitingRowValue(row, sheet, names, value, options = {}) {
+  const index = getRecruitingSheetColumnIndex(sheet, names);
+  const nextValue = String(value || "").trim();
+
+  if (index < 0 || !nextValue) {
+    return;
+  }
+
+  if (options.overwrite || !String(row.cells[index] || "").trim()) {
+    row.cells[index] = nextValue;
+  }
+}
+
+function getRecruitingDetailNoteWithInterviewId(note, interviewCaseId, positionName) {
+  const current = String(note || "").trim();
+  const marker = `Interview ID: ${interviewCaseId}`;
+
+  if (current.includes(marker)) {
+    return current;
+  }
+
+  const syncNote = ["Interview 연동", positionName, marker].filter(Boolean).join(" · ");
+  return current ? `${current}\n${syncNote}` : syncNote;
+}
+
+function findRecruitingMetricRowForInterviewCase(interviewCase, sheet) {
+  if (!sheet?.rows?.length) {
+    return null;
+  }
+
+  if (interviewCase.recruitingMetricRowId) {
+    const matchedById = sheet.rows.find((row) => row.id === interviewCase.recruitingMetricRowId);
+
+    if (matchedById) {
+      return matchedById;
+    }
+  }
+
+  const noteIndex = getRecruitingSheetColumnIndex(sheet, ["비고"]);
+
+  if (noteIndex >= 0) {
+    const marker = `Interview ID: ${interviewCase.id}`;
+    const matchedByNote = sheet.rows.find((row) => String(row.cells[noteIndex] || "").includes(marker));
+
+    if (matchedByNote) {
+      return matchedByNote;
+    }
+  }
+
+  return null;
+}
+
+function syncInterviewOfferToRecruitingMetrics(interviewCase) {
+  const normalizedCase = normalizeInterviewCase(interviewCase);
+
+  if (!normalizedCase.offerSignedAt) {
+    return "";
+  }
+
+  const metrics = getRecruitingMetricsState();
+  const sheet = metrics.detailSheet;
+
+  if (!sheet?.columns?.length) {
+    return "";
+  }
+
+  let row = findRecruitingMetricRowForInterviewCase(normalizedCase, sheet);
+  const isNewRow = !row;
+
+  if (!row) {
+    row = createRecruitingSheetRow(sheet.columns.length);
+    sheet.rows.push(row);
+  }
+
+  const education = normalizedCase.education?.[0] || {};
+  const career = normalizedCase.career?.[0] || {};
+  const rankAndTitle = uniqueTextParts([career.rank, career.position]).join(", ");
+  const owner = normalizedCase.offerSignedBy || getCurrentActorName();
+
+  setRecruitingRowValue(row, sheet, ["이름"], normalizedCase.candidateName, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["출생년도"], normalizedCase.birthYear, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["사업부"], normalizedCase.businessUnit, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["직무"], normalizedCase.positionName || normalizedCase.currentRole, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["최종학위"], education.degree, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["학교명"], education.school, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["전공"], education.major, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["직장명"], career.company || normalizedCase.company, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["직급/직책"], rankAndTitle || normalizedCase.currentRole, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["소속부서"], normalizedCase.department, { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["채용유형"], "면접운영", { overwrite: isNewRow });
+  setRecruitingRowValue(row, sheet, ["오퍼서명일"], getDateOnly(normalizedCase.offerSignedAt), { overwrite: true });
+  setRecruitingRowValue(row, sheet, ["담당자"], owner, { overwrite: isNewRow });
+
+  const noteIndex = getRecruitingSheetColumnIndex(sheet, ["비고"]);
+
+  if (noteIndex >= 0) {
+    row.cells[noteIndex] = getRecruitingDetailNoteWithInterviewId(row.cells[noteIndex], normalizedCase.id, normalizedCase.positionName);
+  }
+
+  syncRecruitingTargetsFromProgressSheet(metrics);
+  syncRecruitingProgressSheetComputedValues(metrics);
+  metrics.saveStatus = `Interview 오퍼서명 정보가 채용 실적 상세에 반영되었습니다. · ${getTimestampText()}`;
+  syncRecruitingMetricsToSupabase().catch((error) => {
+    console.warn("Recruiting metrics remote save failed.", error);
+  });
+
+  return row.id;
+}
+
 function markInterviewOfferSigned(interviewCaseId) {
   mutateInterviewCase(interviewCaseId, (interviewCase) => {
-    interviewCase.offerSignedAt = getTimestampText();
-    interviewCase.offerSignedBy = getCurrentMember()?.name || "시스템";
+    interviewCase.offerSignedAt = interviewCase.offerSignedAt || getTimestampText();
+    interviewCase.offerSignedBy = interviewCase.offerSignedBy || getCurrentMember()?.name || "시스템";
   });
-  showToast("오퍼서명(확보) 완료로 반영했습니다.");
+
+  const saved = findInterviewCase(interviewCaseId);
+
+  if (saved) {
+    const metricRowId = syncInterviewOfferToRecruitingMetrics(saved);
+
+    if (metricRowId) {
+      saved.recruitingMetricRowId = metricRowId;
+      saved.offerSyncedToMetricsAt = getTimestampText();
+      replaceInterviewCase(saved);
+      persistState();
+      syncInterviewCasesToSupabase().catch((error) => {
+        console.warn("Interview cases remote save failed.", error);
+      });
+    }
+  }
+
+  showToast("오퍼서명 완료 정보가 채용 실적 상세에 반영되었습니다.");
   render();
 }
 
@@ -12180,7 +12405,6 @@ function extractEnhancedSectionLines(lines, headerPattern, boundaryPattern) {
       sectionLines.push(line);
     }
   });
-
   return sectionLines;
 }
 
@@ -23583,6 +23807,102 @@ async function uploadInterviewDocument(input) {
   renderInterviewView();
 }
 
+function getInterviewStageRevertStatus(stage) {
+  if (stage.confirmedAt) {
+    return "scheduled";
+  }
+
+  if (
+    stage.candidateSlots?.length ||
+    stage.interviewerSlots?.length ||
+    stage.note ||
+    stage.mailHistory?.length
+  ) {
+    return "scheduling";
+  }
+
+  return "waiting";
+}
+
+function clearInterviewOfferProgress(interviewCase) {
+  interviewCase.finalDecision = "";
+  interviewCase.status = "in_progress";
+  interviewCase.offerSignedAt = "";
+  interviewCase.offerSignedBy = "";
+  interviewCase.offerSyncedToMetricsAt = "";
+  interviewCase.joinedAt = "";
+  interviewCase.joinedBy = "";
+}
+
+function revertInterviewStagePass(interviewCaseId, stageId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stageIndex = INTERVIEW_STAGE_IDS.indexOf(stageId);
+
+    if (stageIndex < 0) {
+      return;
+    }
+
+    const stage = getInterviewStage(interviewCase, stageId);
+    stage.status = getInterviewStageRevertStatus(stage);
+
+    INTERVIEW_STAGE_IDS.slice(stageIndex + 1).forEach((nextStageId) => {
+      const nextStage = getInterviewStage(interviewCase, nextStageId);
+      nextStage.status = "waiting";
+    });
+
+    interviewCase.currentStage = stageId;
+    clearInterviewOfferProgress(interviewCase);
+    state.selectedInterviewStage = stageId;
+  });
+  addAuditLog("Interview 합격 취소", findInterviewCase(interviewCaseId)?.candidateName || "-", getInterviewStageConfig(stageId).label);
+  showToast(`${getInterviewStageConfig(stageId).label} 합격 처리를 취소했습니다.`);
+  renderInterviewView();
+}
+
+function revertFinalInterviewCase(interviewCaseId) {
+  mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const hrStage = getInterviewStage(interviewCase, "hr");
+    hrStage.status = getInterviewStageRevertStatus(hrStage);
+    interviewCase.currentStage = "hr";
+    clearInterviewOfferProgress(interviewCase);
+    state.selectedInterviewStage = "hr";
+  });
+  addAuditLog("Interview 최종 합격 취소", findInterviewCase(interviewCaseId)?.candidateName || "-", "최종 결과");
+  showToast("최종 면접 합격 처리를 취소했습니다.");
+  renderInterviewView();
+}
+
+function deleteInterviewCase(interviewCaseId) {
+  const interviewCase = findInterviewCase(interviewCaseId);
+
+  if (!interviewCase || !canViewInterviewCase(interviewCase)) {
+    showToast("삭제할 인터뷰 대상자를 찾을 수 없습니다.");
+    return;
+  }
+
+  const confirmed = window.confirm(`${interviewCase.candidateName || "선택한 대상자"} 인터뷰 케이스를 삭제할까요?`);
+
+  if (!confirmed) {
+    return;
+  }
+
+  rememberDeletedInterviewCaseId(interviewCase.id);
+
+  if (state.selectedInterviewCaseId === interviewCase.id) {
+    const nextCase = getVisibleInterviewCases()[0];
+    state.selectedInterviewCaseId = nextCase?.id || "";
+    state.selectedInterviewStage = nextCase?.currentStage || "phone";
+  }
+
+  addAuditLog("Interview 대상자 삭제", interviewCase.candidateName || "-", interviewCase.positionName || "");
+  persistState();
+  syncInterviewCasesToSupabase().catch((error) => {
+    console.warn("Interview cases remote save failed.", error);
+  });
+  showToast("인터뷰 대상자 리스트에서 삭제했습니다.");
+  renderInterviewView();
+}
+
 function passInterviewStage(interviewCaseId, stageId) {
   mutateInterviewCase(interviewCaseId, (interviewCase) => {
     const stage = getInterviewStage(interviewCase, stageId);
@@ -25670,6 +25990,12 @@ function bindEvents() {
       return;
     }
 
+    const deleteInterviewCaseButton = event.target.closest("[data-delete-interview-case]");
+    if (deleteInterviewCaseButton) {
+      deleteInterviewCase(deleteInterviewCaseButton.dataset.deleteInterviewCase);
+      return;
+    }
+
     const selectInterviewCaseButton = event.target.closest("[data-select-interview-case]");
     if (selectInterviewCaseButton) {
       selectInterviewCase(selectInterviewCaseButton.dataset.selectInterviewCase);
@@ -25725,6 +26051,12 @@ function bindEvents() {
       return;
     }
 
+    const revertInterviewStageButton = event.target.closest("[data-interview-revert-stage]");
+    if (revertInterviewStageButton) {
+      revertInterviewStagePass(revertInterviewStageButton.dataset.interviewCaseId, revertInterviewStageButton.dataset.interviewStage);
+      return;
+    }
+
     const failInterviewStageButton = event.target.closest("[data-interview-fail-stage]");
     if (failInterviewStageButton) {
       failInterviewStage(failInterviewStageButton.dataset.interviewCaseId, failInterviewStageButton.dataset.interviewStage);
@@ -25734,6 +26066,12 @@ function bindEvents() {
     const finalizeInterviewButton = event.target.closest("[data-finalize-interview-case]");
     if (finalizeInterviewButton) {
       finalizeInterviewCase(finalizeInterviewButton.dataset.interviewCaseId, finalizeInterviewButton.dataset.finalizeInterviewCase);
+      return;
+    }
+
+    const revertFinalInterviewButton = event.target.closest("[data-revert-final-interview-case]");
+    if (revertFinalInterviewButton) {
+      revertFinalInterviewCase(revertFinalInterviewButton.dataset.revertFinalInterviewCase);
       return;
     }
 
