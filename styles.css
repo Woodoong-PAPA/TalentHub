@@ -5961,6 +5961,17 @@ tr:last-child td {
   font-weight: 700;
 }
 
+.metrics-filter-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(180px, 260px);
+  align-items: end;
+  gap: 12px;
+}
+
+.metrics-unit-filter {
+  max-width: 260px;
+}
+
 .metrics-sheet-wrap {
   max-height: 62vh;
 }
@@ -6034,6 +6045,34 @@ tr:last-child td {
 
 .metrics-row-delete {
   min-width: 54px;
+}
+
+.metrics-sheet-select {
+  min-height: 36px;
+  resize: none;
+}
+
+.recruiting-mail-modal {
+  width: min(980px, 100%);
+}
+
+.recruiting-mail-modal-body {
+  display: grid;
+  gap: 14px;
+}
+
+.metrics-mail-preview {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.metrics-mail-preview strong {
+  color: var(--text);
+  font-size: 14px;
 }
 
 .detail-card-list {
@@ -6284,6 +6323,14 @@ tr:last-child td {
   .metrics-sheet-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .metrics-filter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-unit-filter {
+    max-width: none;
   }
 
   .metrics-tab-list {

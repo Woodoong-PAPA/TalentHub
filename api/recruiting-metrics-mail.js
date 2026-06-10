@@ -75,11 +75,21 @@ function assertProviderConfigured() {
   return { apiKey, from };
 }
 
-function buildSummaryHtml(rows = [], weekOf = "") {
+function buildSummaryHtml(rows = [], weekOf = "", body = "") {
+  const bodyParagraphs = String(body || "")
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
   return `
     <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.6">
       <h2 style="margin:0 0 12px">주간 채용 지표 취합</h2>
       <p style="margin:0 0 16px;color:#6b7280">취합 기준 주: ${escapeHtml(weekOf || "-")}</p>
+      ${bodyParagraphs.length ? `
+        <div style="margin:0 0 18px;padding:14px 16px;border:1px solid #e5e8eb;border-radius:12px;background:#f8f9fa">
+          ${bodyParagraphs.map((paragraph) => `<p style="margin:0 0 8px;white-space:pre-line">${escapeHtml(paragraph)}</p>`).join("")}
+        </div>
+      ` : ""}
       <table style="border-collapse:collapse;width:100%;max-width:900px;font-size:14px">
         <thead>
           <tr>
@@ -137,7 +147,7 @@ async function sendEmailViaResend(payload) {
       from: config.from,
       to: recipients,
       subject,
-      html: buildSummaryHtml(payload.rows, weekOf),
+      html: buildSummaryHtml(payload.rows, weekOf, payload.body),
       attachments: html
         ? [{
           filename: fileName,

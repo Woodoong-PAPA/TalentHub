@@ -768,10 +768,17 @@ const state = {
   interviewReportPromptModalOpen: false,
   recruitingMetrics: {
     activeTab: "details",
+    detailUnitFilter: "all",
+    progressUnitFilter: "all",
     weekOf: getTodayDate(),
     targets: structuredClone(DEFAULT_RECRUITING_METRICS_TARGETS),
     detailSheet: null,
     progressSheet: null,
+    mailModalOpen: false,
+    mailFrequency: "weekly",
+    mailBody: "",
+    mailDraft: null,
+    saveStatus: "",
     recipients: [],
     subject: "[TalentHub] 주간 채용 지표 취합",
     mailStatus: "",
@@ -1893,6 +1900,8 @@ function normalizeRecruitingMetricsState(value = {}) {
   const activeTab = RECRUITING_METRICS_TABS.some((tab) => tab.key === value.activeTab)
     ? value.activeTab
     : "details";
+  const detailUnitFilter = normalizeBusinessUnit(value.detailUnitFilter) || "all";
+  const progressUnitFilter = normalizeBusinessUnit(value.progressUnitFilter) || "all";
   const detailSheet = normalizeRecruitingSheet(
     value.detailSheet,
     RECRUITING_METRICS_DETAIL_COLUMNS,
@@ -1906,10 +1915,22 @@ function normalizeRecruitingMetricsState(value = {}) {
 
   return {
     activeTab,
+    detailUnitFilter,
+    progressUnitFilter,
     weekOf: String(value.weekOf || getTodayDate()).trim(),
     targets,
     detailSheet,
     progressSheet,
+    mailModalOpen: Boolean(value.mailModalOpen),
+    mailFrequency: ["manual", "weekly", "monthly"].includes(value.mailFrequency) ? value.mailFrequency : "weekly",
+    mailBody: String(value.mailBody || "").trim(),
+    mailDraft: value.mailDraft && typeof value.mailDraft === "object" ? {
+      frequency: ["manual", "weekly", "monthly"].includes(value.mailDraft.frequency) ? value.mailDraft.frequency : "weekly",
+      subject: String(value.mailDraft.subject || value.subject || "[TalentHub] 채용 진행 경과").trim(),
+      body: String(value.mailDraft.body || value.mailBody || "").trim(),
+      recipients: normalizeEmailList(value.mailDraft.recipients || value.recipients || [])
+    } : null,
+    saveStatus: String(value.saveStatus || "").trim(),
     recipients: normalizeEmailList(value.recipients || []),
     subject: String(value.subject || "[TalentHub] 주간 채용 지표 취합").trim(),
     mailStatus: String(value.mailStatus || "").trim(),
@@ -3644,6 +3665,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 let remoteSyncTimer = null;
 let remoteSyncInFlight = false;
 let remoteSyncReady = !REMOTE_SYNC_ENABLED;
+let recruitingMetricsMailModalOpen = false;
 
 function scheduleRemoteSync() {
   if (!REMOTE_SYNC_ENABLED || !remoteSyncReady) {
@@ -9506,12 +9528,13 @@ function getRecruitingMetricsState() {
 
 function canEditRecruitingMetricsUnit(unit) {
   const member = getCurrentMember();
+  const normalizedUnit = normalizeBusinessUnit(unit);
 
   if (isAdmin(member) || member?.role === "division_recruiter") {
     return true;
   }
 
-  return member?.role === "business_recruiter" && normalizeBusinessUnit(member.department) === unit;
+  return member?.role === "business_recruiter" && getMemberBusinessUnit(member) === normalizedUnit;
 }
 
 function getRecruitingMetricInterviewCases(unit) {
@@ -9787,13 +9810,7 @@ function syncRecruitingTargetsFromProgressSheet(metrics = getRecruitingMetricsSt
     return;
   }
 
-  const indexes = {
-    unit: sheet.columns.indexOf("사업부"),
-    hiringTarget: sheet.columns.indexOf("당해 채용 목표"),
-    keyTalentTarget: sheet.columns.indexOf("핵심인력 채용 목표"),
-    completed: sheet.columns.indexOf("작성 상태"),
-    weeklyNote: sheet.columns.indexOf("비고")
-  };
+  const indexes = getRecruitingProgressColumnIndexes(sheet);
 
   if (indexes.unit < 0) {
     return;
@@ -9854,12 +9871,7 @@ function syncRecruitingProgressSheetComputedValues(metrics = getRecruitingMetric
     return;
   }
 
-  const indexes = {
-    unit: sheet.columns.indexOf("사업부"),
-    offerSigned: sheet.columns.indexOf("오퍼서명(확보) 완료"),
-    joined: sheet.columns.indexOf("입사 완료"),
-    ratio: sheet.columns.indexOf("목표 달성률")
-  };
+  const indexes = getRecruitingProgressColumnIndexes(sheet);
 
   if (indexes.unit < 0) {
     return;
@@ -10006,6 +10018,10 @@ function setRecruitingMetricsTab(tabKey) {
   }
 
   metrics.activeTab = tabKey;
+  if (tabKey === "progress") {
+    syncRecruitingTargetsFromProgressSheet(metrics);
+    syncRecruitingProgressSheetComputedValues(metrics);
+  }
   persistState();
   renderRecruitingMetrics();
 }
@@ -10252,6 +10268,851 @@ async function sendRecruitingMetricsMail() {
 
     metrics.mailStatus = `채용 진행 경과 메일을 발송했습니다. (${recipients.length}명)`;
     metrics.lastAutoSentWeek = metrics.weekOf || getTodayDate();
+    addAuditLog("채용 지표 메일 발송", "채용 지표", recipients.join(", "));
+  } catch (error) {
+    console.warn(error);
+    metrics.mailStatus = error.message || "채용 지표 메일 발송 중 오류가 발생했습니다.";
+  }
+
+  persistState();
+  renderRecruitingMetrics();
+}
+
+function canViewAllRecruitingMetrics(member = getCurrentMember()) {
+  return Boolean(member && member.status === "active" && (isAdmin(member) || member.role === "division_recruiter"));
+}
+
+function getRecruitingMetricsAllowedUnits(member = getCurrentMember()) {
+  if (canViewAllRecruitingMetrics(member)) {
+    return [...BUSINESS_UNITS];
+  }
+
+  if (member?.role === "business_recruiter") {
+    return [getMemberBusinessUnit(member)].filter(Boolean);
+  }
+
+  return [];
+}
+
+function getRecruitingMetricsUnitFilter(sheetKey = getRecruitingMetricsActiveTab()) {
+  const metrics = getRecruitingMetricsState();
+  const allowedUnits = getRecruitingMetricsAllowedUnits();
+  const rawFilter = sheetKey === "progress" ? metrics.progressUnitFilter : metrics.detailUnitFilter;
+  const normalizedFilter = normalizeBusinessUnit(rawFilter);
+
+  if (canViewAllRecruitingMetrics()) {
+    return normalizedFilter || "all";
+  }
+
+  return allowedUnits[0] || "";
+}
+
+function setRecruitingMetricsUnitFilter(sheetKey, value) {
+  const metrics = getRecruitingMetricsState();
+  const filter = canViewAllRecruitingMetrics() ? normalizeBusinessUnit(value) || "all" : getRecruitingMetricsUnitFilter(sheetKey);
+
+  if (sheetKey === "progress") {
+    metrics.progressUnitFilter = filter;
+  } else {
+    metrics.detailUnitFilter = filter;
+  }
+
+  persistState({ skipRemoteSync: true });
+  renderRecruitingMetrics();
+}
+
+function renderRecruitingMetricsUnitFilter(sheetKey) {
+  const allowedUnits = getRecruitingMetricsAllowedUnits();
+  const selected = getRecruitingMetricsUnitFilter(sheetKey);
+  const canSelectAll = canViewAllRecruitingMetrics();
+  const options = canSelectAll
+    ? [`<option value="all" ${selected === "all" ? "selected" : ""}>전체 사업부</option>`, ...BUSINESS_UNITS.map((unit) => `<option value="${escapeHtml(unit)}" ${selected === unit ? "selected" : ""}>${escapeHtml(unit)}</option>`)]
+    : allowedUnits.map((unit) => `<option value="${escapeHtml(unit)}" selected>${escapeHtml(unit)}</option>`);
+
+  return `
+    <label class="field metrics-unit-filter">
+      <span>사업부</span>
+      <select class="control-input" data-recruiting-unit-filter="${escapeHtml(sheetKey)}" ${canSelectAll ? "" : "disabled"}>
+        ${options.join("")}
+      </select>
+    </label>
+  `;
+}
+
+function getRecruitingSheetColumnIndex(sheet, names = []) {
+  return names.map((name) => sheet.columns.indexOf(name)).find((index) => index >= 0) ?? -1;
+}
+
+function getRecruitingProgressColumnIndex(sheet, names = [], fallbackIndex = -1) {
+  const exactIndex = getRecruitingSheetColumnIndex(sheet, names);
+
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+
+  return Number.isInteger(fallbackIndex) && fallbackIndex >= 0 && sheet?.columns?.length > fallbackIndex
+    ? fallbackIndex
+    : -1;
+}
+
+function getRecruitingProgressColumnIndexes(sheet = getRecruitingMetricsSheet("progress")) {
+  return {
+    unit: getRecruitingProgressColumnIndex(sheet, ["사업부"], 0),
+    hiringTarget: getRecruitingProgressColumnIndex(sheet, ["당해 채용 목표"], 1),
+    keyTalentTarget: getRecruitingProgressColumnIndex(sheet, ["핵심인력 채용 목표"], 2),
+    offerSigned: getRecruitingProgressColumnIndex(sheet, ["오퍼서명(확보) 완료"], 3),
+    joined: getRecruitingProgressColumnIndex(sheet, ["입사 완료"], 4),
+    ratio: getRecruitingProgressColumnIndex(sheet, ["목표 달성률"], 5),
+    completed: getRecruitingProgressColumnIndex(sheet, ["작성 상태"], 6),
+    weeklyNote: getRecruitingProgressColumnIndex(sheet, ["비고"], 7)
+  };
+}
+
+function getRecruitingDetailBusinessUnitIndex(sheet = getRecruitingMetricsSheet("details")) {
+  return getRecruitingSheetColumnIndex(sheet, ["사업부"]);
+}
+
+function getRecruitingDetailRowUnit(row, sheet = getRecruitingMetricsSheet("details")) {
+  const unitIndex = getRecruitingDetailBusinessUnitIndex(sheet);
+  return unitIndex >= 0 ? normalizeBusinessUnit(row.cells[unitIndex]) : "";
+}
+
+function isRecruitingDetailRowEmpty(row) {
+  return !row?.cells?.some((cell) => String(cell || "").trim());
+}
+
+function canEditRecruitingDetailRow(row, sheet = getRecruitingMetricsSheet("details")) {
+  const unit = getRecruitingDetailRowUnit(row, sheet);
+
+  if (!unit) {
+    return getRecruitingMetricsAllowedUnits().length > 0;
+  }
+
+  return canEditRecruitingMetricsUnit(unit);
+}
+
+function shouldShowRecruitingSheetRow(sheetKey, row) {
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+  const filter = getRecruitingMetricsUnitFilter(sheetKey);
+
+  if (sheetKey === "details") {
+    const unit = getRecruitingDetailRowUnit(row, sheet);
+
+    if (!unit) {
+      return filter !== "all" || canViewAllRecruitingMetrics();
+    }
+
+    if (!canViewAllRecruitingMetrics() && !canEditRecruitingMetricsUnit(unit)) {
+      return false;
+    }
+
+    return filter === "all" || unit === filter;
+  }
+
+  const unitIndex = getRecruitingProgressColumnIndexes(sheet).unit;
+  const unit = unitIndex >= 0 ? normalizeBusinessUnit(row.cells[unitIndex]) : "";
+
+  if (!unit) {
+    return false;
+  }
+
+  if (!canViewAllRecruitingMetrics() && !canEditRecruitingMetricsUnit(unit)) {
+    return false;
+  }
+
+  return filter === "all" || unit === filter;
+}
+
+function getRecruitingVisibleRows(sheetKey) {
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+  return sheet.rows
+    .map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ row }) => shouldShowRecruitingSheetRow(sheetKey, row));
+}
+
+function ensureRecruitingDetailRowUnit(row, sheet = getRecruitingMetricsSheet("details")) {
+  const unitIndex = getRecruitingDetailBusinessUnitIndex(sheet);
+
+  if (unitIndex < 0) {
+    return;
+  }
+
+  const currentUnit = normalizeBusinessUnit(row.cells[unitIndex]);
+
+  if (currentUnit && canEditRecruitingMetricsUnit(currentUnit)) {
+    row.cells[unitIndex] = currentUnit;
+    return;
+  }
+
+  const fallbackUnit = getRecruitingMetricsUnitFilter("details") !== "all"
+    ? getRecruitingMetricsUnitFilter("details")
+    : getRecruitingMetricsAllowedUnits()[0] || "";
+
+  if (fallbackUnit) {
+    row.cells[unitIndex] = fallbackUnit;
+  }
+}
+
+function renderRecruitingBusinessUnitCell(sheetKey, row, rowIndex, columnIndex, disabled) {
+  const currentUnit = normalizeBusinessUnit(row.cells[columnIndex]);
+  const allowedUnits = getRecruitingMetricsAllowedUnits();
+  const units = canViewAllRecruitingMetrics()
+    ? BUSINESS_UNITS
+    : [...new Set([...allowedUnits, currentUnit].filter(Boolean))];
+
+  return `
+    <select class="metrics-sheet-cell metrics-sheet-select" data-recruiting-cell="${escapeHtml(sheetKey)}" data-row="${rowIndex}" data-col="${columnIndex}" ${disabled ? "disabled" : ""}>
+      <option value="" ${currentUnit ? "" : "selected"}>사업부 선택</option>
+      ${units.map((unit) => `<option value="${escapeHtml(unit)}" ${unit === currentUnit ? "selected" : ""}>${escapeHtml(unit)}</option>`).join("")}
+    </select>
+  `;
+}
+
+function isRecruitingProgressComputedColumn(sheet, columnIndex) {
+  return ["오퍼서명(확보) 완료", "입사 완료", "목표 달성률"].includes(sheet.columns[columnIndex])
+    || [3, 4, 5].includes(columnIndex);
+}
+
+function getRecruitingDetailSummaryByUnit(unit) {
+  const sheet = getRecruitingMetricsSheet("details");
+  const unitIndex = getRecruitingSheetColumnIndex(sheet, ["사업부"]);
+  const offerIndex = getRecruitingSheetColumnIndex(sheet, ["오퍼서명일", "오퍼서명(확보)일", "오퍼서명"]);
+  const joinedIndex = getRecruitingSheetColumnIndex(sheet, ["입사완료일", "입사 완료일", "입사완료"]);
+  let rowCount = 0;
+  let offerSigned = 0;
+  let joined = 0;
+
+  if (unitIndex < 0) {
+    return { rowCount, offerSigned, joined };
+  }
+
+  sheet.rows.forEach((row) => {
+    if (normalizeBusinessUnit(row.cells[unitIndex]) !== unit || isRecruitingDetailRowEmpty(row)) {
+      return;
+    }
+
+    rowCount += 1;
+
+    if (offerIndex >= 0 && String(row.cells[offerIndex] || "").trim()) {
+      offerSigned += 1;
+    }
+
+    if (joinedIndex >= 0 && String(row.cells[joinedIndex] || "").trim()) {
+      joined += 1;
+    }
+  });
+
+  return { rowCount, offerSigned, joined };
+}
+
+function getRecruitingMetricsComputedSummary(unit, metrics = getRecruitingMetricsState()) {
+  const target = metrics.targets[unit] || {};
+  const detailSummary = getRecruitingDetailSummaryByUnit(unit);
+  const cases = getRecruitingMetricInterviewCases(unit);
+  const fallbackOfferSigned = cases.filter((item) => item.offerSignedAt).length;
+  const fallbackJoined = cases.filter((item) => item.joinedAt).length;
+  const offerSigned = detailSummary.rowCount ? detailSummary.offerSigned : fallbackOfferSigned;
+  const joined = detailSummary.rowCount ? detailSummary.joined : fallbackJoined;
+  const hiringTarget = Number(target.hiringTarget || 0) || 0;
+  const ratio = hiringTarget ? Math.round((offerSigned / hiringTarget) * 1000) / 10 : 0;
+
+  return {
+    unit,
+    hiringTarget,
+    keyTalentTarget: Number(target.keyTalentTarget || 0) || 0,
+    offerSigned,
+    joined,
+    ratio,
+    weeklyNote: target.weeklyNote || "",
+    completed: Boolean(target.completed),
+    completedAt: target.completedAt || "",
+    completedBy: target.completedBy || ""
+  };
+}
+
+function writeRecruitingProgressSummaryForUnit(unit, metrics = getRecruitingMetricsState()) {
+  const normalizedUnit = normalizeBusinessUnit(unit);
+  const sheet = metrics.progressSheet;
+
+  if (!normalizedUnit || !sheet?.rows?.length) {
+    return false;
+  }
+
+  const indexes = getRecruitingProgressColumnIndexes(sheet);
+
+  if (indexes.unit < 0) {
+    return false;
+  }
+
+  const progressRow = sheet.rows.find((row) => normalizeBusinessUnit(row.cells[indexes.unit]) === normalizedUnit);
+
+  if (!progressRow) {
+    return false;
+  }
+
+  const summary = getRecruitingMetricsComputedSummary(normalizedUnit, metrics);
+
+  if (indexes.offerSigned >= 0) {
+    progressRow.cells[indexes.offerSigned] = String(summary.offerSigned);
+  }
+
+  if (indexes.joined >= 0) {
+    progressRow.cells[indexes.joined] = String(summary.joined);
+  }
+
+  if (indexes.ratio >= 0) {
+    progressRow.cells[indexes.ratio] = `${summary.ratio}%`;
+  }
+
+  return true;
+}
+
+function getRecruitingMetricsRows() {
+  const metrics = getRecruitingMetricsState();
+  syncRecruitingTargetsFromProgressSheet(metrics);
+
+  return BUSINESS_UNITS.map((unit) => getRecruitingMetricsComputedSummary(unit, metrics));
+}
+
+function syncRecruitingProgressSheetComputedValues(metrics = getRecruitingMetricsState()) {
+  const sheet = metrics.progressSheet;
+
+  if (!sheet?.columns?.length || !sheet?.rows?.length) {
+    return;
+  }
+
+  const indexes = getRecruitingProgressColumnIndexes(sheet);
+
+  if (indexes.unit < 0) {
+    return;
+  }
+
+  sheet.rows.forEach((row) => {
+    const unit = normalizeBusinessUnit(row.cells[indexes.unit]);
+
+    if (!unit) {
+      return;
+    }
+
+    writeRecruitingProgressSummaryForUnit(unit, metrics);
+  });
+}
+
+function saveRecruitingMetrics() {
+  const metrics = getRecruitingMetricsState();
+  syncRecruitingTargetsFromProgressSheet(metrics);
+  syncRecruitingProgressSheetComputedValues(metrics);
+  metrics.saveStatus = `저장 완료 · ${getTimestampText()}`;
+  persistState();
+  renderRecruitingMetrics();
+  showToast("채용 지표 데이터가 저장되었습니다.");
+}
+
+function getRecruitingMailDraft() {
+  const metrics = getRecruitingMetricsState();
+  const draft = metrics.mailDraft || {};
+
+  return {
+    frequency: draft.frequency || metrics.mailFrequency || "weekly",
+    subject: draft.subject || metrics.subject || "[TalentHub] 채용 진행 경과",
+    body: draft.body || metrics.mailBody || "채용 진행 경과 취합 결과를 공유드립니다.",
+    recipients: normalizeEmailList(draft.recipients || metrics.recipients || [])
+  };
+}
+
+function openRecruitingMetricsMailModal() {
+  const metrics = getRecruitingMetricsState();
+  metrics.mailDraft = getRecruitingMailDraft();
+  recruitingMetricsMailModalOpen = true;
+  renderRecruitingMetrics();
+}
+
+function closeRecruitingMetricsMailModal() {
+  recruitingMetricsMailModalOpen = false;
+  renderRecruitingMetrics();
+}
+
+function updateRecruitingMailDraft(field, value) {
+  const metrics = getRecruitingMetricsState();
+  metrics.mailDraft = getRecruitingMailDraft();
+
+  if (field === "recipients") {
+    metrics.mailDraft.recipients = normalizeEmailList(value);
+  } else if (field === "frequency") {
+    metrics.mailDraft.frequency = ["manual", "weekly", "monthly"].includes(value) ? value : "weekly";
+  } else {
+    metrics.mailDraft[field] = String(value || "").trim();
+  }
+
+  state.recruitingMetrics.mailDraft = metrics.mailDraft;
+}
+
+function saveRecruitingMailTemplate() {
+  const metrics = getRecruitingMetricsState();
+  const draft = getRecruitingMailDraft();
+  metrics.mailFrequency = draft.frequency;
+  metrics.subject = draft.subject;
+  metrics.mailBody = draft.body;
+  metrics.recipients = draft.recipients;
+  metrics.mailDraft = draft;
+  metrics.saveStatus = `메일 양식 저장 완료 · ${getTimestampText()}`;
+  persistState();
+  renderRecruitingMetrics();
+  showToast("채용 지표 메일 양식이 저장되었습니다.");
+}
+
+function renderRecruitingMetricsMailModal() {
+  const metrics = getRecruitingMetricsState();
+
+  if (!recruitingMetricsMailModalOpen) {
+    return "";
+  }
+
+  const draft = getRecruitingMailDraft();
+  const recipientsText = draft.recipients.join("\n");
+  const filter = getRecruitingMetricsUnitFilter("progress");
+  const previewRows = getRecruitingMetricsRows()
+    .filter((row) => filter === "all" || row.unit === filter)
+    .filter((row) => canViewAllRecruitingMetrics() || canEditRecruitingMetricsUnit(row.unit));
+
+  return `
+    <div class="trending-modal-backdrop" data-recruiting-mail-backdrop>
+      <section class="trending-modal recruiting-mail-modal" role="dialog" aria-modal="true" aria-labelledby="recruiting-mail-title">
+        <div class="trending-modal-header">
+          <div>
+            <strong id="recruiting-mail-title">취합 메일 발송 설정</strong>
+            <span>발송 전 메일 양식과 수신처를 확인하고 저장할 수 있습니다.</span>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-recruiting-mail>닫기</button>
+        </div>
+        <div class="trending-modal-body recruiting-mail-modal-body">
+          <div class="metrics-control-grid">
+            <label class="field">
+              <span>발송 주기</span>
+              <select class="control-input" data-recruiting-mail-draft="frequency">
+                <option value="manual" ${draft.frequency === "manual" ? "selected" : ""}>수동 발송</option>
+                <option value="weekly" ${draft.frequency === "weekly" ? "selected" : ""}>주간</option>
+                <option value="monthly" ${draft.frequency === "monthly" ? "selected" : ""}>월간</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>메일 제목</span>
+              <input class="control-input" value="${inputValue(draft.subject)}" data-recruiting-mail-draft="subject" />
+            </label>
+            <label class="field">
+              <span>수신처</span>
+              <textarea class="control-textarea compact-textarea" rows="4" data-recruiting-mail-draft="recipients" placeholder="여러 명은 줄바꿈 또는 쉼표로 입력">${escapeHtml(recipientsText)}</textarea>
+            </label>
+          </div>
+          <label class="field">
+            <span>메일 본문</span>
+            <textarea class="control-textarea" rows="8" data-recruiting-mail-draft="body">${escapeHtml(draft.body)}</textarea>
+          </label>
+          <div class="metrics-mail-preview">
+            <strong>발송 데이터 미리보기</strong>
+            <div class="table-scroll metrics-table-wrap">
+              <table class="metrics-table">
+                <thead>
+                  <tr>
+                    <th>사업부</th>
+                    <th>당해 목표</th>
+                    <th>핵심인력 목표</th>
+                    <th>오퍼서명</th>
+                    <th>입사 완료</th>
+                    <th>달성률</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${previewRows.map((row) => `
+                    <tr>
+                      <td>${escapeHtml(row.unit)}</td>
+                      <td>${escapeHtml(row.hiringTarget)}</td>
+                      <td>${escapeHtml(row.keyTalentTarget)}</td>
+                      <td>${escapeHtml(row.offerSigned)}</td>
+                      <td>${escapeHtml(row.joined)}</td>
+                      <td>${escapeHtml(row.ratio)}%</td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="ghost-button" type="button" data-save-recruiting-mail-template>양식 저장</button>
+            <button class="primary-button" type="button" data-send-recruiting-mail-final>결과 발송</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderRecruitingMetrics() {
+  const container = $("#recruiting-metrics-content");
+
+  if (!container) {
+    return;
+  }
+
+  const metrics = getRecruitingMetricsState();
+  const activeTab = getRecruitingMetricsActiveTab();
+  syncRecruitingProgressSheetComputedValues(metrics);
+
+  container.innerHTML = `
+    <div class="metrics-workspace">
+      <section class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h4>${escapeHtml(getRecruitingMetricsTabLabel(activeTab))}</h4>
+            <span>${activeTab === "details" ? "사업부 권한에 맞춰 채용 인물별 상세 데이터를 관리합니다." : "채용 실적 상세 값과 사업부별 목표를 기준으로 진행 경과를 취합합니다."}</span>
+          </div>
+          <div class="job-fit-result-actions">
+            <button class="ghost-button compact-button" type="button" data-save-recruiting-metrics>저장</button>
+            <button class="ghost-button compact-button" type="button" data-download-recruiting-metrics>엑셀 다운로드</button>
+            ${activeTab === "progress" ? `<button class="primary-button compact-button" type="button" data-open-recruiting-mail>취합 메일 발송</button>` : ""}
+          </div>
+        </div>
+        <div class="metrics-tab-list" role="tablist" aria-label="채용 지표 탭">
+          ${RECRUITING_METRICS_TABS.map((tab) => `
+            <button class="metrics-tab ${activeTab === tab.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeTab === tab.key}" data-recruiting-metrics-tab="${escapeHtml(tab.key)}">
+              ${escapeHtml(tab.label)}
+            </button>
+          `).join("")}
+        </div>
+        <div class="metrics-filter-row">
+          ${renderRecruitingMetricsUnitFilter(activeTab)}
+          ${activeTab === "progress" ? `
+            <label class="field">
+              <span>취합 기준 주</span>
+              <input id="recruiting-metrics-week" class="control-input" type="date" value="${inputValue(metrics.weekOf)}" />
+            </label>
+          ` : ""}
+        </div>
+        ${metrics.saveStatus ? `<p class="job-fit-inline-status">${escapeHtml(metrics.saveStatus)}</p>` : ""}
+        ${metrics.mailStatus ? `<p class="job-fit-inline-status">${escapeHtml(metrics.mailStatus)}</p>` : ""}
+        ${renderRecruitingMetricsSheet(activeTab)}
+      </section>
+    </div>
+    ${renderRecruitingMetricsMailModal()}
+  `;
+}
+
+function renderRecruitingMetricsSheet(sheetKey) {
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+  const visibleRows = getRecruitingVisibleRows(sheetKey);
+
+  return `
+    <div class="metrics-sheet-toolbar">
+      <div>
+        <strong>${escapeHtml(getRecruitingMetricsTabLabel(sheetKey))} 데이터시트</strong>
+        <span>${sheetKey === "details" ? "사업부 열은 드롭다운으로 입력하며, 권한 범위 밖의 데이터는 표시되지 않습니다." : "오퍼서명·입사완료·달성률은 채용 실적 상세 값으로 자동 반영됩니다."}</span>
+      </div>
+      <div class="job-fit-result-actions">
+        <button class="ghost-button compact-button" type="button" data-add-recruiting-row="${escapeHtml(sheetKey)}">행 추가</button>
+        <button class="ghost-button compact-button" type="button" data-add-recruiting-column="${escapeHtml(sheetKey)}">열 추가</button>
+      </div>
+    </div>
+    <div class="table-scroll metrics-table-wrap metrics-sheet-wrap">
+      <table class="metrics-table metrics-sheet-table">
+        <thead>
+          <tr>
+            <th class="metrics-row-number">#</th>
+            ${sheet.columns.map((column, columnIndex) => `
+              <th>
+                <div class="metrics-column-header">
+                  <input class="metrics-column-input" value="${inputValue(column)}" aria-label="열 이름" data-recruiting-column="${escapeHtml(sheetKey)}" data-col="${columnIndex}" />
+                  <button class="icon-button tiny-icon-button" type="button" aria-label="열 삭제" data-delete-recruiting-column="${escapeHtml(sheetKey)}" data-col="${columnIndex}" ${sheet.columns.length <= 1 ? "disabled" : ""}>×</button>
+                </div>
+              </th>
+            `).join("")}
+            <th class="metrics-action-column">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${visibleRows.map(({ row, rowIndex }, visibleIndex) => {
+            const detailEditable = sheetKey === "details" ? canEditRecruitingDetailRow(row, sheet) : true;
+            const progressUnitIndex = sheetKey === "progress" ? getRecruitingProgressColumnIndexes(sheet).unit : -1;
+            const progressUnit = progressUnitIndex >= 0 ? normalizeBusinessUnit(row.cells[progressUnitIndex]) : "";
+            const progressEditable = sheetKey !== "progress" || canEditRecruitingMetricsUnit(progressUnit);
+
+            return `
+              <tr>
+                <th class="metrics-row-number">${visibleIndex + 1}</th>
+                ${sheet.columns.map((column, columnIndex) => {
+                  const isBusinessUnitCell = sheetKey === "details" && column === "사업부";
+                  const disabled = sheetKey === "details"
+                    ? !detailEditable
+                    : !progressEditable || isRecruitingProgressComputedColumn(sheet, columnIndex);
+                  let cellValue = row.cells[columnIndex] || "";
+
+                  if (sheetKey === "progress") {
+                    const indexes = getRecruitingProgressColumnIndexes(sheet);
+                    const unit = indexes.unit >= 0 ? normalizeBusinessUnit(row.cells[indexes.unit]) : "";
+                    const summary = unit ? getRecruitingMetricsComputedSummary(unit) : null;
+
+                    if (summary && columnIndex === indexes.offerSigned) {
+                      cellValue = String(summary.offerSigned);
+                      row.cells[columnIndex] = cellValue;
+                    } else if (summary && columnIndex === indexes.joined) {
+                      cellValue = String(summary.joined);
+                      row.cells[columnIndex] = cellValue;
+                    } else if (summary && columnIndex === indexes.ratio) {
+                      cellValue = `${summary.ratio}%`;
+                      row.cells[columnIndex] = cellValue;
+                    }
+                  }
+
+                  return `
+                    <td>
+                      ${isBusinessUnitCell
+                        ? renderRecruitingBusinessUnitCell(sheetKey, row, rowIndex, columnIndex, disabled)
+                        : `<textarea class="metrics-sheet-cell" rows="1" data-recruiting-cell="${escapeHtml(sheetKey)}" data-row="${rowIndex}" data-col="${columnIndex}" ${disabled ? "disabled" : ""}>${escapeHtml(cellValue)}</textarea>`}
+                    </td>
+                  `;
+                }).join("")}
+                <td class="metrics-action-column">
+                  <button class="ghost-button compact-button metrics-row-delete" type="button" data-delete-recruiting-row="${escapeHtml(sheetKey)}" data-row="${rowIndex}" ${(sheet.rows.length <= 1 || (sheetKey === "details" && !detailEditable) || (sheetKey === "progress" && !progressEditable)) ? "disabled" : ""}>삭제</button>
+                </td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function updateRecruitingSheetCell(input) {
+  const sheetKey = input.dataset.recruitingCell;
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+  const rowIndex = Number(input.dataset.row);
+  const columnIndex = Number(input.dataset.col);
+
+  if (!sheet?.rows?.[rowIndex] || !Number.isInteger(columnIndex)) {
+    return;
+  }
+
+  const row = sheet.rows[rowIndex];
+
+  if (sheetKey === "details") {
+    const previousUnit = getRecruitingDetailRowUnit(row, sheet);
+    const unitIndex = getRecruitingDetailBusinessUnitIndex(sheet);
+
+    if (columnIndex === unitIndex) {
+      const requestedUnit = normalizeBusinessUnit(input.value);
+
+      if (requestedUnit && !canEditRecruitingMetricsUnit(requestedUnit)) {
+        input.value = getRecruitingDetailRowUnit(row, sheet) || "";
+        showToast("권한이 있는 사업부만 선택할 수 있습니다.");
+        return;
+      }
+
+      row.cells[columnIndex] = requestedUnit;
+    } else {
+      if (!canEditRecruitingDetailRow(row, sheet)) {
+        return;
+      }
+
+      ensureRecruitingDetailRowUnit(row, sheet);
+      row.cells[columnIndex] = input.value;
+    }
+
+    syncRecruitingProgressSheetComputedValues();
+    writeRecruitingProgressSummaryForUnit(previousUnit);
+    writeRecruitingProgressSummaryForUnit(getRecruitingDetailRowUnit(row, sheet));
+  } else {
+    const unitIndex = getRecruitingProgressColumnIndexes(sheet).unit;
+    const unit = unitIndex >= 0 ? normalizeBusinessUnit(row.cells[unitIndex]) : "";
+
+    if (!canEditRecruitingMetricsUnit(unit) || isRecruitingProgressComputedColumn(sheet, columnIndex)) {
+      return;
+    }
+
+    row.cells[columnIndex] = input.value;
+    syncRecruitingTargetsFromProgressSheet();
+    syncRecruitingProgressSheetComputedValues();
+  }
+
+  const metrics = getRecruitingMetricsState();
+  metrics.saveStatus = "저장 전 변경사항이 있습니다.";
+  persistState({ skipRemoteSync: true });
+  syncRecruitingProgressSheetComputedValues(metrics);
+}
+
+function addRecruitingSheetRow(sheetKey) {
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+
+  if (!sheet) {
+    return;
+  }
+
+  const row = createRecruitingSheetRow(sheet.columns.length);
+
+  if (sheetKey === "details") {
+    ensureRecruitingDetailRowUnit(row, sheet);
+  } else {
+    const unitIndex = getRecruitingProgressColumnIndexes(sheet).unit;
+    const unit = getRecruitingMetricsUnitFilter("progress") !== "all"
+      ? getRecruitingMetricsUnitFilter("progress")
+      : getRecruitingMetricsAllowedUnits()[0] || "";
+
+    if (unitIndex >= 0 && unit) {
+      row.cells[unitIndex] = unit;
+    }
+  }
+
+  sheet.rows.push(row);
+  getRecruitingMetricsState().saveStatus = "저장 전 변경사항이 있습니다.";
+  persistState({ skipRemoteSync: true });
+  renderRecruitingMetrics();
+}
+
+function handleRecruitingSheetPaste(event) {
+  const input = event.target.closest("[data-recruiting-cell]");
+
+  if (!input) {
+    return;
+  }
+
+  const text = event.clipboardData?.getData("text/plain") || "";
+
+  if (!text.includes("\t") && !text.includes("\n")) {
+    return;
+  }
+
+  event.preventDefault();
+
+  const sheetKey = input.dataset.recruitingCell;
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+  const startRow = Number(input.dataset.row);
+  const startColumn = Number(input.dataset.col);
+
+  if (!sheet || !Number.isInteger(startRow) || !Number.isInteger(startColumn)) {
+    return;
+  }
+
+  const rows = text
+    .replace(/\r/g, "")
+    .replace(/\n$/, "")
+    .split("\n")
+    .map((line) => line.split("\t"));
+  const requiredRows = startRow + rows.length;
+  const requiredColumns = startColumn + Math.max(...rows.map((row) => row.length), 1);
+
+  ensureRecruitingSheetSize(sheet, requiredRows, requiredColumns);
+
+  rows.forEach((cells, rowOffset) => {
+    const targetRow = sheet.rows[startRow + rowOffset];
+
+    if (sheetKey === "details") {
+      ensureRecruitingDetailRowUnit(targetRow, sheet);
+    }
+
+    cells.forEach((cell, columnOffset) => {
+      const columnIndex = startColumn + columnOffset;
+
+      if (sheetKey === "details" && !canEditRecruitingDetailRow(targetRow, sheet)) {
+        return;
+      }
+
+      if (sheetKey === "progress" && isRecruitingProgressComputedColumn(sheet, columnIndex)) {
+        return;
+      }
+
+      targetRow.cells[columnIndex] = cell.trim();
+    });
+  });
+
+  if (sheetKey === "progress") {
+    syncRecruitingTargetsFromProgressSheet();
+  }
+
+  syncRecruitingProgressSheetComputedValues();
+  getRecruitingMetricsState().saveStatus = "저장 전 변경사항이 있습니다.";
+  persistState({ skipRemoteSync: true });
+  renderRecruitingMetrics();
+}
+
+function buildRecruitingMetricsExcelHtml(sheetKey = getRecruitingMetricsActiveTab()) {
+  const sheet = getRecruitingMetricsSheet(sheetKey);
+  const title = getRecruitingMetricsTabLabel(sheetKey);
+  const visibleRows = getRecruitingVisibleRows(sheetKey);
+
+  return [
+    "<html><head><meta charset=\"utf-8\"><style>",
+    "table{border-collapse:collapse;font-family:'Malgun Gothic',Arial,sans-serif;font-size:11pt}th,td{border:1px solid #d1d5db;padding:8px;text-align:left;vertical-align:top}th{background:#eef4ff;font-weight:700}",
+    "</style></head><body>",
+    `<h2>${escapeHtml(title)} (${escapeHtml(getRecruitingMetricsState().weekOf || getTodayDate())})</h2>`,
+    "<table><thead><tr>",
+    sheet.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join(""),
+    "</tr></thead><tbody>",
+    visibleRows.map(({ row }) => {
+      const progressIndexes = sheetKey === "progress" ? getRecruitingProgressColumnIndexes(sheet) : null;
+      const progressUnit = progressIndexes && progressIndexes.unit >= 0 ? normalizeBusinessUnit(row.cells[progressIndexes.unit]) : "";
+      const progressSummary = progressUnit ? getRecruitingMetricsComputedSummary(progressUnit) : null;
+
+      return `
+        <tr>
+          ${sheet.columns.map((_, index) => {
+            let value = row.cells[index] || "";
+
+            if (progressSummary && index === progressIndexes.offerSigned) {
+              value = String(progressSummary.offerSigned);
+            } else if (progressSummary && index === progressIndexes.joined) {
+              value = String(progressSummary.joined);
+            } else if (progressSummary && index === progressIndexes.ratio) {
+              value = `${progressSummary.ratio}%`;
+            }
+
+            return `<td>${escapeHtml(value)}</td>`;
+          }).join("")}
+        </tr>
+      `;
+    }).join(""),
+    "</tbody></table></body></html>"
+  ].join("");
+}
+
+async function sendRecruitingMetricsMail() {
+  const metrics = getRecruitingMetricsState();
+  const draft = getRecruitingMailDraft();
+  metrics.mailStatus = "채용 진행 경과 메일을 발송 중입니다.";
+  renderRecruitingMetrics();
+
+  try {
+    const recipients = normalizeEmailList(draft.recipients);
+
+    if (!recipients.length) {
+      throw new Error("메일 수신처를 입력해 주세요.");
+    }
+
+    const response = await fetch("/api/recruiting-metrics-mail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipients,
+        subject: draft.subject || "[TalentHub] 채용 진행 경과",
+        body: draft.body,
+        frequency: draft.frequency,
+        weekOf: metrics.weekOf,
+        html: buildRecruitingMetricsExcelHtml("progress"),
+        rows: getRecruitingMetricsRows()
+      })
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "메일 발송에 실패했습니다.");
+    }
+
+    metrics.mailStatus = `채용 진행 경과 메일을 발송했습니다. (${recipients.length}명)`;
+    metrics.lastAutoSentWeek = metrics.weekOf || getTodayDate();
+    recruitingMetricsMailModalOpen = false;
+    metrics.mailFrequency = draft.frequency;
+    metrics.subject = draft.subject;
+    metrics.mailBody = draft.body;
+    metrics.recipients = recipients;
+    metrics.mailDraft = draft;
     addAuditLog("채용 지표 메일 발송", "채용 지표", recipients.join(", "));
   } catch (error) {
     console.warn(error);
@@ -24305,6 +25166,31 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-save-recruiting-metrics]")) {
+      saveRecruitingMetrics();
+      return;
+    }
+
+    if (event.target.closest("[data-open-recruiting-mail]")) {
+      openRecruitingMetricsMailModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-recruiting-mail]") || event.target.matches("[data-recruiting-mail-backdrop]")) {
+      closeRecruitingMetricsMailModal();
+      return;
+    }
+
+    if (event.target.closest("[data-save-recruiting-mail-template]")) {
+      saveRecruitingMailTemplate();
+      return;
+    }
+
+    if (event.target.closest("[data-send-recruiting-mail-final]")) {
+      sendRecruitingMetricsMail();
+      return;
+    }
+
     const recruitingMetricsTabButton = event.target.closest("[data-recruiting-metrics-tab]");
     if (recruitingMetricsTabButton) {
       setRecruitingMetricsTab(recruitingMetricsTabButton.dataset.recruitingMetricsTab);
@@ -24990,6 +25876,10 @@ function bindEvents() {
     if (event.target.matches("[data-recruiting-column]")) {
       updateRecruitingSheetColumn(event.target);
     }
+
+    if (event.target.matches("[data-recruiting-mail-draft]")) {
+      updateRecruitingMailDraft(event.target.dataset.recruitingMailDraft, event.target.value);
+    }
   });
 
   document.addEventListener("paste", (event) => {
@@ -25102,6 +25992,22 @@ function bindEvents() {
       const metrics = getRecruitingMetricsState();
       metrics.autoSendOnComplete = event.target.checked;
       persistState();
+      renderRecruitingMetrics();
+      return;
+    }
+
+    if (event.target.matches("[data-recruiting-unit-filter]")) {
+      setRecruitingMetricsUnitFilter(event.target.dataset.recruitingUnitFilter, event.target.value);
+      return;
+    }
+
+    if (event.target.matches("[data-recruiting-mail-draft]")) {
+      updateRecruitingMailDraft(event.target.dataset.recruitingMailDraft, event.target.value);
+      return;
+    }
+
+    if (event.target.matches("select[data-recruiting-cell]")) {
+      updateRecruitingSheetCell(event.target);
       renderRecruitingMetrics();
       return;
     }
