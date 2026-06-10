@@ -1479,7 +1479,7 @@ tr:last-child td {
 }
 
 .policy-chat-layout {
-  grid-template-columns: minmax(320px, 0.82fr) minmax(0, 1.58fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: start;
 }
 
@@ -1521,14 +1521,6 @@ tr:last-child td {
   font-size: 15px;
 }
 
-.policy-panel-icon-button {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  padding: 0;
-  font-size: 16px;
-}
-
 .policy-source-reader-body {
   display: grid;
   align-content: start;
@@ -1550,55 +1542,6 @@ tr:last-child td {
 }
 
 .policy-source-title-block span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.policy-source-guide-pill {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 0;
-  border-radius: 999px;
-  padding: 10px 14px;
-  color: var(--text);
-  background: #eef1fb;
-  cursor: pointer;
-  text-align: left;
-}
-
-.policy-source-guide-mark {
-  position: relative;
-  width: 16px;
-  height: 16px;
-}
-
-.policy-source-guide-mark::before,
-.policy-source-guide-mark::after {
-  content: "";
-  position: absolute;
-  background: var(--text);
-  transform: rotate(45deg);
-}
-
-.policy-source-guide-mark::before {
-  width: 9px;
-  height: 9px;
-  left: 1px;
-  top: 5px;
-}
-
-.policy-source-guide-mark::after {
-  width: 5px;
-  height: 5px;
-  right: 1px;
-  top: 1px;
-  background: var(--blue);
-}
-
-.policy-source-guide-count {
   color: var(--muted);
   font-size: 12px;
 }

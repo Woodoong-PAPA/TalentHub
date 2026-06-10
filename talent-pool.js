@@ -13202,18 +13202,13 @@ function renderPolicySourceReader() {
     <section class="policy-source-reader" aria-label="채용 기준 출처">
       <div class="policy-notebook-panel-header">
         <strong>출처</strong>
-        <button class="icon-button policy-panel-icon-button" type="button" data-open-policy-sources aria-label="소스 데이터 관리">⌗</button>
+        <button class="ghost-button compact-button" type="button" data-open-policy-sources>소스 데이터 ${state.policySources.length}개</button>
       </div>
       <div class="policy-source-reader-body">
         <div class="policy-source-title-block">
           <h4>${escapeHtml(source?.title || "채용 기준 문서")}</h4>
           ${sourceMeta ? `<span>${escapeHtml(sourceMeta)}</span>` : ""}
         </div>
-        <button class="policy-source-guide-pill" type="button" data-open-policy-sources>
-          <span class="policy-source-guide-mark" aria-hidden="true"></span>
-          <strong>소스 가이드</strong>
-          <span class="policy-source-guide-count">${state.policySources.length}개</span>
-        </button>
         ${citation?.sourceId === source?.id ? `
           <article class="policy-source-focus">
             <span>선택된 근거 문구</span>
@@ -13426,12 +13421,10 @@ function renderPolicyChat() {
         <div class="policy-notebook-panel-header">
           <strong>채팅</strong>
           <div class="policy-chat-actions">
-            <button class="ghost-button compact-button" type="button" data-open-policy-sources>소스 데이터 ${state.policySources.length}개</button>
             <button class="ghost-button compact-button" type="button" data-clear-policy-chat>대화 초기화</button>
           </div>
         </div>
         <div class="policy-chat-workspace">
-          ${renderPolicyCitationPanel()}
           <div class="policy-message-list">${messages}${loadingMessage}</div>
           <form id="policy-chat-form" class="policy-chat-form">
             <textarea class="control-textarea" id="policy-chat-question" name="question" placeholder="질문하거나 창작하세요">${escapeHtml(state.policyChatQuestion)}</textarea>
@@ -13570,7 +13563,7 @@ async function askPolicyChat(form) {
     const answer = await buildPolicyAssistantMessage(question);
     state.policyChatMessages.push(withCurrentAccountOwner(answer));
     state.policyChatMessages = state.policyChatMessages.slice(-POLICY_CHAT_MAX_MESSAGES);
-    state.policyChatSelectedCitationId = answer.citations?.[0]?.id || "";
+    state.policyChatSelectedCitationId = "";
     addAuditLog("채용 AI 챗봇 질문", "채용 기준 Q&A", question);
   } catch (error) {
     console.warn("Policy answer failed.", error);
