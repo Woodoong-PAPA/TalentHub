@@ -721,6 +721,7 @@ const state = {
     reportText: "",
     status: ""
   },
+  interviewReportPromptModalOpen: false,
   recruitingMetrics: {
     weekOf: getTodayDate(),
     targets: structuredClone(DEFAULT_RECRUITING_METRICS_TARGETS),
@@ -7858,6 +7859,33 @@ function renderInterviewTemplateSampleList(report) {
   `;
 }
 
+function renderInterviewReportPromptModal(report) {
+  if (!state.interviewReportPromptModalOpen) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-interview-report-prompt-backdrop>
+      <section class="trending-modal interview-report-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="interview-report-prompt-title">
+        <div class="modal-header">
+          <div>
+            <p class="section-kicker">REPORT PROMPT</p>
+            <h4 id="interview-report-prompt-title">보고서 작성 프롬프트</h4>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-interview-report-prompt>닫기</button>
+        </div>
+        <label class="field">
+          <span>작성 지시사항</span>
+          <textarea id="interview-report-prompt" class="control-textarea" rows="8" placeholder="예: 임원 보고용으로 리스크와 활용 가능성을 중심으로 정리">${escapeHtml(report.prompt)}</textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="primary-button" type="button" data-close-interview-report-prompt>저장</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function wrapInterviewReportLine(line, maxChars) {
   const text = String(line || "").trim();
 
@@ -7949,6 +7977,7 @@ function renderInterviewReport() {
 
   const report = getInterviewReportState();
   const templateSamples = getInterviewTemplateSamples(report);
+  const canGenerateReport = Boolean(report.scriptText.trim() && templateSamples.length && !report.scriptLoading && !report.templateLoading);
   const scriptUploadStatus = report.scriptStatus || report.scriptFileName || "파일을 선택하거나 드래그앤드랍";
   const templateUploadStatus = report.templateStatus || (templateSamples.length ? `저장된 샘플 ${templateSamples.length}개` : "복수 샘플 선택 가능");
 
@@ -7958,7 +7987,7 @@ function renderInterviewReport() {
         <div class="panel-header">
           <div>
             <h4>면담 스크립트</h4>
-            <span>텍스트 입력 또는 파일 업로드로 면담 원문을 등록합니다.</span>
+            <span>스크립트 파일과 면담록 작성 양식 샘플을 업로드하면 보고서를 생성할 수 있습니다.</span>
           </div>
           <button class="ghost-button compact-button" type="button" data-reset-interview-report>초기화</button>
         </div>
@@ -7974,21 +8003,13 @@ function renderInterviewReport() {
             <span class="report-upload-status">${renderMaybeProgressStatus(templateUploadStatus, report.templateLoading, report.templateProgress)}</span>
           </label>
         </div>
-        <label class="field">
-          <span>스크립트 원문</span>
-          <textarea id="interview-report-script" class="control-textarea" rows="8" placeholder="면담록 스크립트를 입력하세요.">${escapeHtml(report.scriptText)}</textarea>
-        </label>
-        <label class="field">
-          <span>보고서 작성 프롬프트</span>
-          <textarea id="interview-report-prompt" class="control-textarea compact-textarea" rows="3" placeholder="예: 임원 보고용으로 리스크와 활용 가능성을 중심으로 정리">${escapeHtml(report.prompt)}</textarea>
-        </label>
-        <label class="field">
-          <span>직접 입력 양식 기준</span>
-          <textarea id="interview-report-template" class="control-textarea compact-textarea" rows="4" placeholder="샘플 파일 외에 추가로 반영할 양식 기준이 있으면 입력">${escapeHtml(report.templateText)}</textarea>
-        </label>
+        <div class="report-prompt-row">
+          <button class="ghost-button" type="button" data-open-interview-report-prompt>보고서 작성 프롬프트</button>
+          <span>${escapeHtml(report.prompt ? "작성 프롬프트가 저장되어 있습니다." : "필요 시 보고서 작성 방향을 추가로 입력할 수 있습니다.")}</span>
+        </div>
         ${renderInterviewTemplateSampleList(report)}
         <div class="member-actions">
-          <button class="primary-button" type="button" data-generate-interview-report ${report.scriptText ? "" : "disabled"}>면담록 보고서 생성</button>
+          <button class="primary-button" type="button" data-generate-interview-report ${canGenerateReport ? "" : "disabled"}>면담록 보고서 생성</button>
           <button class="ghost-button" type="button" data-download-interview-report ${report.reportText ? "" : "disabled"}>Word 다운로드</button>
         </div>
         ${report.status ? `<p class="job-fit-inline-status">${escapeHtml(report.status)}</p>` : ""}
@@ -8002,6 +8023,7 @@ function renderInterviewReport() {
         </div>
         <textarea id="interview-report-output" class="control-textarea report-output-textarea" rows="22" placeholder="면담록 보고서 생성 결과가 여기에 표시됩니다.">${escapeHtml(report.reportText)}</textarea>
       </section>
+      ${renderInterviewReportPromptModal(report)}
     </div>
   `;
 }
@@ -8182,6 +8204,16 @@ function updateInterviewReportField(field, value) {
   persistState({ skipRemoteSync: true });
 }
 
+function openInterviewReportPromptModal() {
+  state.interviewReportPromptModalOpen = true;
+  renderInterviewReport();
+}
+
+function closeInterviewReportPromptModal() {
+  state.interviewReportPromptModalOpen = false;
+  renderInterviewReport();
+}
+
 function removeInterviewTemplateSample(sampleId) {
   const report = getInterviewReportState();
   report.templateSamples = getInterviewTemplateSamples(report).filter((sample) => sample.id !== sampleId);
@@ -8196,14 +8228,19 @@ function removeInterviewTemplateSample(sampleId) {
 
 function generateInterviewReport() {
   const report = getInterviewReportState();
+  const sampleCount = getInterviewTemplateSamples(report).length;
 
   if (!report.scriptText.trim()) {
-    showToast("면담 스크립트를 먼저 입력해 주세요.");
+    showToast("면담 스크립트 파일을 먼저 업로드해 주세요.");
+    return;
+  }
+
+  if (!sampleCount) {
+    showToast("면담록 작성 양식 샘플 파일을 먼저 업로드해 주세요.");
     return;
   }
 
   const templateCorpus = getInterviewTemplateCorpus(report);
-  const sampleCount = getInterviewTemplateSamples(report).length;
 
   if (templateCorpus) {
     report.templateProfile = analyzeInterviewTemplateProfile(templateCorpus, getInterviewTemplateSourceLabel(report));
@@ -8280,6 +8317,7 @@ function downloadInterviewReportDocument() {
 }
 
 function resetInterviewReport() {
+  state.interviewReportPromptModalOpen = false;
   state.interviewReport = normalizeInterviewReportState();
   persistState({ skipRemoteSync: true });
   renderInterviewReport();
@@ -21041,6 +21079,16 @@ function bindEvents() {
 
     if (event.target.closest("[data-generate-interview-report]")) {
       generateInterviewReport();
+      return;
+    }
+
+    if (event.target.closest("[data-open-interview-report-prompt]")) {
+      openInterviewReportPromptModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-interview-report-prompt]") || event.target.matches("[data-interview-report-prompt-backdrop]")) {
+      closeInterviewReportPromptModal();
       return;
     }
 

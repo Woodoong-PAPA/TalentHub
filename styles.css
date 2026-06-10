@@ -5366,6 +5366,23 @@ tr:last-child td {
   color: var(--blue-700);
 }
 
+.report-prompt-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.report-prompt-row span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.interview-report-prompt-modal {
+  width: min(640px, 100%);
+}
+
 .report-upload-status .ai-progress-status {
   margin: 0 auto;
 }
