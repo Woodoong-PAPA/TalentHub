@@ -710,6 +710,7 @@ const state = {
   },
   interviewReport: {
     scriptText: "",
+    scriptFile: null,
     scriptFileName: "",
     scriptStatus: "",
     scriptLoading: false,
@@ -1638,10 +1639,33 @@ function normalizePolicySource(source = {}) {
   };
 }
 
+function normalizeInterviewReportUpload(upload = {}) {
+  if (!upload || typeof upload !== "object") {
+    return null;
+  }
+
+  const dataUrl = String(upload.dataUrl || upload.url || "").trim();
+  const name = String(upload.name || upload.fileName || "").trim();
+
+  if (!dataUrl || !name) {
+    return null;
+  }
+
+  return {
+    id: upload.id || createId("interview-report-file"),
+    name,
+    size: Number(upload.size || 0) || 0,
+    type: String(upload.type || upload.fileType || "").trim(),
+    dataUrl,
+    uploadedAt: upload.uploadedAt || getTimestampText()
+  };
+}
+
 function normalizeInterviewTemplateSample(sample = {}) {
   const text = normalizePolicyText(sample.text || sample.content || sample.templateText);
+  const dataUrl = String(sample.dataUrl || "").trim();
 
-  if (!text) {
+  if (!text && !dataUrl) {
     return null;
   }
 
@@ -1652,10 +1676,13 @@ function normalizeInterviewTemplateSample(sample = {}) {
     name,
     size: Number(sample.size || 0) || 0,
     type: String(sample.type || sample.fileType || "").trim(),
+    dataUrl,
     text,
     profile: sample.profile && typeof sample.profile === "object"
       ? sample.profile
-      : analyzeInterviewTemplateProfile(text, name),
+      : text
+        ? analyzeInterviewTemplateProfile(text, name)
+        : null,
     uploadedAt: sample.uploadedAt || getTimestampText()
   };
 }
@@ -1680,6 +1707,7 @@ function normalizeInterviewReportState(value = {}) {
 
   return {
     scriptText: String(value.scriptText || "").trim(),
+    scriptFile: normalizeInterviewReportUpload(value.scriptFile || value.scriptUpload || null),
     scriptFileName: String(value.scriptFileName || "").trim(),
     scriptStatus: String(value.scriptStatus || "").trim(),
     scriptLoading: Boolean(value.scriptLoading),
@@ -8146,8 +8174,9 @@ function renderInterviewReport() {
 
   const report = getInterviewReportState();
   const templateSamples = getInterviewTemplateSamples(report);
-  const canGenerateReport = Boolean(report.scriptText.trim() && templateSamples.length && !report.scriptLoading && !report.templateLoading);
-  const scriptUploadStatus = report.scriptStatus || report.scriptFileName || "파일을 선택하거나 드래그앤드랍";
+  const hasScriptSource = Boolean(report.scriptText.trim() || report.scriptFile?.dataUrl);
+  const canGenerateReport = Boolean(hasScriptSource && templateSamples.length && !report.scriptLoading && !report.templateLoading);
+  const scriptUploadStatus = report.scriptStatus || report.scriptFile?.name || report.scriptFileName || "파일을 선택하거나 드래그앤드랍";
   const templateUploadStatus = report.templateStatus || (templateSamples.length ? `저장된 샘플 ${templateSamples.length}개` : "복수 샘플 선택 가능");
 
   container.innerHTML = `
@@ -8210,45 +8239,45 @@ async function loadInterviewReportFile(file, field) {
 
   report[loadingKey] = true;
   report[progressKey] = 12;
-  report[statusKey] = `${file.name} 파일을 읽는 중입니다.`;
+  report[statusKey] = `${file.name} 파일을 저장하는 중입니다.`;
   report.status = "";
   renderInterviewReport();
 
   try {
     await waitForUiPaint();
-    report[progressKey] = 24;
-    report[statusKey] = `${file.name} 문서 텍스트 추출을 시작합니다.`;
-    renderInterviewReport();
-
-    const result = await withTimeout(
-      () => readInterviewReportUploadText(file),
-      52000,
-      "파일 읽기 시간이 초과되었습니다. 문서가 너무 크거나 암호화되어 있으면 텍스트로 붙여넣거나 DOCX/PDF로 다시 업로드해주세요."
+    const dataUrl = await withTimeout(
+      () => readFileAsDataUrl(file),
+      22000,
+      "파일 저장 시간이 초과되었습니다. 파일 크기를 줄인 뒤 다시 업로드해주세요."
     );
-    report[progressKey] = 72;
-    report[statusKey] = "문서 텍스트를 정리하는 중입니다.";
-    renderInterviewReport();
+    const upload = normalizeInterviewReportUpload({
+      name: file.name,
+      size: file.size,
+      type: file.type || "",
+      dataUrl,
+      uploadedAt: getTimestampText()
+    });
 
-    const extractedText = normalizeResumeText(result.text || "");
-
-    if (!extractedText) {
-      throw createResumeParseError("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
+    if (!upload) {
+      throw createResumeParseError("파일을 저장할 수 없습니다.");
     }
 
-    const sourceLabel = result.meta?.source === "server" ? "서버 보강 추출" : "브라우저 추출";
     report[progressKey] = 100;
+    renderInterviewReport();
 
     if (isScript) {
-      report.scriptText = extractedText;
+      report.scriptFile = upload;
       report.scriptFileName = file.name;
-      report.scriptStatus = `${file.name} 스크립트를 저장했습니다. (${sourceLabel}, ${extractedText.length.toLocaleString("ko-KR")}자)`;
-      report.status = "스크립트가 저장되었습니다. 면담록 보고서 생성 버튼을 누르면 샘플과 함께 분석합니다.";
+      report.scriptText = "";
+      report.scriptStatus = `${file.name} 스크립트 파일을 저장했습니다. 보고서 생성 시 내용을 읽어 분석합니다.`;
+      report.status = "스크립트 파일이 저장되었습니다. 면담록 보고서 생성 버튼을 누르면 샘플과 함께 분석합니다.";
     } else {
       const sample = normalizeInterviewTemplateSample({
         name: file.name,
         size: file.size,
         type: file.type || "",
-        text: extractedText,
+        dataUrl,
+        text: "",
         uploadedAt: getTimestampText()
       });
 
@@ -8260,7 +8289,7 @@ async function loadInterviewReportFile(file, field) {
         report.templateProfile = null;
       }
 
-      report.templateStatus = `${file.name} 샘플을 저장했습니다. (${sourceLabel}, ${extractedText.length.toLocaleString("ko-KR")}자)`;
+      report.templateStatus = `${file.name} 샘플 파일을 저장했습니다. 보고서 생성 시 내용을 읽어 분석합니다.`;
       report.status = `면담록 작성 양식 샘플 ${getInterviewTemplateSamples(report).length}개가 저장되었습니다. 생성 버튼을 누르면 종합 분석합니다.`;
     }
 
@@ -8298,27 +8327,22 @@ async function loadInterviewReportTemplateFiles(fileList) {
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
     report.templateProgress = Math.max(12, Math.round(((index + 1) / files.length) * 88));
-    report.templateStatus = `${index + 1}/${files.length} ${file.name} 샘플을 읽는 중입니다.`;
+    report.templateStatus = `${index + 1}/${files.length} ${file.name} 샘플 파일을 저장하는 중입니다.`;
     renderInterviewReport();
 
     try {
       await waitForUiPaint();
-      const result = await withTimeout(
-        () => readInterviewReportUploadText(file),
-        52000,
-        "샘플 파일 읽기 시간이 초과되었습니다. 문서가 너무 크거나 암호화되어 있으면 다른 샘플을 업로드해주세요."
+      const dataUrl = await withTimeout(
+        () => readFileAsDataUrl(file),
+        22000,
+        "샘플 파일 저장 시간이 초과되었습니다. 파일 크기를 줄인 뒤 다시 업로드해주세요."
       );
-      const extractedText = normalizeResumeText(result.text || "");
-
-      if (!extractedText) {
-        throw createResumeParseError("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
-      }
-
       const sample = normalizeInterviewTemplateSample({
         name: file.name,
         size: file.size,
         type: file.type || "",
-        text: extractedText,
+        dataUrl,
+        text: "",
         uploadedAt: getTimestampText()
       });
 
@@ -8395,17 +8419,77 @@ function removeInterviewTemplateSample(sampleId) {
   renderInterviewReport();
 }
 
-function generateInterviewReport() {
+async function generateInterviewReport() {
   const report = getInterviewReportState();
-  const sampleCount = getInterviewTemplateSamples(report).length;
+  let templateSamples = getInterviewTemplateSamples(report);
+  const sampleCount = templateSamples.length;
 
-  if (!report.scriptText.trim()) {
+  if (!report.scriptText.trim() && !report.scriptFile?.dataUrl) {
     showToast("면담 스크립트 파일을 먼저 업로드해 주세요.");
     return;
   }
 
   if (!sampleCount) {
     showToast("면담록 작성 양식 샘플 파일을 먼저 업로드해 주세요.");
+    return;
+  }
+
+  report.scriptLoading = true;
+  report.templateLoading = true;
+  report.scriptProgress = report.scriptText.trim() ? 100 : 18;
+  report.templateProgress = templateSamples.every((sample) => sample.text) ? 100 : 18;
+  report.scriptStatus = report.scriptText.trim()
+    ? "저장된 스크립트 텍스트를 사용합니다."
+    : `${report.scriptFile?.name || report.scriptFileName || "스크립트 파일"} 내용을 읽는 중입니다.`;
+  report.templateStatus = "저장된 면담록 샘플을 분석하는 중입니다.";
+  report.status = "면담 스크립트와 샘플 파일을 분석하는 중입니다.";
+  renderInterviewReport();
+
+  try {
+    await waitForUiPaint();
+
+    if (!report.scriptText.trim()) {
+      const scriptResult = await readStoredInterviewReportUploadText(report.scriptFile, "면담 스크립트");
+      report.scriptText = scriptResult.text;
+      report.scriptStatus = `${report.scriptFile?.name || report.scriptFileName || "스크립트 파일"} 내용을 읽었습니다. (${scriptResult.text.length.toLocaleString("ko-KR")}자)`;
+      report.scriptProgress = 100;
+      renderInterviewReport();
+    }
+
+    const extractedSamples = [];
+
+    for (let index = 0; index < templateSamples.length; index += 1) {
+      const sample = templateSamples[index];
+
+      if (sample.text) {
+        extractedSamples.push(sample);
+        continue;
+      }
+
+      report.templateProgress = Math.max(24, Math.round(((index + 1) / templateSamples.length) * 92));
+      report.templateStatus = `${index + 1}/${templateSamples.length} ${sample.name} 샘플 내용을 읽는 중입니다.`;
+      renderInterviewReport();
+
+      const sampleResult = await readStoredInterviewReportUploadText(sample, `면담록 샘플 ${sample.name}`);
+      extractedSamples.push({
+        ...sample,
+        text: sampleResult.text,
+        profile: analyzeInterviewTemplateProfile(sampleResult.text, sample.name)
+      });
+    }
+
+    report.templateSamples = extractedSamples;
+    templateSamples = getInterviewTemplateSamples(report);
+    report.templateProgress = 100;
+    report.templateStatus = `면담록 샘플 ${templateSamples.length}개 내용을 읽었습니다.`;
+  } catch (error) {
+    console.warn("Interview report generation file read failed.", error);
+    report.status = error.isResumeParseError ? error.message : "면담록 보고서 생성 중 파일을 읽지 못했습니다.";
+    report.scriptLoading = false;
+    report.templateLoading = false;
+    report.scriptProgress = report.scriptText.trim() ? 100 : 0;
+    report.templateProgress = templateSamples.some((sample) => sample.text) ? report.templateProgress : 0;
+    renderInterviewReport();
     return;
   }
 
@@ -8421,6 +8505,10 @@ function generateInterviewReport() {
     : templateCorpus
       ? "스크립트와 직접 입력 양식 기준을 분석해 보고서를 생성했습니다."
       : "스크립트 내용을 기준으로 면담록 보고서를 생성했습니다.";
+  report.scriptLoading = false;
+  report.templateLoading = false;
+  report.scriptProgress = 100;
+  report.templateProgress = 100;
   persistState({ skipRemoteSync: true });
   addAuditLog("면담록 보고서 생성", "면담록 생성", `스크립트 및 샘플 ${sampleCount}개 기반 보고서 생성`);
   renderInterviewReport();
@@ -16493,8 +16581,13 @@ function withTimeout(task, timeoutMs, message) {
   });
 }
 
-async function extractDocumentTextWithServer(file, options = {}) {
-  const dataUrl = await readFileAsDataUrl(file);
+async function extractDocumentTextPayloadWithServer(payload, options = {}) {
+  const dataUrl = String(payload?.dataUrl || "").trim();
+
+  if (!dataUrl) {
+    throw new Error("읽을 파일 데이터가 없습니다.");
+  }
+
   const timeoutMs = Number(options.timeoutMs || 0);
   const controller = typeof AbortController !== "undefined" && timeoutMs > 0 ? new AbortController() : null;
   const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -16508,8 +16601,8 @@ async function extractDocumentTextWithServer(file, options = {}) {
       },
       signal: controller?.signal,
       body: JSON.stringify({
-        fileName: file.name,
-        mimeType: file.type || "",
+        fileName: payload.fileName || payload.name || "",
+        mimeType: payload.mimeType || payload.type || "",
         dataUrl
       })
     });
@@ -16526,19 +16619,19 @@ async function extractDocumentTextWithServer(file, options = {}) {
   }
 
   const responseText = await response.text();
-  let payload = {};
+  let responsePayload = {};
 
   try {
-    payload = responseText ? JSON.parse(responseText) : {};
+    responsePayload = responseText ? JSON.parse(responseText) : {};
   } catch (error) {
     throw new Error("파일 텍스트 추출 API 응답을 해석하지 못했습니다.");
   }
 
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error || `파일 텍스트 추출 API 오류: ${response.status}`);
+  if (!response.ok || !responsePayload.ok) {
+    throw new Error(responsePayload.error || `파일 텍스트 추출 API 오류: ${response.status}`);
   }
 
-  const text = normalizeResumeText(payload.text || "");
+  const text = normalizeResumeText(responsePayload.text || "");
 
   if (!text) {
     throw new Error("파일에서 읽을 수 있는 텍스트를 찾지 못했습니다.");
@@ -16547,10 +16640,19 @@ async function extractDocumentTextWithServer(file, options = {}) {
   return {
     text,
     meta: {
-      ...(payload.meta || {}),
+      ...(responsePayload.meta || {}),
       source: "server"
     }
   };
+}
+
+async function extractDocumentTextWithServer(file, options = {}) {
+  const dataUrl = await readFileAsDataUrl(file);
+  return extractDocumentTextPayloadWithServer({
+    fileName: file.name,
+    mimeType: file.type || "",
+    dataUrl
+  }, options);
 }
 
 async function readInterviewReportUploadText(file) {
@@ -16628,6 +16730,37 @@ async function readInterviewReportUploadText(file) {
         });
     });
   });
+}
+
+async function readStoredInterviewReportUploadText(upload, label = "파일") {
+  const normalizedUpload = normalizeInterviewReportUpload(upload);
+
+  if (!normalizedUpload) {
+    throw createResumeParseError(`${label} 원본 파일을 찾을 수 없습니다. 다시 업로드해주세요.`);
+  }
+
+  const result = await withTimeout(
+    () => extractDocumentTextPayloadWithServer({
+      fileName: normalizedUpload.name,
+      mimeType: normalizedUpload.type || "",
+      dataUrl: normalizedUpload.dataUrl
+    }, { timeoutMs: 36000 }),
+    42000,
+    `${label} 텍스트 추출 시간이 초과되었습니다. 문서가 너무 크거나 암호화되어 있으면 DOCX/PDF/TXT 형식으로 다시 업로드해주세요.`
+  );
+  const text = normalizeResumeText(result.text || "");
+
+  if (!text) {
+    throw createResumeParseError(`${label}에서 읽을 수 있는 텍스트를 찾지 못했습니다.`);
+  }
+
+  return {
+    text,
+    meta: {
+      ...(result.meta || {}),
+      source: "server"
+    }
+  };
 }
 
 function firstMatch(text, patterns) {
@@ -22437,7 +22570,14 @@ function bindEvents() {
     }
 
     if (event.target.closest("[data-generate-interview-report]")) {
-      generateInterviewReport();
+      generateInterviewReport().catch((error) => {
+        console.warn("Interview report generation failed.", error);
+        const report = getInterviewReportState();
+        report.scriptLoading = false;
+        report.templateLoading = false;
+        report.status = error.message || "면담록 보고서 생성 중 오류가 발생했습니다.";
+        renderInterviewReport();
+      });
       return;
     }
 
