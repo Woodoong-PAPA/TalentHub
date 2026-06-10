@@ -660,6 +660,7 @@ const state = {
   interviewCases: [],
   selectedInterviewCaseId: "",
   selectedInterviewStage: "phone",
+  interviewMailPreview: null,
   screeningPositionModalOpen: false,
   screeningApplicantModalOpen: false,
   screeningEditingApplicantId: "",
@@ -1524,6 +1525,27 @@ function normalizeInterviewAttachment(attachment = null) {
   };
 }
 
+function normalizePhoneOperationStatus(value, fallback = "pending") {
+  return ["pending", "available", "unavailable", "sent", "confirmed", "change_requested"].includes(value)
+    ? value
+    : fallback;
+}
+
+function normalizePhoneInterviewOperation(operation = {}) {
+  return {
+    autoMail: Boolean(operation.autoMail),
+    candidateStatus: normalizePhoneOperationStatus(operation.candidateStatus),
+    interviewerStatus: normalizePhoneOperationStatus(operation.interviewerStatus),
+    candidateRequestSentAt: String(operation.candidateRequestSentAt || "").trim(),
+    panelRequestSentAt: String(operation.panelRequestSentAt || "").trim(),
+    candidateConfirmedSentAt: String(operation.candidateConfirmedSentAt || "").trim(),
+    panelConfirmedSentAt: String(operation.panelConfirmedSentAt || "").trim(),
+    lastChangedBy: String(operation.lastChangedBy || "").trim(),
+    lastChangedAt: String(operation.lastChangedAt || "").trim(),
+    changeReason: String(operation.changeReason || "").trim()
+  };
+}
+
 function normalizeInterviewStage(stageId, stage = {}) {
   const config = getInterviewStageConfig(stageId);
   const status = INTERVIEW_STATUS_LABELS[stage.status] ? stage.status : "waiting";
@@ -1546,6 +1568,9 @@ function normalizeInterviewStage(stageId, stage = {}) {
     })),
     documents,
     note: String(stage.note || "").trim(),
+    phoneOperation: stageId === "phone"
+      ? normalizePhoneInterviewOperation(stage.phoneOperation || stage.operation || {})
+      : normalizePhoneInterviewOperation({}),
     mailHistory: Array.isArray(stage.mailHistory) ? stage.mailHistory : []
   };
 }
@@ -7598,6 +7623,137 @@ function renderInterviewMailHistory(stage) {
   `;
 }
 
+function phoneOperationStatusChip(status) {
+  const label = {
+    pending: "대기",
+    available: "참석 가능",
+    unavailable: "참석 불가",
+    sent: "발송됨",
+    confirmed: "확정",
+    change_requested: "변경 요청"
+  }[status] || "대기";
+  const chipClass = {
+    pending: "chip-gray",
+    available: "chip-green",
+    unavailable: "chip-red",
+    sent: "chip-blue",
+    confirmed: "chip-green",
+    change_requested: "chip-amber"
+  }[status] || "chip-gray";
+
+  return `<span class="status-chip ${chipClass}">${escapeHtml(label)}</span>`;
+}
+
+function getInterviewPanelSummary(stage) {
+  const members = (stage.panel || [])
+    .map((member) => [member.name, member.role, member.email].filter(Boolean).join(" / "))
+    .filter(Boolean);
+
+  return members.length ? members.join("\n") : "면접위원 미입력";
+}
+
+function getPhoneOperationNextText(interviewCase, stage) {
+  const operation = stage.phoneOperation || normalizePhoneInterviewOperation();
+
+  if (!operation.candidateRequestSentAt) {
+    return "후보자에게 일정 가능 여부와 개인정보 수집이용 동의서 서명을 요청하세요.";
+  }
+
+  if (operation.candidateStatus === "available" && !stage.confirmedAt) {
+    return "후보자가 가능 일정을 회신했습니다. 적정 시간대를 선택해 확정 일정을 입력하세요.";
+  }
+
+  if (operation.candidateStatus === "unavailable" && !operation.panelRequestSentAt) {
+    return "후보자가 기존 시간대 참석이 어렵습니다. 후보자 가능 시간 기준으로 면접위원 참석 가능 여부를 확인하세요.";
+  }
+
+  if (operation.interviewerStatus === "unavailable") {
+    return "면접위원 참석이 어렵습니다. 후보자에게 가능한 다른 일정 문의 후 첫 단계로 되돌려 조율하세요.";
+  }
+
+  if (stage.confirmedAt && (!operation.candidateConfirmedSentAt || !operation.panelConfirmedSentAt)) {
+    return "확정 일정을 기준으로 후보자와 면접위원에게 안내 메일을 발송하세요.";
+  }
+
+  if (stage.status === "scheduled") {
+    return "전화면접 일정 조율이 완료되었습니다. 변경 요청 발생 시 해당 버튼으로 재조율을 시작하세요.";
+  }
+
+  return `${interviewCase.candidateName || "지원자"} 전화면접 일정 조율을 진행하세요.`;
+}
+
+function renderPhoneInterviewOperationBoard(interviewCase, stageId) {
+  const stage = getInterviewStage(interviewCase, stageId);
+  const operation = stage.phoneOperation || normalizePhoneInterviewOperation();
+  const confirmedText = formatScreeningAvailabilitySlot(stage.confirmedAt);
+  const candidateSlots = (stage.candidateSlots || []).map(formatScreeningAvailabilitySlot).filter(Boolean);
+  const interviewerSlots = (stage.interviewerSlots || []).map(formatScreeningAvailabilitySlot).filter(Boolean);
+
+  return `
+    <section class="interview-stage-card interview-phone-operation-card">
+      <div class="panel-header compact-panel-header">
+        <div>
+          <h5>전화면접 일정 조율 오퍼레이션</h5>
+          <span>후보자와 면접위원 가능 여부를 기록하고, 필요한 안내 메일을 검수 후 발송합니다.</span>
+        </div>
+        <label class="interview-auto-mail-toggle">
+          <input type="checkbox" data-interview-auto-mail data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" ${operation.autoMail ? "checked" : ""} />
+          <span>자동 연락 준비</span>
+        </label>
+      </div>
+      <div class="interview-operation-summary">
+        <div>
+          <span>후보자 상태</span>
+          ${phoneOperationStatusChip(operation.candidateStatus)}
+        </div>
+        <div>
+          <span>면접위원 상태</span>
+          ${phoneOperationStatusChip(operation.interviewerStatus)}
+        </div>
+        <div>
+          <span>확정 일정</span>
+          <strong>${escapeHtml(confirmedText || "미확정")}</strong>
+        </div>
+      </div>
+      <p class="interview-operation-next">${escapeHtml(getPhoneOperationNextText(interviewCase, stage))}</p>
+      <div class="interview-operation-flow">
+        <article>
+          <strong>1. 후보자 일정 확인</strong>
+          <span>가능 여부 및 개인정보 수집이용 동의서 서명 요청</span>
+          <button class="ghost-button compact-button" type="button" data-open-interview-mail-preview="candidate_request" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">후보자 안내 메일</button>
+        </article>
+        <article>
+          <strong>2. 후보자 회신 기록</strong>
+          <span>${escapeHtml(candidateSlots.length ? candidateSlots.join(" / ") : "가능 시간 미입력")}</span>
+          <div class="member-actions">
+            <button class="soft-button compact-button" type="button" data-phone-operation-status="candidate:available" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">참석 가능</button>
+            <button class="ghost-button danger-button compact-button" type="button" data-phone-operation-status="candidate:unavailable" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">참석 불가</button>
+          </div>
+        </article>
+        <article>
+          <strong>3. 면접위원 확인</strong>
+          <span>${escapeHtml(getInterviewPanelSummary(stage))}</span>
+          <button class="ghost-button compact-button" type="button" data-open-interview-mail-preview="panel_request" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">면접위원 문의</button>
+          <div class="member-actions">
+            <button class="soft-button compact-button" type="button" data-phone-operation-status="interviewer:available" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">참석 가능</button>
+            <button class="ghost-button danger-button compact-button" type="button" data-phone-operation-status="interviewer:unavailable" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">참석 불가</button>
+          </div>
+        </article>
+        <article>
+          <strong>4. 확정 안내</strong>
+          <span>${escapeHtml(interviewerSlots.length ? interviewerSlots.join(" / ") : confirmedText || "확정 일정 입력 필요")}</span>
+          <button class="primary-button compact-button" type="button" data-open-interview-mail-preview="combined_schedule" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}" ${stage.confirmedAt ? "" : "disabled"}>확정 안내 메일</button>
+        </article>
+      </div>
+      <div class="interview-change-actions">
+        <button class="ghost-button compact-button" type="button" data-phone-operation-status="candidate:change_requested" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">후보자 일정 변경 요청</button>
+        <button class="ghost-button compact-button" type="button" data-phone-operation-status="interviewer:change_requested" data-interview-case-id="${escapeHtml(interviewCase.id)}" data-interview-stage="${escapeHtml(stageId)}">면접위원 일정 변경 요청</button>
+      </div>
+      <small class="form-help">자동 연락 준비를 켜면 상태 변경 후 필요한 메일 미리보기 창이 자동으로 열립니다. 실제 발송은 담당자가 본문을 확인하고 최종 발송을 눌러야 진행됩니다.</small>
+    </section>
+  `;
+}
+
 function renderInterviewStagePanel(interviewCase, stageId) {
   const config = getInterviewStageConfig(stageId);
   const stage = getInterviewStage(interviewCase, stageId);
@@ -7612,6 +7768,7 @@ function renderInterviewStagePanel(interviewCase, stageId) {
         </div>
         ${interviewStatusChip(stage.status)}
       </div>
+      ${stageId === "phone" ? renderPhoneInterviewOperationBoard(interviewCase, stageId) : ""}
       <div class="interview-stage-grid">
         <section class="interview-stage-card">
           <div class="panel-header compact-panel-header">
@@ -7757,6 +7914,7 @@ function renderInterviewView() {
       </aside>
       ${renderInterviewDetail(selectedCase)}
     </div>
+    ${renderInterviewMailPreviewModal()}
   `;
 }
 
@@ -19789,6 +19947,112 @@ function updateInterviewConfirmed(input) {
   renderInterviewView();
 }
 
+function updateInterviewAutoMail(input) {
+  mutateInterviewCase(input.dataset.interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, input.dataset.interviewStage);
+    stage.phoneOperation = {
+      ...(stage.phoneOperation || normalizePhoneInterviewOperation()),
+      autoMail: Boolean(input.checked),
+      lastChangedBy: getCurrentActorName(),
+      lastChangedAt: getTimestampText()
+    };
+    markInterviewStageActive(interviewCase, input.dataset.interviewStage);
+  });
+  showToast(input.checked ? "자동 연락 준비를 켰습니다." : "자동 연락 준비를 껐습니다.");
+  renderInterviewView();
+}
+
+function getNextPhoneOperationMailType(target, status, stage) {
+  if (target === "candidate" && status === "unavailable") {
+    return "panel_request";
+  }
+
+  if (target === "candidate" && status === "available" && stage.confirmedAt) {
+    return "combined_schedule";
+  }
+
+  if (target === "interviewer" && status === "available" && stage.confirmedAt) {
+    return "combined_schedule";
+  }
+
+  if (target === "interviewer" && status === "unavailable") {
+    return "candidate_request";
+  }
+
+  if (target === "candidate" && status === "change_requested") {
+    return "panel_request";
+  }
+
+  if (target === "interviewer" && status === "change_requested") {
+    return "candidate_request";
+  }
+
+  return "";
+}
+
+function updatePhoneOperationStatus(interviewCaseId, stageId, descriptor) {
+  const [target, status] = String(descriptor || "").split(":");
+
+  if (!["candidate", "interviewer"].includes(target) || !["available", "unavailable", "change_requested"].includes(status)) {
+    return;
+  }
+
+  let shouldOpenMailType = "";
+
+  const savedCase = mutateInterviewCase(interviewCaseId, (interviewCase) => {
+    const stage = getInterviewStage(interviewCase, stageId);
+    const operation = {
+      ...(stage.phoneOperation || normalizePhoneInterviewOperation()),
+      lastChangedBy: getCurrentActorName(),
+      lastChangedAt: getTimestampText()
+    };
+
+    if (target === "candidate") {
+      operation.candidateStatus = status;
+      if (status === "change_requested") {
+        operation.changeReason = "후보자 일정 변경 요청";
+        operation.interviewerStatus = "pending";
+        stage.confirmedAt = "";
+      }
+    } else {
+      operation.interviewerStatus = status;
+      if (status === "change_requested") {
+        operation.changeReason = "면접위원 일정 변경 요청";
+        stage.confirmedAt = "";
+      }
+    }
+
+    if (status === "unavailable" || status === "change_requested") {
+      stage.status = "scheduling";
+    } else if (status === "available") {
+      markInterviewStageActive(interviewCase, stageId);
+    }
+
+    stage.phoneOperation = normalizePhoneInterviewOperation(operation);
+    shouldOpenMailType = operation.autoMail ? getNextPhoneOperationMailType(target, status, stage) : "";
+  });
+
+  if (!savedCase) {
+    return;
+  }
+
+  const statusLabel = {
+    available: "참석 가능",
+    unavailable: "참석 불가",
+    change_requested: "일정 변경 요청"
+  }[status];
+
+  addAuditLog("전화면접 일정 상태 변경", savedCase.candidateName, `${target === "candidate" ? "후보자" : "면접위원"} · ${statusLabel}`);
+
+  if (shouldOpenMailType) {
+    openInterviewMailPreview(shouldOpenMailType, interviewCaseId, stageId);
+    return;
+  }
+
+  showToast(`${target === "candidate" ? "후보자" : "면접위원"} 상태를 ${statusLabel}로 기록했습니다.`);
+  renderInterviewView();
+}
+
 function addInterviewPanelMember(interviewCaseId, stageId) {
   mutateInterviewCase(interviewCaseId, (interviewCase) => {
     const stage = getInterviewStage(interviewCase, stageId);
@@ -19958,7 +20222,276 @@ function buildInterviewScheduleText(stage) {
   return lines.join("\n");
 }
 
+function getInterviewPanelEmails(stage) {
+  return normalizeEmailList((stage.panel || []).map((member) => member.email).filter(Boolean));
+}
+
+function buildPhoneInterviewContextText(interviewCase, stage) {
+  const candidateSlots = (stage.candidateSlots || []).map(formatScreeningAvailabilitySlot).filter(Boolean);
+  const interviewerSlots = (stage.interviewerSlots || []).map(formatScreeningAvailabilitySlot).filter(Boolean);
+  const confirmed = formatScreeningAvailabilitySlot(stage.confirmedAt);
+  const lines = [
+    `지원자명: ${interviewCase.candidateName || "-"}`,
+    `채용 부서명: ${interviewCase.department || "-"}`,
+    `포지션명: ${interviewCase.positionName || "-"}`
+  ];
+
+  if (candidateSlots.length) {
+    lines.push("", "지원자 가능 시간대", ...candidateSlots.map((slot) => `- ${slot}`));
+  }
+
+  if (interviewerSlots.length) {
+    lines.push("", "면접위원 가능 시간대", ...interviewerSlots.map((slot) => `- ${slot}`));
+  }
+
+  if (confirmed) {
+    lines.push("", `확정 일정: ${confirmed}`);
+  }
+
+  return lines.join("\n");
+}
+
+function getInterviewMailDraft(interviewCaseId, stageId, mailType) {
+  const interviewCase = findInterviewCase(interviewCaseId);
+
+  if (!interviewCase || !canViewInterviewCase(interviewCase)) {
+    showToast("인터뷰 정보를 찾을 수 없습니다.");
+    return null;
+  }
+
+  const stage = getInterviewStage(interviewCase, stageId);
+  const config = getInterviewStageConfig(stageId);
+  const panelEmails = getInterviewPanelEmails(stage);
+  const candidateEmail = interviewCase.email ? [interviewCase.email] : [];
+  const context = buildPhoneInterviewContextText(interviewCase, stage);
+  const scheduleText = buildInterviewScheduleText(stage);
+  const candidateName = interviewCase.candidateName || "지원자";
+  const stageLabel = config.label || "인터뷰";
+  const drafts = {
+    candidate_request: {
+      title: "후보자 전화면접 일정 확인 요청",
+      action: "interview_step_request",
+      recipients: candidateEmail,
+      subject: `[TalentHub Interview] ${candidateName} ${stageLabel} 일정 가능 여부 확인 요청`,
+      body: [
+        `${candidateName}님,`,
+        "",
+        "전화면접 진행을 위해 일정 가능 여부 확인과 개인정보 수집이용 동의서 서명을 요청드립니다.",
+        "아래 정보를 확인하신 뒤 참석 가능한 시간대를 회신해주세요.",
+        "",
+        context,
+        "",
+        "회신 요청사항",
+        "- 참석 가능한 일정 범위",
+        "- 개인정보 수집이용 동의서 서명본",
+        "- 일정 참석이 어려운 경우 가능한 대체 시간대"
+      ].join("\n")
+    },
+    panel_request: {
+      title: "면접위원 전화면접 참석 가능 여부 문의",
+      action: "interview_step_request",
+      recipients: panelEmails,
+      subject: `[TalentHub Interview] ${candidateName} ${stageLabel} 면접위원 참석 가능 여부 확인`,
+      body: [
+        "안녕하세요.",
+        "",
+        "아래 후보자의 전화면접 일정 조율을 위해 참석 가능 여부 확인을 요청드립니다.",
+        "후보자가 회신한 가능 시간대 기준으로 참석 가능한 시간을 회신해주세요.",
+        "",
+        context,
+        "",
+        "회신 요청사항",
+        "- 참석 가능한 시간대",
+        "- 참석이 어려운 경우 대체 가능 시간대"
+      ].join("\n")
+    },
+    candidate_schedule: {
+      title: "후보자 전화면접 확정 안내",
+      action: "interview_schedule_confirmed",
+      recipients: candidateEmail,
+      subject: `[TalentHub Interview] ${candidateName} ${stageLabel} 일정 확정 안내`,
+      body: [
+        `${candidateName}님,`,
+        "",
+        "전화면접 일정이 아래와 같이 확정되었습니다.",
+        "",
+        context,
+        "",
+        "일정 변경이 필요한 경우 가능한 한 빠르게 회신 부탁드립니다."
+      ].join("\n")
+    },
+    panel_schedule: {
+      title: "면접위원 전화면접 확정 안내",
+      action: "interview_schedule_confirmed",
+      recipients: panelEmails,
+      subject: `[TalentHub Interview] ${candidateName} ${stageLabel} 면접위원 일정 확정 안내`,
+      body: [
+        "안녕하세요.",
+        "",
+        "전화면접 일정이 아래와 같이 확정되었습니다.",
+        "",
+        context,
+        "",
+        "후보자 연락처",
+        `- 이메일: ${interviewCase.email || "-"}`,
+        `- 휴대폰: ${interviewCase.phone || "-"}`,
+        "",
+        "일정 변경이 필요한 경우 TalentHub Interview 메뉴에 변경 요청을 기록해주세요."
+      ].join("\n")
+    },
+    combined_schedule: {
+      title: "전화면접 확정 안내",
+      action: "interview_schedule_confirmed",
+      recipients: normalizeEmailList([...candidateEmail, ...panelEmails]),
+      subject: `[TalentHub Interview] ${candidateName} ${stageLabel} 일정 확정 안내`,
+      body: [
+        "안녕하세요.",
+        "",
+        "전화면접 일정이 아래와 같이 확정되었습니다.",
+        "",
+        context,
+        "",
+        "후보자 연락처",
+        `- 이메일: ${interviewCase.email || "-"}`,
+        `- 휴대폰: ${interviewCase.phone || "-"}`,
+        "",
+        "일정 변경이 필요한 경우 채용담당자에게 회신해주세요."
+      ].join("\n")
+    },
+    generic_request: {
+      title: "인터뷰 입력 요청 메일",
+      action: "interview_step_request",
+      recipients: normalizeEmailList([...candidateEmail, ...panelEmails]),
+      subject: `[TalentHub Interview] ${candidateName} ${stageLabel} 입력 요청`,
+      body: [
+        `${candidateName} ${stageLabel} 진행을 위해 아래 정보 확인이 필요합니다.`,
+        "",
+        context,
+        scheduleText ? `\n일정 참고\n${scheduleText}` : "",
+        "",
+        "가능 시간대 또는 요청 자료를 회신해주세요."
+      ].filter(Boolean).join("\n")
+    },
+    reject: {
+      title: "전형 결과 안내 메일",
+      action: "interview_reject_notice",
+      recipients: candidateEmail,
+      subject: `[TalentHub Interview] ${candidateName} 전형 결과 안내`,
+      body: [
+        `${candidateName}님,`,
+        "",
+        `${interviewCase.positionName || "지원 포지션"} 전형 결과를 안내드립니다.`,
+        `${stageLabel} 단계 검토 결과, 이번 전형은 더 진행하지 않는 것으로 결정되었습니다.`,
+        "",
+        "지원해주셔서 감사합니다."
+      ].join("\n")
+    }
+  };
+  const draft = drafts[mailType] || drafts.generic_request;
+
+  if (!draft.recipients.length) {
+    showToast("발송 가능한 수신처가 없습니다. 지원자 또는 면접위원 메일을 입력해주세요.");
+    return null;
+  }
+
+  return {
+    ...draft,
+    interviewCaseId,
+    stageId,
+    mailType,
+    stageLabel,
+    scheduleText
+  };
+}
+
+function openInterviewMailPreview(mailType, interviewCaseId, stageId) {
+  const normalizedType = {
+    request: stageId === "phone" ? "candidate_request" : "generic_request",
+    schedule: stageId === "phone" ? "combined_schedule" : "combined_schedule",
+    reject: "reject"
+  }[mailType] || mailType;
+  const draft = getInterviewMailDraft(interviewCaseId, stageId, normalizedType);
+
+  if (!draft) {
+    return;
+  }
+
+  state.interviewMailPreview = {
+    ...draft,
+    recipientsText: draft.recipients.join("\n")
+  };
+  renderInterviewView();
+}
+
+function closeInterviewMailPreview() {
+  state.interviewMailPreview = null;
+  renderInterviewView();
+}
+
+function renderInterviewMailPreviewModal() {
+  const preview = state.interviewMailPreview;
+
+  if (!preview) {
+    return "";
+  }
+
+  return `
+    <div class="trending-modal-backdrop" data-interview-mail-preview-backdrop>
+      <section class="trending-modal screening-mail-preview-modal" role="dialog" aria-modal="true" aria-labelledby="interview-mail-preview-title">
+        <div class="modal-header">
+          <div>
+            <p class="section-kicker">MAIL PREVIEW</p>
+            <h4 id="interview-mail-preview-title">${escapeHtml(preview.title)}</h4>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-interview-mail-preview>닫기</button>
+        </div>
+        <form id="interview-mail-preview-form" class="screening-mail-preview-form">
+          <label class="field">
+            <span>수신처</span>
+            <textarea class="control-textarea compact-textarea" name="recipients" rows="3">${escapeHtml(preview.recipientsText || "")}</textarea>
+          </label>
+          <label class="field">
+            <span>제목</span>
+            <input class="control-input" name="subject" value="${inputValue(preview.subject)}" />
+          </label>
+          <label class="field">
+            <span>본문</span>
+            <textarea class="control-textarea mail-body-editor" name="body">${escapeHtml(preview.body)}</textarea>
+          </label>
+          <div class="form-actions">
+            <button class="ghost-button" type="button" data-close-interview-mail-preview>취소</button>
+            <button class="primary-button" type="submit">최종 발송</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 async function sendInterviewOperationMail(interviewCaseId, stageId, mailType) {
+  openInterviewMailPreview(mailType, interviewCaseId, stageId);
+}
+
+async function sendInterviewMailPreview(form) {
+  const preview = state.interviewMailPreview;
+
+  if (!preview) {
+    return;
+  }
+
+  const interviewCaseId = preview.interviewCaseId;
+  const stageId = preview.stageId;
+  const mailType = preview.mailType;
+  const formData = new FormData(form);
+  const recipients = normalizeEmailList(formData.get("recipients"));
+  const subject = String(formData.get("subject") || "").trim();
+  const text = String(formData.get("body") || "").trim();
+
+  if (!recipients.length || !subject || !text) {
+    showToast("수신처, 제목, 본문을 모두 입력해주세요.");
+    return;
+  }
+
   const interviewCase = findInterviewCase(interviewCaseId);
 
   if (!interviewCase || !canViewInterviewCase(interviewCase)) {
@@ -19967,23 +20500,16 @@ async function sendInterviewOperationMail(interviewCaseId, stageId, mailType) {
   }
 
   const stage = getInterviewStage(interviewCase, stageId);
-  const recipients = getInterviewMailRecipients(interviewCase, stageId, mailType);
-
-  if (!recipients.length) {
-    showToast("발송 가능한 수신처가 없습니다. 지원자 또는 면접위원 메일을 입력해주세요.");
-    return;
-  }
-
-  const action = {
-    request: "interview_step_request",
-    schedule: "interview_schedule_confirmed",
-    reject: "interview_reject_notice"
-  }[mailType];
+  const action = preview.action;
   const label = {
-    request: "입력 요청",
-    schedule: "확정 일정 안내",
+    candidate_request: "후보자 일정 확인 요청",
+    panel_request: "면접위원 가능 여부 문의",
+    candidate_schedule: "후보자 확정 안내",
+    panel_schedule: "면접위원 확정 안내",
+    combined_schedule: "확정 일정 안내",
+    generic_request: "입력 요청",
     reject: "탈락 안내"
-  }[mailType] || "인터뷰 메일";
+  }[mailType] || preview.title || "인터뷰 메일";
 
   await sendScreeningMail({
     action,
@@ -19991,11 +20517,38 @@ async function sendInterviewOperationMail(interviewCaseId, stageId, mailType) {
     interviewCase,
     stage: getInterviewStageConfig(stageId),
     stageData: stage,
-    scheduleText: buildInterviewScheduleText(stage)
+    scheduleText: buildInterviewScheduleText(stage),
+    mailOverride: { recipients, subject, text }
   });
 
   mutateInterviewCase(interviewCaseId, (nextCase) => {
     const nextStage = getInterviewStage(nextCase, stageId);
+    const operation = nextStage.phoneOperation || normalizePhoneInterviewOperation();
+
+    if (mailType === "candidate_request") {
+      operation.candidateRequestSentAt = getTimestampText();
+      if (operation.candidateStatus === "pending") {
+        operation.candidateStatus = "sent";
+      }
+    } else if (mailType === "panel_request") {
+      operation.panelRequestSentAt = getTimestampText();
+      if (operation.interviewerStatus === "pending") {
+        operation.interviewerStatus = "sent";
+      }
+    } else if (mailType === "candidate_schedule") {
+      operation.candidateConfirmedSentAt = getTimestampText();
+    } else if (mailType === "panel_schedule") {
+      operation.panelConfirmedSentAt = getTimestampText();
+    } else if (mailType === "combined_schedule") {
+      operation.candidateConfirmedSentAt = getTimestampText();
+      operation.panelConfirmedSentAt = getTimestampText();
+      operation.candidateStatus = operation.candidateStatus === "unavailable" ? "unavailable" : "confirmed";
+      operation.interviewerStatus = operation.interviewerStatus === "unavailable" ? "unavailable" : "confirmed";
+    }
+
+    operation.lastChangedBy = getCurrentActorName();
+    operation.lastChangedAt = getTimestampText();
+    nextStage.phoneOperation = operation;
     nextStage.mailHistory = [
       {
         type: mailType,
@@ -20006,8 +20559,9 @@ async function sendInterviewOperationMail(interviewCaseId, stageId, mailType) {
       },
       ...(nextStage.mailHistory || [])
     ];
-    markInterviewStageActive(nextCase, stageId, mailType === "schedule" ? "scheduled" : "scheduling");
+    markInterviewStageActive(nextCase, stageId, ["combined_schedule", "candidate_schedule", "panel_schedule"].includes(mailType) ? "scheduled" : "scheduling");
   });
+  state.interviewMailPreview = null;
   addAuditLog("Interview 메일 발송", interviewCase.candidateName, `${getInterviewStageConfig(stageId).label} · ${label}`);
   showToast(`${label} 메일을 발송했습니다.`);
   renderInterviewView();
@@ -21716,6 +22270,31 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-close-interview-mail-preview]") || event.target.matches("[data-interview-mail-preview-backdrop]")) {
+      closeInterviewMailPreview();
+      return;
+    }
+
+    const openInterviewMailPreviewButton = event.target.closest("[data-open-interview-mail-preview]");
+    if (openInterviewMailPreviewButton) {
+      openInterviewMailPreview(
+        openInterviewMailPreviewButton.dataset.openInterviewMailPreview,
+        openInterviewMailPreviewButton.dataset.interviewCaseId,
+        openInterviewMailPreviewButton.dataset.interviewStage
+      );
+      return;
+    }
+
+    const phoneOperationStatusButton = event.target.closest("[data-phone-operation-status]");
+    if (phoneOperationStatusButton) {
+      updatePhoneOperationStatus(
+        phoneOperationStatusButton.dataset.interviewCaseId,
+        phoneOperationStatusButton.dataset.interviewStage,
+        phoneOperationStatusButton.dataset.phoneOperationStatus
+      );
+      return;
+    }
+
     const sendInterviewOperationMailButton = event.target.closest("[data-send-interview-mail]");
     if (sendInterviewOperationMailButton) {
       sendInterviewOperationMail(
@@ -22251,6 +22830,10 @@ function bindEvents() {
       renderScreening();
     }
 
+    if (event.key === "Escape" && state.interviewMailPreview) {
+      closeInterviewMailPreview();
+    }
+
     if (event.key === "Escape" && state.memberProfileModalOpen) {
       closeMemberProfileModal();
     }
@@ -22351,6 +22934,15 @@ function bindEvents() {
       sendScreeningMailPreview(event.target).catch((error) => {
         console.warn(error);
         showToast(error.message || "메일 발송 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    if (event.target.matches("#interview-mail-preview-form")) {
+      event.preventDefault();
+      sendInterviewMailPreview(event.target).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "인터뷰 메일 발송 중 오류가 발생했습니다.");
       });
       return;
     }
@@ -22660,6 +23252,11 @@ function bindEvents() {
 
     if (event.target.matches("[data-interview-confirmed]")) {
       updateInterviewConfirmed(event.target);
+      return;
+    }
+
+    if (event.target.matches("[data-interview-auto-mail]")) {
+      updateInterviewAutoMail(event.target);
       return;
     }
 
