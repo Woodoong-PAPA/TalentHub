@@ -786,6 +786,8 @@ const state = {
   ]
 };
 
+const interviewReportFileStore = new Map();
+
 const viewTitles = {
   dashboard: "Dashboard",
   pool: "Talent Pool",
@@ -1644,10 +1646,11 @@ function normalizeInterviewReportUpload(upload = {}) {
     return null;
   }
 
-  const dataUrl = String(upload.dataUrl || upload.url || "").trim();
+  const dataUrl = String(upload.persistDataUrl ? (upload.dataUrl || upload.url || "") : "").trim();
+  const storeKey = String(upload.storeKey || upload.fileStoreKey || "").trim();
   const name = String(upload.name || upload.fileName || "").trim();
 
-  if (!dataUrl || !name) {
+  if (!name || (!dataUrl && !storeKey)) {
     return null;
   }
 
@@ -1657,15 +1660,55 @@ function normalizeInterviewReportUpload(upload = {}) {
     size: Number(upload.size || 0) || 0,
     type: String(upload.type || upload.fileType || "").trim(),
     dataUrl,
+    storeKey,
     uploadedAt: upload.uploadedAt || getTimestampText()
   };
 }
 
+function createInterviewReportStoredUpload(file) {
+  if (!file || !file.size) {
+    return null;
+  }
+
+  const storeKey = createId("interview-report-file");
+  interviewReportFileStore.set(storeKey, file);
+
+  return normalizeInterviewReportUpload({
+    id: storeKey,
+    storeKey,
+    name: file.name,
+    size: file.size,
+    type: file.type || "",
+    uploadedAt: getTimestampText()
+  });
+}
+
+function getInterviewReportStoredFile(upload) {
+  const normalizedUpload = normalizeInterviewReportUpload(upload);
+
+  if (!normalizedUpload?.storeKey) {
+    return null;
+  }
+
+  return interviewReportFileStore.get(normalizedUpload.storeKey) || null;
+}
+
+function canReadInterviewReportUpload(upload) {
+  const normalizedUpload = normalizeInterviewReportUpload(upload);
+
+  if (!normalizedUpload) {
+    return false;
+  }
+
+  return Boolean(normalizedUpload.dataUrl || getInterviewReportStoredFile(normalizedUpload));
+}
+
 function normalizeInterviewTemplateSample(sample = {}) {
   const text = normalizePolicyText(sample.text || sample.content || sample.templateText);
-  const dataUrl = String(sample.dataUrl || "").trim();
+  const dataUrl = String(sample.persistDataUrl ? sample.dataUrl || "" : "").trim();
+  const storeKey = String(sample.storeKey || sample.fileStoreKey || "").trim();
 
-  if (!text && !dataUrl) {
+  if (!text && !dataUrl && !storeKey) {
     return null;
   }
 
@@ -1677,6 +1720,7 @@ function normalizeInterviewTemplateSample(sample = {}) {
     size: Number(sample.size || 0) || 0,
     type: String(sample.type || sample.fileType || "").trim(),
     dataUrl,
+    storeKey,
     text,
     profile: sample.profile && typeof sample.profile === "object"
       ? sample.profile
@@ -8174,8 +8218,9 @@ function renderInterviewReport() {
 
   const report = getInterviewReportState();
   const templateSamples = getInterviewTemplateSamples(report);
-  const hasScriptSource = Boolean(report.scriptText.trim() || report.scriptFile?.dataUrl);
-  const canGenerateReport = Boolean(hasScriptSource && templateSamples.length && !report.scriptLoading && !report.templateLoading);
+  const hasScriptSource = Boolean(report.scriptText.trim() || canReadInterviewReportUpload(report.scriptFile));
+  const hasTemplateSource = templateSamples.some((sample) => sample.text || canReadInterviewReportUpload(sample));
+  const canGenerateReport = Boolean(hasScriptSource && hasTemplateSource && !report.scriptLoading && !report.templateLoading);
   const scriptUploadStatus = report.scriptStatus || report.scriptFile?.name || report.scriptFileName || "파일을 선택하거나 드래그앤드랍";
   const templateUploadStatus = report.templateStatus || (templateSamples.length ? `저장된 샘플 ${templateSamples.length}개` : "복수 샘플 선택 가능");
 
@@ -8245,18 +8290,7 @@ async function loadInterviewReportFile(file, field) {
 
   try {
     await waitForUiPaint();
-    const dataUrl = await withTimeout(
-      () => readFileAsDataUrl(file),
-      22000,
-      "파일 저장 시간이 초과되었습니다. 파일 크기를 줄인 뒤 다시 업로드해주세요."
-    );
-    const upload = normalizeInterviewReportUpload({
-      name: file.name,
-      size: file.size,
-      type: file.type || "",
-      dataUrl,
-      uploadedAt: getTimestampText()
-    });
+    const upload = createInterviewReportStoredUpload(file);
 
     if (!upload) {
       throw createResumeParseError("파일을 저장할 수 없습니다.");
@@ -8276,7 +8310,7 @@ async function loadInterviewReportFile(file, field) {
         name: file.name,
         size: file.size,
         type: file.type || "",
-        dataUrl,
+        storeKey: upload.storeKey,
         text: "",
         uploadedAt: getTimestampText()
       });
@@ -8332,16 +8366,17 @@ async function loadInterviewReportTemplateFiles(fileList) {
 
     try {
       await waitForUiPaint();
-      const dataUrl = await withTimeout(
-        () => readFileAsDataUrl(file),
-        22000,
-        "샘플 파일 저장 시간이 초과되었습니다. 파일 크기를 줄인 뒤 다시 업로드해주세요."
-      );
+      const upload = createInterviewReportStoredUpload(file);
+
+      if (!upload) {
+        throw createResumeParseError("샘플 파일을 저장할 수 없습니다.");
+      }
+
       const sample = normalizeInterviewTemplateSample({
         name: file.name,
         size: file.size,
         type: file.type || "",
-        dataUrl,
+        storeKey: upload.storeKey,
         text: "",
         uploadedAt: getTimestampText()
       });
@@ -8424,7 +8459,7 @@ async function generateInterviewReport() {
   let templateSamples = getInterviewTemplateSamples(report);
   const sampleCount = templateSamples.length;
 
-  if (!report.scriptText.trim() && !report.scriptFile?.dataUrl) {
+  if (!report.scriptText.trim() && !canReadInterviewReportUpload(report.scriptFile)) {
     showToast("면담 스크립트 파일을 먼저 업로드해 주세요.");
     return;
   }
@@ -16739,6 +16774,16 @@ async function readStoredInterviewReportUploadText(upload, label = "파일") {
     throw createResumeParseError(`${label} 원본 파일을 찾을 수 없습니다. 다시 업로드해주세요.`);
   }
 
+  const storedFile = getInterviewReportStoredFile(normalizedUpload);
+
+  if (storedFile) {
+    return readInterviewReportUploadText(storedFile);
+  }
+
+  if (!normalizedUpload.dataUrl) {
+    throw createResumeParseError(`${label} 파일은 현재 브라우저 세션에서 찾을 수 없습니다. 파일을 다시 업로드해주세요.`);
+  }
+
   const result = await withTimeout(
     () => extractDocumentTextPayloadWithServer({
       fileName: normalizedUpload.name,
@@ -23314,7 +23359,6 @@ function bindEvents() {
     visualTarget?.classList.remove("is-dragover");
 
     if (applyDroppedFilesToInput(input, event.dataTransfer?.files)) {
-      input.dispatchEvent(new Event("change", { bubbles: true }));
       showToast("파일을 업로드 영역에 추가했습니다.");
     }
   });
@@ -23336,15 +23380,17 @@ function bindEvents() {
         loadInterviewReportFile(file, "script");
         event.target.value = "";
       }
+      return;
     }
 
     if (event.target.id === "interview-report-template-file") {
-      const files = event.target.files;
+      const files = [...(event.target.files || [])];
 
-      if (files?.length) {
+      if (files.length) {
         loadInterviewReportTemplateFiles(files);
         event.target.value = "";
       }
+      return;
     }
 
     if (event.target.id === "recruiting-metrics-week") {
