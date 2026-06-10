@@ -2227,6 +2227,13 @@ tr:last-child td {
   font-size: 18px;
 }
 
+.screening-step-nav small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .screening-applicant-list {
   display: grid;
   gap: 10px;
@@ -2634,6 +2641,32 @@ tr:last-child td {
   white-space: pre-wrap;
 }
 
+.screening-bulk-applicant-modal {
+  width: min(780px, calc(100vw - 32px));
+}
+
+.screening-bulk-applicant-form {
+  display: grid;
+  gap: 16px;
+}
+
+.screening-bulk-note {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--blue-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.screening-bulk-note strong {
+  color: var(--blue-700);
+  font-weight: 900;
+}
+
 .screening-applicant-detail-modal {
   width: min(1180px, calc(100vw - 32px));
   min-width: min(720px, calc(100vw - 24px));
@@ -2647,6 +2680,8 @@ tr:last-child td {
 .screening-applicant-detail-body {
   display: grid;
   gap: 12px;
+  min-height: 0;
+  height: 100%;
 }
 
 .screening-detail-block {
@@ -3638,6 +3673,46 @@ tr:last-child td {
   background: var(--surface);
 }
 
+.screening-interview-summary-panel {
+  gap: 12px;
+}
+
+.screening-interview-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.screening-interview-summary-grid section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.screening-interview-summary-grid strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.screening-interview-summary-grid p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.screening-interview-summary-grid small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .screening-result-modal {
   width: min(980px, calc(100vw - 32px));
   min-width: min(720px, calc(100vw - 24px));
@@ -3646,6 +3721,35 @@ tr:last-child td {
   max-height: calc(100vh - 24px);
   resize: both;
   overflow: hidden;
+}
+
+.screening-position-modal,
+.screening-applicant-modal,
+.screening-jd-modal,
+.screening-access-modal,
+.screening-bulk-applicant-modal,
+.screening-applicant-detail-modal,
+.screening-result-modal,
+.screening-mail-preview-modal {
+  width: min(96vw, 1500px);
+  height: min(92vh, 980px);
+  min-width: min(680px, calc(100vw - 20px));
+  min-height: min(520px, calc(100vh - 20px));
+  max-width: none;
+  max-height: none;
+  resize: both;
+  overflow: auto;
+}
+
+.screening-position-modal .trending-modal-body,
+.screening-applicant-modal .trending-modal-body,
+.screening-jd-modal .trending-modal-body,
+.screening-access-modal .trending-modal-body,
+.screening-bulk-applicant-modal .trending-modal-body,
+.screening-applicant-detail-modal .trending-modal-body,
+.screening-result-modal .trending-modal-body,
+.screening-mail-preview-modal .trending-modal-body {
+  min-height: 0;
 }
 
 .screening-final-form-actions {
@@ -6075,7 +6179,8 @@ tr:last-child td {
   .screening-structured-review-row,
   .screening-detail-two-column,
   .screening-detail-two-column.has-fit,
-  .screening-applicant-profile-summary {
+  .screening-applicant-profile-summary,
+  .screening-interview-summary-grid {
     grid-template-columns: 1fr;
     align-items: start;
   }
