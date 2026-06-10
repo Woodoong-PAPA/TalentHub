@@ -6052,6 +6052,13 @@ tr:last-child td {
   resize: none;
 }
 
+.metrics-total-row th,
+.metrics-total-row td {
+  background: #f8fbff;
+  border-top: 2px solid #cfe2ff;
+  font-weight: 800;
+}
+
 .recruiting-mail-modal {
   width: min(980px, 100%);
 }
@@ -6073,6 +6080,10 @@ tr:last-child td {
 .metrics-mail-preview strong {
   color: var(--text);
   font-size: 14px;
+}
+
+.pre-line {
+  white-space: pre-line;
 }
 
 .detail-card-list {
