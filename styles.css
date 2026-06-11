@@ -2034,7 +2034,25 @@ tr:last-child td {
 .screening-folder-side {
   display: grid;
   gap: 12px;
-  min-width: 360px;
+  min-width: max-content;
+}
+
+.screening-folder-side .panel-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.screening-folder-side .panel-actions .compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: max-content;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .screening-folder-hero h4 {
@@ -6379,6 +6397,14 @@ tr:last-child td {
   .screening-folder-side {
     min-width: 0;
     width: 100%;
+  }
+
+  .screening-folder-side .panel-actions {
+    justify-content: flex-start;
+  }
+
+  .screening-folder-side .panel-actions .compact-button {
+    flex: 0 0 auto;
   }
 
   .policy-source-modal-body {
