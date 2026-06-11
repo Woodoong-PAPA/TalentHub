@@ -5930,7 +5930,46 @@ tr:last-child td {
 }
 
 .interview-report-prompt-modal {
-  width: min(640px, 100%);
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(82vh, 760px);
+}
+
+.interview-report-prompt-header .section-kicker {
+  margin: 0 0 4px;
+}
+
+.interview-report-prompt-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.interview-report-prompt-body {
+  display: grid;
+  gap: 16px;
+}
+
+.interview-report-prompt-field {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.interview-report-prompt-field > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.interview-report-prompt-field .control-textarea {
+  min-height: 240px;
+  resize: vertical;
+}
+
+.interview-report-prompt-actions {
+  align-items: center;
+  padding-top: 2px;
 }
 
 .report-upload-status .ai-progress-status {

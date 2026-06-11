@@ -8866,19 +8866,21 @@ function renderInterviewReportPromptModal(report) {
   return `
     <div class="trending-modal-backdrop" data-interview-report-prompt-backdrop>
       <section class="trending-modal interview-report-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="interview-report-prompt-title">
-        <div class="modal-header">
+        <div class="trending-modal-header interview-report-prompt-header">
           <div>
             <p class="section-kicker">REPORT PROMPT</p>
-            <h4 id="interview-report-prompt-title">보고서 작성 프롬프트</h4>
+            <h4 id="interview-report-prompt-title" class="interview-report-prompt-title">보고서 작성 프롬프트</h4>
           </div>
           <button class="ghost-button compact-button" type="button" data-close-interview-report-prompt>닫기</button>
         </div>
-        <label class="field">
-          <span>작성 지시사항</span>
-          <textarea id="interview-report-prompt" class="control-textarea" rows="8" placeholder="예: 임원 보고용으로 리스크와 활용 가능성을 중심으로 정리">${escapeHtml(report.prompt)}</textarea>
-        </label>
-        <div class="modal-actions">
-          <button class="primary-button" type="button" data-close-interview-report-prompt>저장</button>
+        <div class="trending-modal-body interview-report-prompt-body">
+          <label class="field interview-report-prompt-field">
+            <span>작성 지시사항</span>
+            <textarea id="interview-report-prompt" class="control-textarea" rows="8" placeholder="예: 임원 보고용으로 리스크와 활용 가능성을 중심으로 정리">${escapeHtml(report.prompt)}</textarea>
+          </label>
+          <div class="modal-actions interview-report-prompt-actions">
+            <button class="primary-button" type="button" data-close-interview-report-prompt>저장</button>
+          </div>
         </div>
       </section>
     </div>
@@ -9421,19 +9423,21 @@ function renderInterviewReportPromptModal(report) {
   return `
     <div class="trending-modal-backdrop" data-interview-report-prompt-backdrop>
       <section class="trending-modal interview-report-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="interview-report-prompt-title">
-        <div class="modal-header">
+        <div class="trending-modal-header interview-report-prompt-header">
           <div>
             <p class="section-kicker">REPORT PROMPT</p>
-            <h4 id="interview-report-prompt-title">보고서 작성 프롬프트</h4>
+            <h4 id="interview-report-prompt-title" class="interview-report-prompt-title">보고서 작성 프롬프트</h4>
           </div>
           <button class="ghost-button compact-button" type="button" data-close-interview-report-prompt>닫기</button>
         </div>
-        <label class="field">
-          <span>작성 지시사항</span>
-          <textarea id="interview-report-prompt" class="control-textarea" rows="8" placeholder="예: 임원 보고용으로 핵심 역량, 리스크, 후속 확인 사항을 간결하게 정리">${escapeHtml(report.prompt || "")}</textarea>
-        </label>
-        <div class="modal-actions">
-          <button class="primary-button" type="button" data-close-interview-report-prompt>저장</button>
+        <div class="trending-modal-body interview-report-prompt-body">
+          <label class="field interview-report-prompt-field">
+            <span>작성 지시사항</span>
+            <textarea id="interview-report-prompt" class="control-textarea" rows="8" placeholder="예: 임원 보고용으로 핵심 역량, 리스크, 후속 확인 사항을 간결하게 정리">${escapeHtml(report.prompt || "")}</textarea>
+          </label>
+          <div class="modal-actions interview-report-prompt-actions">
+            <button class="primary-button" type="button" data-close-interview-report-prompt>저장</button>
+          </div>
         </div>
       </section>
     </div>
