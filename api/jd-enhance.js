@@ -1,5 +1,6 @@
 const MAX_JD_CHARS = 22000;
 const MAX_GUIDELINE_CHARS = 14000;
+const interviewReport = require("../lib/interview-report.js");
 
 const JD_ENHANCEMENT_SCHEMA = {
   type: "object",
@@ -353,6 +354,11 @@ function buildHeuristicReview(jdText, guidelineText, errorMessage = "") {
 module.exports = async function jdEnhance(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { ok: false, error: "Method not allowed" });
+    return;
+  }
+
+  if (/[?&]feature=interview-report(?:&|$)/.test(String(request.url || ""))) {
+    await interviewReport(request, response);
     return;
   }
 

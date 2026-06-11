@@ -9487,7 +9487,7 @@ function buildInterviewReportApiPayload(report, loadedSamples) {
 }
 
 async function generateInterviewReportWithAi(report, loadedSamples) {
-  const response = await fetch("/api/interview-report", {
+  const response = await fetch("/api/jd-enhance?feature=interview-report", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

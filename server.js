@@ -56,7 +56,7 @@ const server = http.createServer((request, response) => {
   }
 
   if (request.url.split("?")[0] === "/api/interview-report") {
-    const interviewReport = require("./api/interview-report.js");
+    const interviewReport = require("./lib/interview-report.js");
     interviewReport(request, response);
     return;
   }
