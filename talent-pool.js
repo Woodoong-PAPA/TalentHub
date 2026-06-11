@@ -6746,7 +6746,11 @@ function renderApplicantRegistrationModal(folder) {
             <strong id="screening-applicant-modal-title">${escapeHtml(modalTitle)}</strong>
             <span>${modalDescription}</span>
           </div>
-          <button class="ghost-button compact-button" type="button" data-close-screening-applicant-modal>닫기</button>
+          <div class="screening-applicant-modal-actions" aria-label="지원자 정보 수정 작업">
+            <button class="ghost-button compact-button" type="button" data-close-screening-applicant-modal>닫기</button>
+            <button class="ghost-button compact-button" type="button" data-close-screening-applicant-modal>취소</button>
+            <button class="primary-button compact-button" type="submit" form="screening-applicant-form">${isEditing ? "수정 저장" : "저장"}</button>
+          </div>
         </div>
         <div class="trending-modal-body">
           <form id="screening-applicant-form" class="screening-applicant-form">
@@ -6855,10 +6859,6 @@ function renderApplicantRegistrationModal(folder) {
                 </div>
               </div>
             </section>
-            <div class="form-actions">
-              <button class="ghost-button" type="button" data-close-screening-applicant-modal>취소</button>
-              <button class="primary-button" type="submit">${isEditing ? "수정 저장" : "저장"}</button>
-            </div>
           </form>
         </div>
       </section>

@@ -4657,6 +4657,18 @@ tr:last-child td {
   min-width: 0;
 }
 
+.trending-modal-header > .screening-applicant-modal-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.screening-applicant-modal-actions .compact-button {
+  white-space: nowrap;
+}
+
 .trending-modal-header strong {
   color: var(--text);
   font-size: 16px;
