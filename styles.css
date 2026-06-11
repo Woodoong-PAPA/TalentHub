@@ -2692,11 +2692,12 @@ tr:last-child td {
 }
 
 .screening-applicant-detail-modal {
-  width: min(1180px, calc(100vw - 32px));
-  min-width: min(720px, calc(100vw - 24px));
-  min-height: min(620px, calc(100vh - 24px));
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
+  width: min(1860px, calc(100vw - 18px));
+  height: min(1180px, calc(100vh - 18px));
+  min-width: min(1040px, calc(100vw - 18px));
+  min-height: min(820px, calc(100vh - 18px));
+  max-width: none;
+  max-height: none;
   resize: both;
   overflow: hidden;
 }
@@ -2706,6 +2707,7 @@ tr:last-child td {
   gap: 12px;
   min-height: 0;
   height: 100%;
+  overflow: auto;
 }
 
 .screening-detail-block {
@@ -2721,15 +2723,24 @@ tr:last-child td {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  min-height: 0;
+  height: 100%;
 }
 
 .screening-detail-two-column.has-fit {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: start;
+  align-items: stretch;
 }
 
 .screening-fit-analysis-block {
   align-content: start;
+  min-height: 0;
+  overflow: auto;
+}
+
+.screening-resume-block {
+  min-height: 0;
+  overflow: auto;
 }
 
 .screening-fit-opinion {
@@ -2811,7 +2822,8 @@ tr:last-child td {
 }
 
 .screening-resume-viewer {
-  min-height: 420px;
+  min-height: min(760px, calc(100vh - 220px));
+  height: 100%;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2831,7 +2843,7 @@ tr:last-child td {
   gap: 14px;
   padding: 12px;
   overflow: auto;
-  max-height: min(72vh, 820px);
+  max-height: none;
 }
 
 .screening-resume-loading {
@@ -2875,7 +2887,7 @@ tr:last-child td {
 }
 
 .screening-resume-text-viewer {
-  max-height: min(70vh, 760px);
+  max-height: none;
   overflow: auto;
   padding: 16px;
   background: #ffffff;
@@ -3763,6 +3775,17 @@ tr:last-child td {
   max-height: none;
   resize: both;
   overflow: auto;
+}
+
+.screening-applicant-detail-modal {
+  width: min(98vw, 1860px);
+  height: min(96vh, 1180px);
+  min-width: min(1040px, calc(100vw - 18px));
+  min-height: min(820px, calc(100vh - 18px));
+  max-width: none;
+  max-height: none;
+  resize: both;
+  overflow: hidden;
 }
 
 .screening-position-modal .trending-modal-body,
@@ -6755,11 +6778,11 @@ tr:last-child td {
   }
 
   .screening-resume-viewer {
-    min-height: 360px;
+    min-height: 520px;
   }
 
   .screening-resume-pdf-viewer {
-    max-height: 58vh;
+    max-height: none;
     padding: 8px;
   }
 
@@ -6768,7 +6791,7 @@ tr:last-child td {
   }
 
   .screening-resume-text-viewer {
-    max-height: 58vh;
+    max-height: none;
   }
 
   .screening-card-tags {
