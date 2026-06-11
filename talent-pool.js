@@ -177,6 +177,8 @@ const RECRUITING_METRICS_PROGRESS_COLUMNS = [
   "비고"
 ];
 const RECRUITING_METRICS_MIN_ROWS = 8;
+const RECRUITING_METRICS_YEAR = 2026;
+const RECRUITING_METRICS_FIRST_WEEK_START = "2025-12-29";
 const SCREENING_JOB_CATEGORIES = [
   "연구개발",
   "SW연구개발",
@@ -778,7 +780,8 @@ const state = {
     activeTab: "details",
     detailUnitFilter: "all",
     progressUnitFilter: "all",
-    weekOf: getTodayDate(),
+    weekOf: getDefaultRecruitingMetricsWeekKey(),
+    weeklySnapshots: {},
     targets: structuredClone(DEFAULT_RECRUITING_METRICS_TARGETS),
     detailSheet: null,
     progressSheet: null,
@@ -942,6 +945,148 @@ function normalizeRecruitingSheet(value, defaultColumns, minRows = RECRUITING_ME
     columns: safeColumns,
     rows
   };
+}
+
+function parseRecruitingDate(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function formatRecruitingDateKey(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return getTodayDate();
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addRecruitingDays(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function getRecruitingWeekStartKey(value = getTodayDate()) {
+  const date = parseRecruitingDate(value) || parseRecruitingDate(getTodayDate());
+  const day = date.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  return formatRecruitingDateKey(addRecruitingDays(date, mondayOffset));
+}
+
+function formatRecruitingWeekShortDate(date) {
+  const year = String(date.getFullYear()).slice(2);
+  return `'${year}.${date.getMonth() + 1}.${date.getDate()}`;
+}
+
+function getRecruitingMetricsWeekOptions(year = RECRUITING_METRICS_YEAR) {
+  const firstStart = parseRecruitingDate(RECRUITING_METRICS_FIRST_WEEK_START);
+  const options = [];
+
+  for (let index = 0; index < 54; index += 1) {
+    const start = addRecruitingDays(firstStart, index * 7);
+    const end = addRecruitingDays(start, 4);
+
+    if (start.getFullYear() > year && end.getFullYear() > year) {
+      break;
+    }
+
+    options.push({
+      key: formatRecruitingDateKey(start),
+      label: `${year}년 ${index + 1}주차(${formatRecruitingWeekShortDate(start)}~${formatRecruitingWeekShortDate(end)})`
+    });
+  }
+
+  return options;
+}
+
+function getDefaultRecruitingMetricsWeekKey() {
+  const currentWeek = getRecruitingWeekStartKey(getTodayDate());
+  const options = getRecruitingMetricsWeekOptions();
+  return options.some((option) => option.key === currentWeek)
+    ? currentWeek
+    : options[0]?.key || currentWeek;
+}
+
+function normalizeRecruitingMetricsWeekKey(value) {
+  const options = getRecruitingMetricsWeekOptions();
+  const rawValue = String(value || "").trim();
+  const matched = options.find((option) => option.key === rawValue);
+
+  if (matched) {
+    return matched.key;
+  }
+
+  const weekStart = getRecruitingWeekStartKey(rawValue || getTodayDate());
+  return options.some((option) => option.key === weekStart)
+    ? weekStart
+    : getDefaultRecruitingMetricsWeekKey();
+}
+
+function cloneRecruitingMetricsTargets(targets = {}) {
+  return Object.fromEntries(BUSINESS_UNITS.map((unit) => {
+    const target = targets[unit] || {};
+
+    return [unit, {
+      hiringTarget: Number(target.hiringTarget || 0) || 0,
+      keyTalentTarget: Number(target.keyTalentTarget || 0) || 0,
+      weeklyNote: String(target.weeklyNote || "").trim(),
+      completed: Boolean(target.completed),
+      completedAt: String(target.completedAt || "").trim(),
+      completedBy: String(target.completedBy || "").trim()
+    }];
+  }));
+}
+
+function cloneRecruitingSheet(sheet, defaultColumns, minRows) {
+  const normalizedSheet = normalizeRecruitingSheet(sheet, defaultColumns, minRows);
+  return {
+    columns: [...normalizedSheet.columns],
+    rows: normalizedSheet.rows.map((row) => ({
+      id: String(row.id || createId("metric-row")),
+      cells: normalizedSheet.columns.map((_, index) => String(row.cells[index] || "").trim())
+    }))
+  };
+}
+
+function normalizeRecruitingMetricsSnapshot(snapshot = {}) {
+  const targets = cloneRecruitingMetricsTargets(snapshot.targets || {});
+  const detailSheet = cloneRecruitingSheet(
+    snapshot.detailSheet,
+    RECRUITING_METRICS_DETAIL_COLUMNS,
+    RECRUITING_METRICS_MIN_ROWS
+  );
+  const progressSheet = cloneRecruitingSheet(
+    snapshot.progressSheet || buildRecruitingProgressSheetFromTargets(targets),
+    RECRUITING_METRICS_PROGRESS_COLUMNS,
+    BUSINESS_UNITS.length
+  );
+
+  ensureRecruitingProgressSheetRows(progressSheet, targets);
+
+  return {
+    targets,
+    detailSheet,
+    progressSheet,
+    closed: Boolean(snapshot.closed),
+    closedAt: String(snapshot.closedAt || "").trim(),
+    closedBy: String(snapshot.closedBy || "").trim()
+  };
+}
+
+function normalizeRecruitingMetricsWeeklySnapshots(value = {}) {
+  return Object.entries(value && typeof value === "object" ? value : {}).reduce((snapshots, [weekKey, snapshot]) => {
+    const normalizedWeekKey = normalizeRecruitingMetricsWeekKey(weekKey);
+    snapshots[normalizedWeekKey] = normalizeRecruitingMetricsSnapshot(snapshot);
+    return snapshots;
+  }, {});
 }
 
 function buildRecruitingProgressSheetFromTargets(sourceTargets = {}) {
@@ -2239,12 +2384,23 @@ function normalizeRecruitingMetricsState(value = {}) {
     BUSINESS_UNITS.length
   );
   ensureRecruitingProgressSheetRows(progressSheet, targets);
+  const weekOf = normalizeRecruitingMetricsWeekKey(value.weekOf || getTodayDate());
+  const weeklySnapshots = normalizeRecruitingMetricsWeeklySnapshots(value.weeklySnapshots || {});
+
+  if (!weeklySnapshots[weekOf]) {
+    weeklySnapshots[weekOf] = normalizeRecruitingMetricsSnapshot({
+      targets,
+      detailSheet,
+      progressSheet
+    });
+  }
 
   return {
     activeTab,
     detailUnitFilter,
     progressUnitFilter,
-    weekOf: String(value.weekOf || getTodayDate()).trim(),
+    weekOf,
+    weeklySnapshots,
     targets,
     detailSheet,
     progressSheet,
@@ -3873,8 +4029,13 @@ function buildInterviewCasesPayload() {
 }
 
 function buildRecruitingMetricsPayload() {
+  const metrics = getRecruitingMetricsState();
+  syncRecruitingTargetsFromProgressSheet(metrics);
+  syncRecruitingProgressSheetComputedValues(metrics);
+  captureRecruitingMetricsWeekSnapshot(metrics);
+
   return {
-    metrics: normalizeRecruitingMetricsState(state.recruitingMetrics),
+    metrics: normalizeRecruitingMetricsState(metrics),
     updatedAt: new Date().toISOString(),
     updatedBy: getCurrentActorName()
   };
@@ -10310,6 +10471,97 @@ function getRecruitingMetricsState() {
   return state.recruitingMetrics;
 }
 
+function captureRecruitingMetricsWeekSnapshot(metrics = getRecruitingMetricsState()) {
+  const weekKey = normalizeRecruitingMetricsWeekKey(metrics.weekOf);
+  const currentSnapshot = metrics.weeklySnapshots?.[weekKey] || {};
+
+  metrics.weekOf = weekKey;
+  metrics.weeklySnapshots = metrics.weeklySnapshots || {};
+  metrics.weeklySnapshots[weekKey] = normalizeRecruitingMetricsSnapshot({
+    targets: metrics.targets,
+    detailSheet: metrics.detailSheet,
+    progressSheet: metrics.progressSheet,
+    closed: currentSnapshot.closed,
+    closedAt: currentSnapshot.closedAt,
+    closedBy: currentSnapshot.closedBy
+  });
+
+  return metrics.weeklySnapshots[weekKey];
+}
+
+function applyRecruitingMetricsWeekSnapshot(weekKey, metrics = getRecruitingMetricsState()) {
+  const normalizedWeekKey = normalizeRecruitingMetricsWeekKey(weekKey);
+  const snapshot = metrics.weeklySnapshots?.[normalizedWeekKey]
+    ? normalizeRecruitingMetricsSnapshot(metrics.weeklySnapshots[normalizedWeekKey])
+    : normalizeRecruitingMetricsSnapshot({
+      targets: DEFAULT_RECRUITING_METRICS_TARGETS,
+      detailSheet: null,
+      progressSheet: buildRecruitingProgressSheetFromTargets(DEFAULT_RECRUITING_METRICS_TARGETS)
+    });
+
+  metrics.weekOf = normalizedWeekKey;
+  metrics.targets = snapshot.targets;
+  metrics.detailSheet = snapshot.detailSheet;
+  metrics.progressSheet = snapshot.progressSheet;
+  metrics.weeklySnapshots = metrics.weeklySnapshots || {};
+  metrics.weeklySnapshots[normalizedWeekKey] = snapshot;
+  syncRecruitingProgressSheetComputedValues(metrics);
+  return snapshot;
+}
+
+function switchRecruitingMetricsWeek(weekKey) {
+  const metrics = getRecruitingMetricsState();
+  const normalizedWeekKey = normalizeRecruitingMetricsWeekKey(weekKey);
+
+  if (metrics.weekOf === normalizedWeekKey) {
+    return;
+  }
+
+  syncRecruitingTargetsFromProgressSheet(metrics);
+  syncRecruitingProgressSheetComputedValues(metrics);
+  captureRecruitingMetricsWeekSnapshot(metrics);
+  applyRecruitingMetricsWeekSnapshot(normalizedWeekKey, metrics);
+  metrics.lastAutoSentWeek = "";
+  metrics.saveStatus = "선택한 주차 데이터를 불러왔습니다.";
+  persistState({ skipRemoteSync: true });
+  renderRecruitingMetrics();
+}
+
+function getRecruitingMetricsCurrentWeekSnapshot(metrics = getRecruitingMetricsState()) {
+  const weekKey = normalizeRecruitingMetricsWeekKey(metrics.weekOf);
+  return metrics.weeklySnapshots?.[weekKey] || captureRecruitingMetricsWeekSnapshot(metrics);
+}
+
+function isRecruitingMetricsWeekClosed(metrics = getRecruitingMetricsState()) {
+  return Boolean(getRecruitingMetricsCurrentWeekSnapshot(metrics).closed);
+}
+
+function canCloseRecruitingMetricsWeek(member = getCurrentMember()) {
+  return Boolean(member && member.status === "active" && (isAdmin(member) || member.role === "division_recruiter"));
+}
+
+function setRecruitingMetricsWeekClosed(closed) {
+  const metrics = getRecruitingMetricsState();
+
+  if (!canCloseRecruitingMetricsWeek()) {
+    showToast("부문 담당자 또는 관리자만 주차 마감을 변경할 수 있습니다.");
+    return;
+  }
+
+  syncRecruitingTargetsFromProgressSheet(metrics);
+  syncRecruitingProgressSheetComputedValues(metrics);
+  const snapshot = captureRecruitingMetricsWeekSnapshot(metrics);
+  snapshot.closed = Boolean(closed);
+  snapshot.closedAt = closed ? getTimestampText() : "";
+  snapshot.closedBy = closed ? getCurrentActorName() : "";
+  metrics.saveStatus = closed
+    ? `해당 주차 입력을 마감했습니다. · ${snapshot.closedAt}`
+    : `해당 주차 마감을 취소했습니다. · ${getTimestampText()}`;
+  persistState();
+  renderRecruitingMetrics();
+  showToast(closed ? "선택 주차 입력을 마감했습니다." : "선택 주차 마감을 취소했습니다.");
+}
+
 function canEditRecruitingMetricsUnit(unit) {
   const member = getCurrentMember();
   const normalizedUnit = normalizeBusinessUnit(unit);
@@ -10447,6 +10699,8 @@ function updateRecruitingMetricsField(field, value) {
 
   if (field === "recipients") {
     metrics.recipients = normalizeEmailList(value);
+  } else if (field === "weekOf") {
+    metrics[field] = normalizeRecruitingMetricsWeekKey(value);
   } else {
     metrics[field] = String(value || "").trim();
   }
@@ -10815,6 +11069,8 @@ function updateRecruitingMetricsField(field, value) {
 
   if (field === "recipients") {
     metrics.recipients = normalizeEmailList(value);
+  } else if (field === "weekOf") {
+    metrics[field] = normalizeRecruitingMetricsWeekKey(value);
   } else {
     metrics[field] = String(value || "").trim();
   }
@@ -10827,6 +11083,12 @@ function updateRecruitingMetricsField(field, value) {
 }
 
 function updateRecruitingSheetCell(input) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 데이터를 수정할 수 없습니다.");
+    renderRecruitingMetrics();
+    return;
+  }
+
   const sheetKey = input.dataset.recruitingCell;
   const sheet = getRecruitingMetricsSheet(sheetKey);
   const rowIndex = Number(input.dataset.row);
@@ -10844,6 +11106,12 @@ function updateRecruitingSheetCell(input) {
 }
 
 function updateRecruitingSheetColumn(input) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 열 이름을 수정할 수 없습니다.");
+    renderRecruitingMetrics();
+    return;
+  }
+
   const sheetKey = input.dataset.recruitingColumn;
   const sheet = getRecruitingMetricsSheet(sheetKey);
   const columnIndex = Number(input.dataset.col);
@@ -10860,6 +11128,11 @@ function updateRecruitingSheetColumn(input) {
 }
 
 function addRecruitingSheetRow(sheetKey) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 행을 추가할 수 없습니다.");
+    return;
+  }
+
   const sheet = getRecruitingMetricsSheet(sheetKey);
 
   if (!sheet) {
@@ -10875,6 +11148,11 @@ function addRecruitingSheetRow(sheetKey) {
 }
 
 function deleteRecruitingSheetRow(sheetKey, rowIndex) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 행을 삭제할 수 없습니다.");
+    return;
+  }
+
   const sheet = getRecruitingMetricsSheet(sheetKey);
   const index = Number(rowIndex);
 
@@ -10891,6 +11169,11 @@ function deleteRecruitingSheetRow(sheetKey, rowIndex) {
 }
 
 function addRecruitingSheetColumn(sheetKey) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 열을 추가할 수 없습니다.");
+    return;
+  }
+
   const sheet = getRecruitingMetricsSheet(sheetKey);
 
   if (!sheet) {
@@ -10907,6 +11190,11 @@ function addRecruitingSheetColumn(sheetKey) {
 }
 
 function deleteRecruitingSheetColumn(sheetKey, columnIndex) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 열을 삭제할 수 없습니다.");
+    return;
+  }
+
   const sheet = getRecruitingMetricsSheet(sheetKey);
   const index = Number(columnIndex);
 
@@ -10943,6 +11231,12 @@ function handleRecruitingSheetPaste(event) {
   const input = event.target.closest("[data-recruiting-cell]");
 
   if (!input) {
+    return;
+  }
+
+  if (isRecruitingMetricsWeekClosed()) {
+    event.preventDefault();
+    showToast("마감된 주차는 데이터를 붙여넣을 수 없습니다.");
     return;
   }
 
@@ -11179,6 +11473,30 @@ function renderRecruitingMetricsUnitFilter(sheetKey) {
         ${options.join("")}
       </select>
     </label>
+  `;
+}
+
+function renderRecruitingMetricsWeekControls(metrics = getRecruitingMetricsState()) {
+  const options = getRecruitingMetricsWeekOptions();
+  const selectedWeek = normalizeRecruitingMetricsWeekKey(metrics.weekOf);
+  const snapshot = getRecruitingMetricsCurrentWeekSnapshot(metrics);
+  const closed = Boolean(snapshot.closed);
+  const canClose = canCloseRecruitingMetricsWeek();
+
+  return `
+    <div class="field metrics-week-field">
+      <span>취합 기준 주</span>
+      <select id="recruiting-metrics-week" class="control-input">
+        ${options.map((option) => `<option value="${escapeHtml(option.key)}" ${option.key === selectedWeek ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="metrics-week-lock">
+      <span class="status-pill ${closed ? "danger" : "success"}">${closed ? "입력 마감" : "입력 가능"}</span>
+      ${closed && snapshot.closedAt ? `<small>${escapeHtml(snapshot.closedAt)} · ${escapeHtml(snapshot.closedBy || "시스템")}</small>` : ""}
+      ${canClose
+        ? `<button class="${closed ? "ghost-button" : "primary-button"} compact-button" type="button" ${closed ? "data-reopen-recruiting-week" : "data-close-recruiting-week"}>${closed ? "마감 취소" : "취합 마감"}</button>`
+        : ""}
+    </div>
   `;
 }
 
@@ -11642,6 +11960,7 @@ function saveRecruitingMetrics() {
   const metrics = getRecruitingMetricsState();
   syncRecruitingTargetsFromProgressSheet(metrics);
   syncRecruitingProgressSheetComputedValues(metrics);
+  captureRecruitingMetricsWeekSnapshot(metrics);
   metrics.saveStatus = `저장 완료 · ${getTimestampText()}`;
   persistState();
   renderRecruitingMetrics();
@@ -12010,12 +12329,7 @@ function renderRecruitingMetrics() {
         </div>
         <div class="metrics-filter-row">
           ${renderRecruitingMetricsUnitFilter(activeTab)}
-          ${activeTab === "progress" ? `
-            <label class="field">
-              <span>취합 기준 주</span>
-              <input id="recruiting-metrics-week" class="control-input" type="date" value="${inputValue(metrics.weekOf)}" />
-            </label>
-          ` : ""}
+          ${activeTab === "progress" ? renderRecruitingMetricsWeekControls(metrics) : ""}
         </div>
         ${renderRecruitingMetricsSheet(activeTab)}
       </section>
@@ -12028,6 +12342,7 @@ function renderRecruitingMetrics() {
 function renderRecruitingMetricsSheet(sheetKey) {
   const sheet = getRecruitingMetricsSheet(sheetKey);
   const visibleRows = getRecruitingVisibleRows(sheetKey);
+  const weekClosed = isRecruitingMetricsWeekClosed();
 
   return `
     <div class="metrics-sheet-toolbar">
@@ -12036,8 +12351,8 @@ function renderRecruitingMetricsSheet(sheetKey) {
         <span>${sheetKey === "details" ? "사업부 열은 드롭다운으로 입력하며, 권한 범위 밖의 데이터는 표시되지 않습니다." : "오퍼서명·입사완료·달성률은 채용 실적 상세 값으로 자동 반영됩니다."}</span>
       </div>
       <div class="job-fit-result-actions">
-        <button class="ghost-button compact-button" type="button" data-add-recruiting-row="${escapeHtml(sheetKey)}">행 추가</button>
-        <button class="ghost-button compact-button" type="button" data-add-recruiting-column="${escapeHtml(sheetKey)}">열 추가</button>
+        <button class="ghost-button compact-button" type="button" data-add-recruiting-row="${escapeHtml(sheetKey)}" ${weekClosed ? "disabled" : ""}>행 추가</button>
+        <button class="ghost-button compact-button" type="button" data-add-recruiting-column="${escapeHtml(sheetKey)}" ${weekClosed ? "disabled" : ""}>열 추가</button>
       </div>
     </div>
     <div class="table-scroll metrics-table-wrap metrics-sheet-wrap">
@@ -12048,12 +12363,11 @@ function renderRecruitingMetricsSheet(sheetKey) {
             ${sheet.columns.map((column, columnIndex) => `
               <th>
                 <div class="metrics-column-header">
-                  <input class="metrics-column-input" value="${inputValue(column)}" aria-label="열 이름" data-recruiting-column="${escapeHtml(sheetKey)}" data-col="${columnIndex}" />
-                  <button class="icon-button tiny-icon-button" type="button" aria-label="열 삭제" data-delete-recruiting-column="${escapeHtml(sheetKey)}" data-col="${columnIndex}" ${sheet.columns.length <= 1 ? "disabled" : ""}>×</button>
+                  <input class="metrics-column-input" value="${inputValue(column)}" aria-label="열 이름" data-recruiting-column="${escapeHtml(sheetKey)}" data-col="${columnIndex}" ${weekClosed ? "disabled" : ""} />
+                  <button class="icon-button tiny-icon-button metrics-column-delete" type="button" aria-label="열 삭제" data-delete-recruiting-column="${escapeHtml(sheetKey)}" data-col="${columnIndex}" ${(weekClosed || sheet.columns.length <= 1) ? "disabled" : ""}>×</button>
                 </div>
               </th>
             `).join("")}
-            <th class="metrics-action-column">관리</th>
           </tr>
         </thead>
         <tbody>
@@ -12065,12 +12379,17 @@ function renderRecruitingMetricsSheet(sheetKey) {
 
             return `
               <tr>
-                <th class="metrics-row-number">${visibleIndex + 1}</th>
+                <th class="metrics-row-number">
+                  <span class="metrics-row-number-inner">
+                    <span>${visibleIndex + 1}</span>
+                    <button class="icon-button tiny-icon-button metrics-row-delete" type="button" aria-label="행 삭제" data-delete-recruiting-row="${escapeHtml(sheetKey)}" data-row="${rowIndex}" ${(weekClosed || sheet.rows.length <= 1 || (sheetKey === "details" && !detailEditable) || (sheetKey === "progress" && !progressEditable)) ? "disabled" : ""}>×</button>
+                  </span>
+                </th>
                 ${sheet.columns.map((column, columnIndex) => {
                   const isBusinessUnitCell = sheetKey === "details" && column === "사업부";
                   const disabled = sheetKey === "details"
-                    ? !detailEditable
-                    : !progressEditable || isRecruitingProgressComputedColumn(sheet, columnIndex);
+                    ? weekClosed || !detailEditable
+                    : weekClosed || !progressEditable || isRecruitingProgressComputedColumn(sheet, columnIndex);
                   let cellValue = row.cells[columnIndex] || "";
 
                   if (sheetKey === "progress") {
@@ -12106,9 +12425,6 @@ function renderRecruitingMetricsSheet(sheetKey) {
                     </td>
                   `;
                 }).join("")}
-                <td class="metrics-action-column">
-                  <button class="ghost-button compact-button metrics-row-delete" type="button" data-delete-recruiting-row="${escapeHtml(sheetKey)}" data-row="${rowIndex}" ${(sheet.rows.length <= 1 || (sheetKey === "details" && !detailEditable) || (sheetKey === "progress" && !progressEditable)) ? "disabled" : ""}>삭제</button>
-                </td>
               </tr>
             `;
           }).join("")}
@@ -12126,7 +12442,6 @@ function renderRecruitingMetricsSheet(sheetKey) {
               <tr class="metrics-total-row">
                 <th class="metrics-row-number">합계</th>
                 ${sheet.columns.map((_, columnIndex) => `<td>${escapeHtml(getRecruitingProgressTotalDisplayValue(columnIndex, total, sheet))}</td>`).join("")}
-                <td class="metrics-action-column"></td>
               </tr>
             `;
           })() : ""}
@@ -12137,6 +12452,12 @@ function renderRecruitingMetricsSheet(sheetKey) {
 }
 
 function updateRecruitingSheetCell(input) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 데이터를 수정할 수 없습니다.");
+    renderRecruitingMetrics();
+    return;
+  }
+
   const sheetKey = input.dataset.recruitingCell;
   const sheet = getRecruitingMetricsSheet(sheetKey);
   const rowIndex = Number(input.dataset.row);
@@ -12197,6 +12518,11 @@ function updateRecruitingSheetCell(input) {
 }
 
 function addRecruitingSheetRow(sheetKey) {
+  if (isRecruitingMetricsWeekClosed()) {
+    showToast("마감된 주차는 행을 추가할 수 없습니다.");
+    return;
+  }
+
   const sheet = getRecruitingMetricsSheet(sheetKey);
 
   if (!sheet) {
@@ -12228,6 +12554,12 @@ function handleRecruitingSheetPaste(event) {
   const input = event.target.closest("[data-recruiting-cell]");
 
   if (!input) {
+    return;
+  }
+
+  if (isRecruitingMetricsWeekClosed()) {
+    event.preventDefault();
+    showToast("마감된 주차는 데이터를 붙여넣을 수 없습니다.");
     return;
   }
 
@@ -12500,6 +12832,7 @@ function syncInterviewOfferToRecruitingMetrics(interviewCase) {
 
   syncRecruitingTargetsFromProgressSheet(metrics);
   syncRecruitingProgressSheetComputedValues(metrics);
+  captureRecruitingMetricsWeekSnapshot(metrics);
   metrics.saveStatus = `Interview 오퍼서명 정보가 채용 실적 상세에 반영되었습니다. · ${getTimestampText()}`;
   syncRecruitingMetricsToSupabase().catch((error) => {
     console.warn("Recruiting metrics remote save failed.", error);
@@ -27109,6 +27442,16 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-close-recruiting-week]")) {
+      setRecruitingMetricsWeekClosed(true);
+      return;
+    }
+
+    if (event.target.closest("[data-reopen-recruiting-week]")) {
+      setRecruitingMetricsWeekClosed(false);
+      return;
+    }
+
     if (event.target.closest("[data-open-recruiting-mail]")) {
       openRecruitingMetricsMailModal();
       return;
@@ -27945,8 +28288,7 @@ function bindEvents() {
     }
 
     if (event.target.id === "recruiting-metrics-week") {
-      updateRecruitingMetricsField("weekOf", event.target.value);
-      renderRecruitingMetrics();
+      switchRecruitingMetricsWeek(event.target.value);
       return;
     }
 
