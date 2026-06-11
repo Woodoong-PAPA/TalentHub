@@ -55,6 +55,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.url.split("?")[0] === "/api/interview-report") {
+    const interviewReport = require("./api/interview-report.js");
+    interviewReport(request, response);
+    return;
+  }
+
   if (request.url.split("?")[0] === "/api/trending-people") {
     const trendingPeople = require("./api/trending-people.js");
     trendingPeople(request, response);

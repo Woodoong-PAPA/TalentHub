@@ -1933,6 +1933,10 @@ function normalizeInterviewReportState(value = {}) {
     templateProfile: value.templateProfile && typeof value.templateProfile === "object" ? value.templateProfile : null,
     prompt: String(value.prompt || "").trim(),
     reportText: String(value.reportText || "").trim(),
+    reportLoading: Boolean(value.reportLoading),
+    reportProgress: Number(value.reportProgress || 0) || 0,
+    generationLogs: Array.isArray(value.generationLogs) ? value.generationLogs.map(String).filter(Boolean).slice(-10) : [],
+    usedAi: Boolean(value.usedAi),
     status: String(value.status || "").trim()
   };
 }
@@ -9182,8 +9186,11 @@ function renderInterviewReport() {
   const samples = getInterviewReportSampleRows(report);
   const hasScript = Boolean(report.scriptText.trim() || canReadInterviewReportUpload(report.scriptFile));
   const hasSamples = samples.some((sample) => sample.readable);
-  const isBusy = Boolean(report.scriptLoading || report.templateLoading);
+  const isBusy = Boolean(report.scriptLoading || report.templateLoading || report.reportLoading);
   const canGenerateReport = hasScript && hasSamples && !isBusy;
+  const generateButtonText = report.reportLoading
+    ? `생성 중 ${Math.max(0, Math.min(100, Math.round(Number(report.reportProgress) || 0)))}%`
+    : "면담록 보고서 생성";
   const scriptStatus = report.scriptStatus || getInterviewReportUploadLabel(report.scriptFile) || "파일을 선택하거나 드래그앤드랍";
   const templateStatus = report.templateStatus || (samples.length ? `저장된 샘플 ${samples.length}개` : "복수 샘플 선택 가능");
 
@@ -9215,7 +9222,7 @@ function renderInterviewReport() {
         </div>
         ${renderInterviewTemplateSampleList(report)}
         <div class="member-actions">
-          <button class="primary-button" type="button" data-generate-interview-report ${canGenerateReport ? "" : "disabled"}>면담록 보고서 생성</button>
+          <button class="primary-button" type="button" data-generate-interview-report ${canGenerateReport ? "" : "disabled"}>${escapeHtml(generateButtonText)}</button>
           <button class="ghost-button" type="button" data-download-interview-report ${report.reportText ? "" : "disabled"}>Word 다운로드</button>
         </div>
         ${report.status ? `<p class="job-fit-inline-status">${escapeHtml(report.status)}</p>` : ""}
@@ -9227,6 +9234,7 @@ function renderInterviewReport() {
             <span>필요 시 문구를 직접 다듬은 후 다운로드할 수 있습니다.</span>
           </div>
         </div>
+        ${renderInterviewReportGenerationStatus(report)}
         <textarea id="interview-report-output" class="control-textarea report-output-textarea" rows="22" placeholder="면담록 보고서 생성 결과가 여기에 표시됩니다.">${escapeHtml(report.reportText || "")}</textarea>
       </section>
       ${renderInterviewReportPromptModal(report)}
@@ -9427,6 +9435,79 @@ function startInterviewReportProgressPulse(report, area, start, end, status) {
   return () => {
     window.clearInterval(timer);
   };
+}
+
+function setInterviewReportGenerationProgress(report, percent, message = "") {
+  report.reportProgress = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+
+  if (message) {
+    report.status = message;
+    report.generationLogs = [
+      ...(Array.isArray(report.generationLogs) ? report.generationLogs : []),
+      message
+    ].filter(Boolean).slice(-8);
+  }
+}
+
+function renderInterviewReportGenerationStatus(report) {
+  const logs = Array.isArray(report.generationLogs) ? report.generationLogs.filter(Boolean) : [];
+
+  if (!report.reportLoading && !logs.length) {
+    return "";
+  }
+
+  return `
+    <div class="report-generation-status ${report.reportLoading ? "is-loading" : ""}">
+      <div class="report-generation-head">
+        <strong>${report.reportLoading ? "면담록 보고서 생성 중" : "면담록 보고서 생성 상태"}</strong>
+        <span>${renderMaybeProgressStatus(report.status || "보고서 생성 상태를 확인 중입니다.", report.reportLoading, report.reportProgress)}</span>
+      </div>
+      ${logs.length ? `
+        <ol class="report-generation-log">
+          ${logs.map((log) => `<li>${escapeHtml(log)}</li>`).join("")}
+        </ol>
+      ` : ""}
+    </div>
+  `;
+}
+
+function buildInterviewReportApiPayload(report, loadedSamples) {
+  return {
+    scriptText: normalizePolicyText(report.scriptText || ""),
+    prompt: normalizePolicyText(report.prompt || ""),
+    templates: loadedSamples
+      .filter((sample) => sample && sample.text)
+      .slice(0, 5)
+      .map((sample) => ({
+        name: sample.name || sample.fileName || "면담록 샘플",
+        text: normalizePolicyText(sample.text || ""),
+        profile: sample.profile || null
+      }))
+  };
+}
+
+async function generateInterviewReportWithAi(report, loadedSamples) {
+  const response = await fetch("/api/interview-report", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(buildInterviewReportApiPayload(report, loadedSamples))
+  });
+  const responseText = await response.text();
+  let payload = null;
+
+  try {
+    payload = JSON.parse(responseText);
+  } catch (error) {
+    throw new Error(`면담록 보고서 API 응답이 JSON이 아닙니다. ${response.status} ${responseText.slice(0, 120)}`);
+  }
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || "면담록 보고서 AI 생성에 실패했습니다.");
+  }
+
+  return payload;
 }
 
 function buildInterviewReportText() {
@@ -9631,6 +9712,203 @@ async function generateInterviewReport() {
     report.scriptStatus = report.scriptText.trim() ? report.scriptStatus : getInterviewReportUploadLabel(report.scriptFile);
     report.templateStatus = samples.length ? `저장된 샘플 ${samples.length}개` : "복수 샘플 선택 가능";
     report.status = error.isResumeParseError ? error.message : "면담록 보고서 생성 중 파일 분석에 실패했습니다.";
+  }
+
+  renderInterviewReport();
+}
+
+async function generateInterviewReport() {
+  const report = getInterviewReportState();
+  const samples = getInterviewReportSampleRows(report);
+
+  if (!report.scriptText.trim() && !canReadInterviewReportUpload(report.scriptFile)) {
+    showToast("면담 스크립트 파일을 먼저 업로드해 주세요.");
+    return;
+  }
+
+  if (!samples.some((sample) => sample.readable)) {
+    showToast("면담록 작성 우수사례 샘플 파일을 먼저 업로드해 주세요.");
+    return;
+  }
+
+  report.scriptLoading = true;
+  report.templateLoading = true;
+  report.reportLoading = true;
+  report.usedAi = false;
+  report.reportText = "";
+  report.generationLogs = [];
+  report.scriptProgress = report.scriptText.trim() ? 56 : 18;
+  report.templateProgress = 10;
+  setInterviewReportGenerationProgress(report, 5, "보고서 생성 작업을 시작했습니다.");
+  report.scriptStatus = report.scriptText.trim()
+    ? "입력된 스크립트를 분석용으로 정리하는 중입니다."
+    : `${report.scriptFile?.name || "스크립트 파일"} 텍스트를 추출하는 중입니다.`;
+  report.templateStatus = "면담록 샘플 분석을 준비하는 중입니다.";
+  renderInterviewReport();
+  await waitForUiPaint();
+
+  try {
+    const notices = [];
+
+    if (!report.scriptText.trim()) {
+      setInterviewReportGenerationProgress(report, 12, "스크립트 파일에서 텍스트를 추출하고 있습니다.");
+      const stopScriptPulse = startInterviewReportProgressPulse(
+        report,
+        "script",
+        18,
+        50,
+        `${report.scriptFile?.name || "스크립트 파일"} 텍스트를 추출하는 중입니다.`
+      );
+      let result;
+
+      try {
+        result = await readStoredInterviewReportUploadText(report.scriptFile, "면담 스크립트");
+      } finally {
+        stopScriptPulse();
+      }
+
+      const preparedScript = trimInterviewReportAnalysisText(result.text, INTERVIEW_REPORT_MAX_SCRIPT_CHARS);
+      const limitNotice = getInterviewReportTextLimitNotice("스크립트", preparedScript);
+
+      if (limitNotice) {
+        notices.push(limitNotice);
+      }
+
+      report.scriptText = preparedScript.text;
+      report.scriptProgress = 62;
+      report.scriptStatus = limitNotice || `${report.scriptFile?.name || "스크립트 파일"} 내용을 읽었습니다.`;
+      setInterviewReportGenerationProgress(report, 30, `스크립트 ${report.scriptText.length.toLocaleString()}자를 분석 준비했습니다.`);
+      renderInterviewReport();
+      await waitForUiPaint();
+    } else {
+      const preparedScript = trimInterviewReportAnalysisText(report.scriptText, INTERVIEW_REPORT_MAX_SCRIPT_CHARS);
+      const limitNotice = getInterviewReportTextLimitNotice("스크립트", preparedScript);
+
+      if (limitNotice) {
+        notices.push(limitNotice);
+      }
+
+      report.scriptText = preparedScript.text;
+      report.scriptProgress = 62;
+      report.scriptStatus = limitNotice || "입력된 스크립트를 분석용으로 정리했습니다.";
+      setInterviewReportGenerationProgress(report, 30, `스크립트 ${report.scriptText.length.toLocaleString()}자를 분석 준비했습니다.`);
+      renderInterviewReport();
+      await waitForUiPaint();
+    }
+
+    const loadedSamples = [];
+
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index];
+      const baseProgress = Math.max(18, Math.round((index / samples.length) * 55) + 25);
+
+      report.templateProgress = baseProgress;
+      report.templateStatus = `${index + 1}/${samples.length}개 샘플 텍스트 추출 중`;
+      setInterviewReportGenerationProgress(report, Math.min(70, baseProgress), `${index + 1}/${samples.length}개 샘플을 읽고 있습니다.`);
+      renderInterviewReport();
+      await waitForUiPaint();
+
+      if (sample.text) {
+        const preparedSample = trimInterviewReportAnalysisText(sample.text, INTERVIEW_REPORT_MAX_TEMPLATE_CHARS);
+        loadedSamples.push({
+          ...sample,
+          text: preparedSample.text,
+          profile: analyzeInterviewTemplateProfile(preparedSample.text, sample.name)
+        });
+      } else if (sample.readable) {
+        const stopTemplatePulse = startInterviewReportProgressPulse(
+          report,
+          "template",
+          baseProgress,
+          Math.min(84, baseProgress + 16),
+          `${index + 1}/${samples.length}개 샘플 텍스트 추출 중`
+        );
+        let result;
+
+        try {
+          result = await readStoredInterviewReportUploadText(sample, `면담록 샘플 ${sample.name}`);
+        } finally {
+          stopTemplatePulse();
+        }
+
+        const preparedSample = trimInterviewReportAnalysisText(result.text, INTERVIEW_REPORT_MAX_TEMPLATE_CHARS);
+        loadedSamples.push({
+          ...sample,
+          text: preparedSample.text,
+          profile: analyzeInterviewTemplateProfile(preparedSample.text, sample.name)
+        });
+      }
+
+      report.templateProgress = Math.max(35, Math.round(((index + 1) / samples.length) * 86));
+      report.templateStatus = `${index + 1}/${samples.length}개 샘플 분석 완료`;
+      renderInterviewReport();
+      await waitForUiPaint();
+    }
+
+    if (!loadedSamples.length) {
+      throw createResumeParseError("읽을 수 있는 면담록 샘플 텍스트가 없습니다. 샘플 파일을 다시 업로드해 주세요.");
+    }
+
+    report.templateSamples = loadedSamples;
+    report.templateProfile = analyzeInterviewTemplateProfile(getInterviewTemplateCorpus(report), getInterviewTemplateSourceLabel(report));
+    report.scriptProgress = 82;
+    report.templateProgress = 90;
+    report.templateStatus = `우수사례 샘플 ${loadedSamples.length}개 분석 완료`;
+    setInterviewReportGenerationProgress(report, 74, "AI 모델로 면담록 보고서 문안을 작성하는 중입니다.");
+    renderInterviewReport();
+    await waitForUiPaint();
+
+    try {
+      const aiResult = await generateInterviewReportWithAi(report, loadedSamples);
+      report.reportText = normalizePolicyText(aiResult.reportText || "");
+      report.usedAi = true;
+      setInterviewReportGenerationProgress(
+        report,
+        94,
+        `${aiResult.model || "AI 모델"}이 스크립트 ${aiResult.chunkCount || 1}개 구간을 반영해 보고서를 작성했습니다.`
+      );
+    } catch (aiError) {
+      console.warn("Interview report AI generation failed. Falling back to local report.", aiError);
+      setInterviewReportGenerationProgress(report, 86, `AI 생성 실패: ${aiError.message || "원인 확인 필요"}`);
+      setInterviewReportGenerationProgress(report, 90, "로컬 규칙 기반 보고서 초안으로 전환합니다.");
+      report.reportText = buildInterviewReportText();
+      report.usedAi = false;
+    }
+
+    if (!report.reportText.trim()) {
+      report.reportText = buildInterviewReportText();
+      report.usedAi = false;
+    }
+
+    report.scriptLoading = false;
+    report.templateLoading = false;
+    report.reportLoading = false;
+    report.scriptProgress = 100;
+    report.templateProgress = 100;
+    report.reportProgress = 100;
+    report.scriptStatus = "스크립트 분석 완료";
+    report.templateStatus = `우수사례 샘플 ${loadedSamples.length}개 분석 완료`;
+    report.status = [
+      `스크립트와 우수사례 샘플 ${loadedSamples.length}개를 참고해 면담록 보고서를 생성했습니다.`,
+      report.usedAi ? "AI 기반 생성 결과입니다." : "AI 응답 문제로 로컬 규칙 기반 초안을 생성했습니다.",
+      ...notices
+    ].filter(Boolean).join(" ");
+    setInterviewReportGenerationProgress(report, 100, "면담록 보고서 생성이 완료되었습니다.");
+    persistState({ skipRemoteSync: true });
+    addAuditLog("면담록 보고서 생성", "면담록 생성", `스크립트 및 샘플 ${loadedSamples.length}개 기반 보고서 생성`);
+  } catch (error) {
+    console.warn("Interview report generation failed.", error);
+    report.scriptLoading = false;
+    report.templateLoading = false;
+    report.reportLoading = false;
+    report.reportProgress = 0;
+    report.scriptProgress = report.scriptText.trim() ? report.scriptProgress : 0;
+    report.templateProgress = samples.some((sample) => sample.text) ? report.templateProgress : 0;
+    report.scriptStatus = report.scriptText.trim() ? report.scriptStatus : getInterviewReportUploadLabel(report.scriptFile);
+    report.templateStatus = samples.length ? `저장된 샘플 ${samples.length}개` : "복수 샘플 선택 가능";
+    report.status = error.isResumeParseError ? error.message : "면담록 보고서 생성 중 파일 분석 또는 AI 생성에 실패했습니다.";
+    setInterviewReportGenerationProgress(report, 0, report.status);
+    persistState({ skipRemoteSync: true });
   }
 
   renderInterviewReport();

@@ -5814,6 +5814,46 @@ tr:last-child td {
   margin: 0 auto;
 }
 
+.report-generation-status {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.report-generation-status.is-loading {
+  border-color: rgba(49, 130, 246, 0.28);
+  background: #f3f8ff;
+}
+
+.report-generation-head {
+  display: grid;
+  gap: 6px;
+}
+
+.report-generation-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.report-generation-head span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-generation-log {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .interview-template-sample-list {
   display: grid;
   gap: 8px;
