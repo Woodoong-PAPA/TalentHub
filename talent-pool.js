@@ -9755,14 +9755,33 @@ function buildInterviewReportApiPayload(report, loadedSamples) {
   };
 }
 
-async function generateInterviewReportWithAi(report, loadedSamples) {
-  const response = await fetch("/api/jd-enhance?feature=interview-report", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(buildInterviewReportApiPayload(report, loadedSamples))
-  });
+async function generateInterviewReportWithAi(report, loadedSamples, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || 32000);
+  const controller = typeof AbortController !== "undefined" && timeoutMs > 0 ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response;
+
+  try {
+    response = await fetch("/api/interview-report", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      signal: controller?.signal,
+      body: JSON.stringify(buildInterviewReportApiPayload(report, loadedSamples))
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("면담록 AI 생성 응답 시간이 초과되었습니다.");
+    }
+
+    throw error;
+  } finally {
+    if (timer) {
+      window.clearTimeout(timer);
+    }
+  }
+
   const responseText = await response.text();
   let payload = null;
 
@@ -9933,6 +9952,11 @@ async function generateInterviewReport() {
 
         try {
           result = await readStoredInterviewReportUploadText(sample, `면담록 샘플 ${sample.name}`);
+        } catch (error) {
+          console.warn("Interview report sample could not be read.", error);
+          notices.push(`${sample.name || `샘플 ${index + 1}`} 파일은 읽지 못해 제외했습니다.`);
+          report.templateStatus = `${index + 1}/${samples.length}개 샘플 읽기 실패 · 다음 샘플로 진행`;
+          continue;
         } finally {
           stopTemplatePulse();
         }
@@ -10115,32 +10139,45 @@ async function generateInterviewReport() {
     }
 
     if (!loadedSamples.length) {
-      throw createResumeParseError("읽을 수 있는 면담록 샘플 텍스트가 없습니다. 샘플 파일을 다시 업로드해 주세요.");
+      notices.push("면담록 샘플 텍스트를 읽지 못해 기본 면담록 양식으로 초안을 생성했습니다.");
     }
 
     report.templateSamples = loadedSamples;
     report.templateProfile = analyzeInterviewTemplateProfile(getInterviewTemplateCorpus(report), getInterviewTemplateSourceLabel(report));
     report.scriptProgress = 82;
     report.templateProgress = 90;
-    report.templateStatus = `우수사례 샘플 ${loadedSamples.length}개 분석 완료`;
-    setInterviewReportGenerationProgress(report, 74, "AI 모델로 면담록 보고서 문안을 작성하는 중입니다.");
+    report.templateStatus = loadedSamples.length
+      ? `우수사례 샘플 ${loadedSamples.length}개 분석 완료`
+      : "샘플 분석 실패 · 기본 양식 사용";
+    report.reportText = buildInterviewReportText();
+    report.usedAi = false;
+    setInterviewReportGenerationProgress(report, 76, "면담록 보고서 초안을 먼저 생성했습니다.");
+    renderInterviewReport();
+    await waitForUiPaint();
+
+    setInterviewReportGenerationProgress(report, 82, "AI 모델로 면담록 보고서 문안을 정교화하는 중입니다.");
     renderInterviewReport();
     await waitForUiPaint();
 
     try {
-      const aiResult = await generateInterviewReportWithAi(report, loadedSamples);
-      report.reportText = normalizePolicyText(aiResult.reportText || "");
-      report.usedAi = true;
-      setInterviewReportGenerationProgress(
-        report,
-        94,
-        `${aiResult.model || "AI 모델"}이 스크립트 ${aiResult.chunkCount || 1}개 구간을 반영해 보고서를 작성했습니다.`
-      );
+      const aiResult = await generateInterviewReportWithAi(report, loadedSamples, { timeoutMs: 32000 });
+      const aiReportText = normalizePolicyText(aiResult.reportText || "");
+
+      if (aiReportText) {
+        report.reportText = aiReportText;
+        report.usedAi = true;
+        setInterviewReportGenerationProgress(
+          report,
+          94,
+          `${aiResult.model || "AI 모델"}이 스크립트 ${aiResult.chunkCount || 1}개 구간을 반영해 보고서를 작성했습니다.`
+        );
+      } else {
+        setInterviewReportGenerationProgress(report, 92, "AI 응답이 비어 있어 먼저 생성한 초안을 유지합니다.");
+      }
     } catch (aiError) {
       console.warn("Interview report AI generation failed. Falling back to local report.", aiError);
-      setInterviewReportGenerationProgress(report, 86, `AI 생성 실패: ${aiError.message || "원인 확인 필요"}`);
-      setInterviewReportGenerationProgress(report, 90, "로컬 규칙 기반 보고서 초안으로 전환합니다.");
-      report.reportText = buildInterviewReportText();
+      setInterviewReportGenerationProgress(report, 90, `AI 정교화 실패: ${aiError.message || "원인 확인 필요"}`);
+      setInterviewReportGenerationProgress(report, 94, "먼저 생성한 면담록 보고서 초안을 유지합니다.");
       report.usedAi = false;
     }
 
