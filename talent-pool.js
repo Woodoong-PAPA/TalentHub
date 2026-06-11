@@ -9762,7 +9762,7 @@ async function generateInterviewReportWithAi(report, loadedSamples, options = {}
   let response;
 
   try {
-    response = await fetch("/api/interview-report", {
+    response = await fetch("/api/jd-enhance?feature=interview-report", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
