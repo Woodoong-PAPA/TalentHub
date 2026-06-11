@@ -41,6 +41,8 @@ const ROLE_PERMISSIONS_SETTING_KEY = "role_permissions";
 const INTERVIEW_CASES_SETTING_KEY = "interview_cases";
 const RECRUITING_METRICS_SETTING_KEY = "recruiting_metrics";
 const JD_ENHANCEMENT_SETTING_KEY = "jd_enhancement";
+const VISIT_STATS_SETTING_KEY = "visit_stats";
+const VISIT_STATS_RETENTION_DAYS = 1095;
 const ROLE_PERMISSION_TABLE_VIEWS = new Set([
   "dashboard",
   "pool",
@@ -682,6 +684,8 @@ const state = {
     status: "all"
   },
   managementTab: "members",
+  visitStats: null,
+  visitStatsRemoteLoaded: false,
   candidates: REMOTE_SYNC_ENABLED ? [] : structuredClone(ENRICHED_CANDIDATES),
   selectedCandidateId: REMOTE_SYNC_ENABLED ? "" : "cand-001",
   isEditingCandidate: false,
@@ -1118,73 +1122,302 @@ function renderCandidateVisibilityOptions(selectedValue = "all") {
   `).join("");
 }
 
+function createEmptyVisitStats() {
+  return {
+    version: 2,
+    totalVisits: 0,
+    daily: {},
+    updatedAt: "",
+    updatedBy: ""
+  };
+}
+
+function normalizeVisitUserStats(value = {}, fallback = {}) {
+  const source = typeof value === "number" ? { count: value } : value && typeof value === "object" ? value : {};
+  const count = Math.max(0, Math.round(Number(source.count || source.visits || source.total || 0) || 0));
+
+  return {
+    count,
+    name: String(source.name || fallback.name || "").trim(),
+    email: String(source.email || fallback.email || "").trim().toLowerCase(),
+    role: String(source.role || fallback.role || "").trim(),
+    businessUnit: String(source.businessUnit || source.business_unit || fallback.businessUnit || "").trim(),
+    lastVisitedAt: String(source.lastVisitedAt || source.last_visited_at || fallback.lastVisitedAt || "").trim()
+  };
+}
+
+function normalizeVisitDayStats(value = {}) {
+  const source = typeof value === "number" ? { total: value } : value && typeof value === "object" ? value : {};
+  const rawUsers = source.users && typeof source.users === "object" ? source.users : source.byUser && typeof source.byUser === "object" ? source.byUser : {};
+  const users = {};
+
+  Object.entries(rawUsers).forEach(([userId, userValue]) => {
+    const id = String(userId || "").trim();
+    const normalized = normalizeVisitUserStats(userValue);
+
+    if (id && normalized.count > 0) {
+      users[id] = normalized;
+    }
+  });
+
+  const userTotal = Object.values(users).reduce((sum, item) => sum + Number(item.count || 0), 0);
+  const total = Math.max(0, Math.round(Number(source.total || source.count || source.visits || 0) || 0), userTotal);
+
+  return { total, users };
+}
+
+function pruneVisitStats(stats) {
+  const normalized = normalizeVisitStatsState(stats);
+  const minDate = getKstDateKey(-VISIT_STATS_RETENTION_DAYS);
+  const daily = {};
+
+  Object.entries(normalized.daily).forEach(([date, day]) => {
+    if (date >= minDate) {
+      daily[date] = normalizeVisitDayStats(day);
+    }
+  });
+
+  const totalVisits = Object.values(daily).reduce((sum, day) => sum + Number(day.total || 0), 0);
+
+  return {
+    ...normalized,
+    totalVisits,
+    daily
+  };
+}
+
+function normalizeVisitStatsState(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const rawDaily = source.daily && typeof source.daily === "object" ? source.daily : source;
+  const daily = {};
+
+  Object.entries(rawDaily).forEach(([date, day]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      return;
+    }
+
+    const normalizedDay = normalizeVisitDayStats(day);
+
+    if (normalizedDay.total > 0 || Object.keys(normalizedDay.users).length) {
+      daily[date] = normalizedDay;
+    }
+  });
+
+  const totalFromDays = Object.values(daily).reduce((sum, day) => sum + Number(day.total || 0), 0);
+  const totalVisits = Math.max(0, Math.round(Number(source.totalVisits || source.total || 0) || 0), totalFromDays);
+
+  return {
+    version: 2,
+    totalVisits,
+    daily,
+    updatedAt: String(source.updatedAt || source.updated_at || "").trim(),
+    updatedBy: String(source.updatedBy || source.updated_by || "").trim()
+  };
+}
+
+function mergeVisitStats(...items) {
+  const merged = createEmptyVisitStats();
+
+  items.forEach((item) => {
+    const stats = normalizeVisitStatsState(item);
+
+    Object.entries(stats.daily).forEach(([date, day]) => {
+      const targetDay = normalizeVisitDayStats(merged.daily[date]);
+      const sourceDay = normalizeVisitDayStats(day);
+
+      Object.entries(sourceDay.users).forEach(([userId, userStats]) => {
+        const current = normalizeVisitUserStats(targetDay.users[userId]);
+        const next = normalizeVisitUserStats(userStats);
+        targetDay.users[userId] = next.count >= current.count ? next : current;
+      });
+
+      const usersTotal = Object.values(targetDay.users).reduce((sum, user) => sum + Number(user.count || 0), 0);
+      targetDay.total = Math.max(targetDay.total, sourceDay.total, usersTotal);
+      merged.daily[date] = targetDay;
+    });
+
+    if (dateSortValue(stats.updatedAt) > dateSortValue(merged.updatedAt)) {
+      merged.updatedAt = stats.updatedAt;
+      merged.updatedBy = stats.updatedBy;
+    }
+  });
+
+  return pruneVisitStats(merged);
+}
+
 function loadVisitStats() {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(VISIT_STATS_KEY) || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return normalizeVisitStatsState(parsed);
   } catch (error) {
     console.warn("Visit stats could not be loaded.", error);
-    return {};
+    return createEmptyVisitStats();
   }
 }
 
 function saveVisitStats(stats) {
   try {
-    window.localStorage.setItem(VISIT_STATS_KEY, JSON.stringify(stats));
+    window.localStorage.setItem(VISIT_STATS_KEY, JSON.stringify(normalizeVisitStatsState(stats)));
   } catch (error) {
     console.warn("Visit stats could not be saved.", error);
   }
 }
 
-function recordPageVisit() {
+function getVisitMemberSnapshot(member = getCurrentMember()) {
+  return {
+    id: member?.id || state.currentUserId || "anonymous",
+    name: member?.name || "anonymous",
+    email: member?.email || "",
+    role: member?.role || "",
+    businessUnit: member?.businessUnit || ""
+  };
+}
+
+function applyVisitEventToStats(stats, member = getCurrentMember(), options = {}) {
+  const snapshot = getVisitMemberSnapshot(member);
+  const date = options.date || getKstDateKey(0);
+  const visitedAt = options.visitedAt || new Date().toISOString();
+  const next = normalizeVisitStatsState(stats);
+  const day = normalizeVisitDayStats(next.daily[date]);
+  const userKey = snapshot.id || "anonymous";
+  const user = normalizeVisitUserStats(day.users[userKey], {
+    ...snapshot,
+    lastVisitedAt: visitedAt
+  });
+
+  user.count += 1;
+  user.name = snapshot.name || user.name;
+  user.email = snapshot.email || user.email;
+  user.role = snapshot.role || user.role;
+  user.businessUnit = snapshot.businessUnit || user.businessUnit;
+  user.lastVisitedAt = visitedAt;
+  day.users[userKey] = user;
+  day.total += 1;
+  next.daily[date] = day;
+  next.totalVisits = Object.values(next.daily).reduce((sum, item) => sum + Number(item.total || 0), 0);
+  next.updatedAt = visitedAt;
+  next.updatedBy = snapshot.name || userKey;
+
+  return pruneVisitStats(next);
+}
+
+function buildVisitStatsFromLoginAudits() {
+  const stats = createEmptyVisitStats();
+
+  state.auditLogs.forEach((log) => {
+    const action = String(log.action || "");
+    const purpose = String(log.purpose || "");
+
+    if (!action.includes("로그인") && !purpose.includes("시스템 접속")) {
+      return;
+    }
+
+    const date = String(log.time || "").slice(0, 10);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return;
+    }
+
+    const day = normalizeVisitDayStats(stats.daily[date]);
+    day.total += 1;
+    stats.daily[date] = day;
+  });
+
+  stats.totalVisits = Object.values(stats.daily).reduce((sum, day) => sum + Number(day.total || 0), 0);
+  return stats;
+}
+
+async function fetchVisitStatsFromSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return createEmptyVisitStats();
+  }
+
+  const rows = await supabaseRequest(`app_settings?select=*&setting_key=eq.${VISIT_STATS_SETTING_KEY}&limit=1`);
+  return normalizeVisitStatsState(Array.isArray(rows) && rows[0]?.payload ? rows[0].payload : {});
+}
+
+async function saveVisitStatsToSupabase(stats) {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(VISIT_STATS_SETTING_KEY, normalizeVisitStatsState(stats))])
+  });
+
+  return true;
+}
+
+async function recordVisitStatsToSupabase(member, baseStats) {
+  if (!REMOTE_SYNC_ENABLED) {
+    return;
+  }
+
   try {
-    const today = getTodayDate();
-    const stats = loadVisitStats();
-    stats[today] = Number(stats[today] || 0) + 1;
+    const remoteStats = await fetchVisitStatsFromSupabase();
+    const mergedBase = mergeVisitStats(remoteStats, baseStats);
+    const nextStats = applyVisitEventToStats(mergedBase, member);
+    await saveVisitStatsToSupabase(nextStats);
+    state.visitStats = mergeVisitStats(state.visitStats, nextStats);
+    state.visitStatsRemoteLoaded = true;
+    saveVisitStats(state.visitStats);
+    renderSidePanel();
+  } catch (error) {
+    console.warn("Visit stats could not be synced.", error);
+  }
+}
 
-    Object.keys(stats).forEach((date) => {
-      if (date < dateDaysAgo(60)) {
-        delete stats[date];
-      }
-    });
-
-    saveVisitStats(stats);
+function recordPageVisit(member = getCurrentMember()) {
+  try {
+    const baseStats = mergeVisitStats(state.visitStats, loadVisitStats(), buildVisitStatsFromLoginAudits());
+    const nextStats = applyVisitEventToStats(baseStats, member);
+    state.visitStats = nextStats;
+    saveVisitStats(nextStats);
+    recordVisitStatsToSupabase(member, baseStats);
   } catch (error) {
     console.warn("Visit could not be recorded.", error);
   }
 }
 
 function getVisitStatsSummary() {
-  const stats = loadVisitStats();
-  const today = getTodayDate();
-  const lastSevenDays = Array.from({ length: 7 }, (_, index) => dateDaysAgo(index));
-  const previousSevenDays = Array.from({ length: 7 }, (_, index) => dateDaysAgo(index + 7));
-  const auditVisitCounts = getLoginAuditVisitCounts();
-  const getDateCount = (date) => Math.max(Number(stats[date] || 0), Number(auditVisitCounts[date] || 0));
+  const stats = mergeVisitStats(state.visitStats, loadVisitStats(), buildVisitStatsFromLoginAudits());
+  const today = getKstDateKey(0);
+  const lastSevenDays = Array.from({ length: 7 }, (_, index) => getKstDateKey(-index));
+  const previousSevenDays = Array.from({ length: 7 }, (_, index) => getKstDateKey(-(index + 7)));
+  const yearPrefix = today.slice(0, 4);
+  const collectUsers = (dates) => {
+    const users = new Set();
+
+    dates.forEach((date) => {
+      Object.entries(normalizeVisitDayStats(stats.daily[date]).users).forEach(([userId, user]) => {
+        if (Number(user.count || 0) > 0) {
+          users.add(userId);
+        }
+      });
+    });
+
+    return users;
+  };
+  const getDateCount = (date) => normalizeVisitDayStats(stats.daily[date]).total;
   const weekTotal = lastSevenDays.reduce((sum, date) => sum + getDateCount(date), 0);
   const previousWeekTotal = previousSevenDays.reduce((sum, date) => sum + getDateCount(date), 0);
+  const yearDates = Object.keys(stats.daily).filter((date) => date.startsWith(yearPrefix));
+  const yearTotal = yearDates.reduce((sum, date) => sum + getDateCount(date), 0);
+  const weekVisitors = collectUsers(lastSevenDays).size;
+  const yearVisitors = collectUsers(yearDates).size;
 
   return {
     today: getDateCount(today),
+    todayVisitors: collectUsers([today]).size,
     weekTotal,
-    weekDelta: weekTotal - previousWeekTotal
+    weekVisitors,
+    weekDelta: weekTotal - previousWeekTotal,
+    yearTotal,
+    yearVisitors,
+    perUserWeekAverage: weekVisitors ? weekTotal / weekVisitors : 0
   };
-}
-
-function getLoginAuditVisitCounts() {
-  return state.auditLogs.reduce((counts, log) => {
-    if (String(log.action || "") !== "로그인") {
-      return counts;
-    }
-
-    const date = String(log.time || "").slice(0, 10);
-
-    if (date) {
-      counts[date] = Number(counts[date] || 0) + 1;
-    }
-
-    return counts;
-  }, {});
 }
 
 function dateSortValue(value) {
@@ -2849,6 +3082,7 @@ function persistState(options = {}) {
         menuSettingsUpdatedAt: state.menuSettingsUpdatedAt,
         memberFilters: state.memberFilters,
         managementTab: state.managementTab,
+        visitStats: normalizeVisitStatsState(state.visitStats),
         currentUserId: state.currentUserId,
         jobFitAnalysis: state.jobFitAnalysis,
         interviewReport: state.interviewReport,
@@ -2950,6 +3184,10 @@ function restorePersistedState() {
 
   if (["members", "create", "menu-order", "logs"].includes(persisted.managementTab)) {
     state.managementTab = persisted.managementTab;
+  }
+
+  if (persisted.visitStats && typeof persisted.visitStats === "object") {
+    state.visitStats = mergeVisitStats(state.visitStats, persisted.visitStats);
   }
 
   if (persisted.currentUserId) {
@@ -3751,6 +3989,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   const interviewCasesSetting = settings.find((row) => row.setting_key === INTERVIEW_CASES_SETTING_KEY);
   const recruitingMetricsSetting = settings.find((row) => row.setting_key === RECRUITING_METRICS_SETTING_KEY);
   const jdEnhancementSetting = settings.find((row) => row.setting_key === JD_ENHANCEMENT_SETTING_KEY);
+  const visitStatsSetting = settings.find((row) => row.setting_key === VISIT_STATS_SETTING_KEY);
 
   if (deletedFoldersSetting?.payload) {
     const remoteDeletedIds = normalizeIdList(
@@ -3813,6 +4052,12 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
       guidelineText: jdEnhancementSetting.payload.guidelineText || currentJd.guidelineText,
       savedDocuments: mergeSavedJdDocuments(currentJd.savedDocuments, jdEnhancementSetting.payload.savedDocuments || [])
     });
+  }
+
+  if (visitStatsSetting?.payload) {
+    state.visitStats = mergeVisitStats(state.visitStats, visitStatsSetting.payload);
+    state.visitStatsRemoteLoaded = true;
+    saveVisitStats(state.visitStats);
   }
 
   if (!menuOrderSetting) {
@@ -3968,7 +4213,8 @@ async function loadStateFromSupabase() {
       ROLE_PERMISSIONS_SETTING_KEY,
       INTERVIEW_CASES_SETTING_KEY,
       RECRUITING_METRICS_SETTING_KEY,
-      JD_ENHANCEMENT_SETTING_KEY
+      JD_ENHANCEMENT_SETTING_KEY,
+      VISIT_STATS_SETTING_KEY
     ].join(",");
     const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows] = await Promise.all([
       supabaseRequest("candidates?select=*&order=updated_at.desc"),
@@ -5242,7 +5488,7 @@ function renderSidePanel() {
 
   if (detail) {
     const delta = visitStats.weekDelta > 0 ? `+${visitStats.weekDelta}` : String(visitStats.weekDelta);
-    detail.textContent = `최근 7일 ${visitStats.weekTotal}회 · 전주 대비 ${delta}`;
+    detail.textContent = `최근 7일 ${visitStats.weekTotal}회/${visitStats.weekVisitors}명 · 전주 대비 ${delta}`;
   }
 }
 
@@ -25204,10 +25450,10 @@ async function handleLoginSubmit(form) {
     return;
   }
 
-  member.lastLoginAt = getTimestampText();
-  recordPageVisit();
-  setRememberedLoginEmail(shouldRememberEmail ? email : "");
   state.currentUserId = member.id;
+  member.lastLoginAt = getTimestampText();
+  recordPageVisit(member);
+  setRememberedLoginEmail(shouldRememberEmail ? email : "");
   state.authMessage = "";
   state.memberProfileModalOpen = false;
   state.view = canAccessView(state.view, member) ? state.view : getDefaultView(member);
@@ -27682,7 +27928,7 @@ async function initializeApp() {
   restorePersistedState();
   ensureMemberDefaults();
   if (isAuthenticated()) {
-    recordPageVisit();
+    recordPageVisit(getCurrentMember());
   }
   bindEvents();
 
