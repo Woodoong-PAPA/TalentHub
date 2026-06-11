@@ -225,7 +225,6 @@ const SCREENING_STAGE_LABELS = {
   interview_mail_sent: "전화면접 안내 발송"
 };
 const SCREENING_STAGE_ORDER = [
-  "reception",
   "registered",
   "first_draft",
   "first_pass",
@@ -273,7 +272,6 @@ const INTERVIEW_STATUS_LABELS = {
   failed: "불합격"
 };
 const SCREENING_DETAIL_STEPS = [
-  { id: "reception", label: "지원자 접수" },
   { id: "first", label: "1차 스크리닝(인사)" },
   { id: "second", label: "2차 스크리닝(현업)" },
   { id: "mail", label: "전화면접 안내" }
@@ -695,7 +693,7 @@ const state = {
   screeningDeletedFolderIds: [],
   selectedScreeningFolderId: "screening-folder-001",
   screeningPage: "list",
-  screeningDetailStep: "reception",
+  screeningDetailStep: "first",
   screeningFilters: {
     businessUnit: "all",
     mineOnly: false
@@ -1527,7 +1525,8 @@ function getScreeningCurrentProfileFromCareer(career = []) {
 
 function normalizeScreeningApplicant(applicant = {}) {
   const sourceType = applicant.sourceType === "search_firm" ? "search_firm" : "direct";
-  const stage = SCREENING_STAGE_LABELS[applicant.stage] ? applicant.stage : "registered";
+  const requestedStage = applicant.stage === "reception" ? "registered" : applicant.stage;
+  const stage = SCREENING_STAGE_LABELS[requestedStage] ? requestedStage : "registered";
   const fitGrade = FIT_GRADE_ORDER.includes(applicant.fitGrade) ? applicant.fitGrade : "C";
   const education = normalizeScreeningEducationRecords(applicant.education || []);
   const career = normalizeScreeningCareerRecords(applicant.career || []);
@@ -2629,7 +2628,7 @@ function canAccessScreeningStep(folder, step, member = getCurrentMember()) {
   }
 
   if (member?.role === "search_firm") {
-    return step === "reception" && (folder.receptionMemberIds || []).includes(member.id);
+    return step === "first" && (folder.receptionMemberIds || []).includes(member.id);
   }
 
   if (member?.role === "hiring_manager") {
@@ -2673,22 +2672,9 @@ function canViewScreeningApplicant(applicant, member = getCurrentMember()) {
   return true;
 }
 
-function canSubmitScreeningApplicant(folder, applicant, member = getCurrentMember()) {
-  if (!folder || !applicant || applicant.stage !== "reception" || !canAccessScreeningFolder(folder, member)) {
-    return false;
-  }
-
-  if (isSearchFirmRole(member)) {
-    return applicant.sourceType === "search_firm" &&
-      (applicant.searchFirmMemberId === member.id || applicant.registeredById === member.id);
-  }
-
-  return isRecruitingRole(member);
-}
-
 function canRegisterScreeningApplicant(folder, member = getCurrentMember()) {
   return Boolean(
-    canAccessScreeningStep(folder, "reception", member) &&
+    canAccessScreeningFolder(folder, member) &&
     (isSearchFirmRole(member) || isRecruitingRole(member) || canManageScreeningFolder(folder, member))
   );
 }
@@ -2703,7 +2689,7 @@ function isScreeningApplicantOwner(applicant, member = getCurrentMember()) {
 }
 
 function canEditScreeningApplicantCore(folder, applicant, member = getCurrentMember()) {
-  if (!folder || !applicant || applicant.stage !== "reception" || !canAccessScreeningStep(folder, "reception", member)) {
+  if (!folder || !applicant || applicant.stage !== "registered" || !canAccessScreeningStep(folder, "first", member)) {
     return false;
   }
 
@@ -5855,8 +5841,7 @@ function getScreeningJdAnalysisText(folder) {
     folder.businessUnit,
     folder.department,
     folder.positionName,
-    folder.jdText,
-    folder.jdAttachment?.text
+    folder.jdText
   ].filter(Boolean).join("\n"));
 }
 
@@ -5971,10 +5956,6 @@ function ensureScreeningFitSnapshot(folder) {
   let changed = false;
 
   folder.applicants.forEach((applicant) => {
-    if (applicant.stage === "reception") {
-      return;
-    }
-
     if (!applicant.fitScore || !applicant.fitFulfilledDetails?.length && !applicant.fitMissingDetails?.length) {
       evaluateApplicantFit(folder, applicant);
       changed = true;
@@ -6169,6 +6150,7 @@ function renderPositionCreateModal() {
               <div class="field full">
                 <label for="screening-folder-jd-file">JD 첨부</label>
                 <input class="control-input" id="screening-folder-jd-file" name="jdFile" type="file" />
+                <span class="form-help" id="screening-folder-jd-file-status">JD 파일을 첨부하면 텍스트를 추출해 직접 입력란에 반영합니다.</span>
               </div>
               <div class="field full">
                 <label>기본 접근 회원</label>
@@ -6177,12 +6159,12 @@ function renderPositionCreateModal() {
                 })}
               </div>
               <div class="field full">
-                <label>지원자 접수 권한</label>
+                <label>지원자 등록 권한</label>
                 ${renderScreeningAccessPicker(null, {
                   fieldName: "receptionMemberIds",
                   roleFilter: "search_firm",
                   placeholder: "서치펌 담당자 이름, 이메일 검색",
-                  helpText: "서치펌 담당자만 추가할 수 있으며, 이 회원은 지원자 접수 단계만 조회합니다."
+                  helpText: "서치펌 담당자만 추가할 수 있으며, 이 회원은 지원자를 1차 스크리닝에 바로 등록할 수 있습니다."
                 })}
               </div>
               <div class="field full">
@@ -6355,6 +6337,7 @@ function renderScreeningJdModal(folder) {
                   </div>
                 ` : `<span class="form-help">첨부된 JD 파일이 없습니다.</span>`}
                 <input class="control-input" id="screening-jd-file" name="jdFile" type="file" />
+                <span class="form-help" id="screening-jd-file-status">JD 파일을 첨부하면 텍스트를 추출해 직접 입력란에 반영합니다.</span>
               </div>
             </div>
             <div class="form-actions">
@@ -6393,8 +6376,8 @@ function renderScreeningAccessModal(folder) {
               })}
             </section>
             <section class="screening-access-section">
-              <strong>지원자 접수 권한</strong>
-              <span>서치펌 담당자만 지정합니다. 지정된 회원은 지원자 접수 단계만 조회할 수 있습니다.</span>
+              <strong>지원자 등록 권한</strong>
+              <span>서치펌 담당자만 지정합니다. 지정된 회원은 지원자를 1차 스크리닝에 바로 등록하고 본인 등록 건의 진행 현황을 확인할 수 있습니다.</span>
               ${renderScreeningAccessPicker(folder, {
                 fieldName: "receptionMemberIds",
                 roleFilter: "search_firm",
@@ -6454,9 +6437,9 @@ function renderApplicantRegistrationModal(folder) {
   const modalDescription = isEditing
     ? coreDisabled
       ? "스크리닝 단계로 이동한 지원자는 이메일과 휴대폰 번호만 수정할 수 있습니다."
-      : "접수 단계 지원자 정보는 제출 전까지 수정할 수 있습니다."
+      : "1차 스크리닝에 등록된 지원자 정보를 수정할 수 있습니다."
     : searchFirmMember
-      ? "접수 저장 후 접수 탭에서 최종 제출하면 1차 스크리닝으로 이동합니다."
+      ? "등록하면 바로 1차 스크리닝에 표시되며 직무적합도 분석 결과를 확인할 수 있습니다."
       : `${escapeHtml(folder.title)} 포지션에 지원자 정보를 등록합니다.`;
   const educationRecords = editingApplicant?.education?.length ? editingApplicant.education : [{}];
   const careerRecords = editingApplicant?.career?.length ? editingApplicant.career : [{}];
@@ -6576,7 +6559,7 @@ function renderApplicantRegistrationModal(folder) {
             </section>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-applicant-modal>취소</button>
-              <button class="primary-button" type="submit">${isEditing ? "수정 저장" : searchFirmMember ? "접수 저장" : "저장"}</button>
+              <button class="primary-button" type="submit">${isEditing ? "수정 저장" : "저장"}</button>
             </div>
           </form>
         </div>
@@ -6636,7 +6619,7 @@ function renderBulkApplicantRegistrationModal(folder) {
             </div>
             <div class="screening-bulk-note">
               <strong>자동 등록 방식</strong>
-              <span>각 이력서에서 이름, 연락처, 학력, 경력을 추출해 지원자 접수 단계에 바로 저장합니다. 파싱 실패 파일은 건너뛰지 않고 파일명 기반 기본 정보로 등록합니다.</span>
+              <span>각 이력서에서 이름, 연락처, 학력, 경력을 추출해 1차 스크리닝에 바로 저장합니다. 파싱 실패 파일은 건너뛰지 않고 파일명 기반 기본 정보로 등록합니다.</span>
             </div>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-bulk-applicant>취소</button>
@@ -6673,9 +6656,6 @@ function renderScreeningTimeline(applicant) {
   };
   const rows = [
     { label: "지원자 등록", value: `${applicant.registeredByName || "-"} · ${applicant.createdAt || "-"}` },
-    applicant.submittedAt
-      ? { label: "최종 제출", value: `${applicant.submittedByName || "-"} · ${applicant.submittedAt || "-"}` }
-      : null,
     applicant.firstScreening
       ? { label: "1차 스크리닝", value: `${decisionLabels[applicant.firstScreening.decision] || applicant.firstScreening.decision || "-"} · ${applicant.firstScreening.by || "-"} · ${applicant.firstScreening.at || "-"}` }
       : null,
@@ -6938,7 +6918,6 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
   const actions = [];
   const locked = isScreeningStageSnapshotLocked(applicant, step);
   const revertAction = {
-    registered: "접수로 되돌리기",
     first_draft: "1차 합격 예정 취소",
     first_pass: "1차로 되돌리기",
     first_reject: "1차 재검토",
@@ -6962,10 +6941,6 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
     actions.push(`<button class="ghost-button compact-button" type="button" data-edit-screening-applicant="${escapeHtml(applicant.id)}">정보 수정</button>`);
   } else if (canEditScreeningApplicantContact(folder, applicant)) {
     actions.push(`<button class="ghost-button compact-button" type="button" data-edit-screening-applicant="${escapeHtml(applicant.id)}">연락처 수정</button>`);
-  }
-
-  if (canSubmitScreeningApplicant(folder, applicant)) {
-    actions.push(`<button class="primary-button compact-button" type="button" data-screening-submit-applicant="${applicant.id}">최종 제출</button>`);
   }
 
   if (canDeleteScreeningApplicant(folder, applicant)) {
@@ -6999,7 +6974,7 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
   }
 
   if (!actions.length && isSearchFirmRole() && applicant.sourceType === "search_firm" && applicant.stage !== "reception") {
-    return `<span class="muted-text">제출 완료 · ${escapeHtml(getScreeningStageDisplayLabel(applicant))}</span>`;
+    return `<span class="muted-text">등록 완료 · ${escapeHtml(getScreeningStageDisplayLabel(applicant))}</span>`;
   }
 
   if (!actions.length) {
@@ -7011,21 +6986,15 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
 
 function getScreeningStepApplicants(folder, step = state.screeningDetailStep) {
   const stageMap = {
-    reception: SCREENING_STAGE_ORDER,
     first: ["registered", "first_draft", "first_pass", "first_reject", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
     second: ["first_pass", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
     mail: ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]
   };
-  const stages = stageMap[step] || stageMap.reception;
+  const stages = stageMap[step] || stageMap.first;
 
   return folder.applicants.filter((applicant) => {
     if (!canViewScreeningApplicant(applicant)) {
       return false;
-    }
-
-    if (step === "reception" && isSearchFirmRole()) {
-      return applicant.sourceType === "search_firm" &&
-        (applicant.searchFirmMemberId === state.currentUserId || applicant.registeredById === state.currentUserId);
     }
 
     return stages.includes(applicant.stage);
@@ -7080,7 +7049,6 @@ function renderScreeningStepDecisionMeta(folder, step) {
 
 function getScreeningStepRank(step) {
   return {
-    reception: 0,
     first: 1,
     second: 2,
     mail: 3
@@ -7100,7 +7068,7 @@ function getScreeningApplicantActiveStep(applicant) {
     return "first";
   }
 
-  return "reception";
+  return "first";
 }
 
 function isScreeningStageSnapshotLocked(applicant, step) {
@@ -7131,7 +7099,7 @@ function getCurrentScreeningDetailStep(folder) {
   const visibleSteps = getVisibleScreeningDetailSteps(folder);
   const currentStep = visibleSteps.some((step) => step.id === state.screeningDetailStep)
     ? state.screeningDetailStep
-    : visibleSteps[0]?.id || "reception";
+    : visibleSteps[0]?.id || "first";
 
   state.screeningDetailStep = currentStep;
   return currentStep;
@@ -7764,24 +7732,6 @@ function renderScreeningMailPreviewModal() {
 
 function renderScreeningStepContent(folder) {
   const step = getCurrentScreeningDetailStep(folder);
-
-  if (step === "reception") {
-    const applicants = getScreeningStepApplicants(folder, "reception");
-    const title = isSearchFirmRole() ? "지원자 접수 및 진행 현황" : "지원자 접수";
-    const emptyText = isSearchFirmRole()
-      ? "아직 접수하거나 제출한 지원자가 없습니다."
-      : "접수 대기 중인 지원자가 없습니다.";
-
-    return `
-      <section class="profile-panel">
-        <div class="panel-header">
-          <h4>${escapeHtml(title)}</h4>
-          <span class="small-pill">접수 이력 ${applicants.length}명</span>
-        </div>
-        ${renderApplicantList(folder, applicants, emptyText, "reception")}
-      </section>
-    `;
-  }
 
   if (step === "second") {
     const applicants = getScreeningStepApplicants(folder, "second");
@@ -22772,6 +22722,62 @@ async function attachmentsFromFiles(fileList) {
   return (await Promise.all([...(fileList || [])].map(attachmentFromFile))).filter(Boolean);
 }
 
+async function readScreeningJdFileText(file) {
+  try {
+    const result = await readResumeText(file);
+    return normalizeResumeText(result.text || "");
+  } catch (browserError) {
+    console.warn("Screening JD browser extraction failed. Trying server extraction.", browserError);
+
+    try {
+      const serverResult = await extractDocumentTextWithServer(file, { timeoutMs: 32000 });
+      return normalizeResumeText(serverResult.text || "");
+    } catch (serverError) {
+      console.warn("Screening JD server extraction failed.", serverError);
+      throw browserError;
+    }
+  }
+}
+
+async function extractScreeningJdFileToTextarea(file, textareaSelector, statusSelector) {
+  if (!file) {
+    return;
+  }
+
+  const textarea = $(textareaSelector);
+  const status = $(statusSelector);
+
+  setProgressStatus(status, "JD 파일을 읽는 중입니다.", 12);
+
+  try {
+    const text = await readScreeningJdFileText(file);
+
+    if (!text || text.length < 20) {
+      setProgressStatus(status, "JD 파일에서 충분한 텍스트를 추출하지 못했습니다. 직접 입력란에 내용을 입력해 주세요.", 0);
+      showToast("JD 파일에서 읽을 수 있는 텍스트가 부족합니다.");
+      return;
+    }
+
+    const overwrite = textarea?.value.trim()
+      ? window.confirm("현재 JD 직접 입력란의 내용을 첨부 JD에서 추출한 텍스트로 교체할까요?")
+      : true;
+
+    if (textarea && overwrite) {
+      textarea.value = text;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      setProgressStatus(status, "JD 파일 내용을 직접 입력란에 반영했습니다. 이 값으로 직무적합도를 분석합니다.", 100);
+      showToast("JD 첨부 파일 내용을 직접 입력란에 반영했습니다.");
+      return;
+    }
+
+    setProgressStatus(status, "JD 파일은 읽었지만 직접 입력란에는 반영하지 않았습니다.", 100);
+  } catch (error) {
+    console.warn("Screening JD file extraction failed.", error);
+    setProgressStatus(status, error.isResumeParseError ? error.message : "JD 파일을 읽지 못했습니다. 내용을 직접 입력해 주세요.", 0);
+    showToast("JD 파일 텍스트 추출에 실패했습니다.");
+  }
+}
+
 function applyScreeningApplicantDerivedProfile(applicant) {
   const currentProfile = getScreeningCurrentProfileFromCareer(applicant.career || []);
   applicant.company = currentProfile.company;
@@ -22797,19 +22803,21 @@ async function createScreeningFolder(form) {
 
   const currentMember = getCurrentMember();
   const jdFile = form.elements.jdFile?.files?.[0];
+  const jdAttachment = jdFile ? await attachmentFromFile(jdFile) : null;
   const accessMemberIds = [...new Set([currentMember.id, ...getFormValues(form, "accessMemberIds")])];
   const receptionMemberIds = getFormValues(form, "receptionMemberIds");
   const secondScreeningMemberIds = getFormValues(form, "secondScreeningMemberIds");
   const title = getFormText(form, "title") || getFormText(form, "positionName") || "신규 포지션";
   const positionName = normalizeScreeningJobCategory(getFormText(form, "positionName"));
+  const jdText = normalizeResumeText(getFormText(form, "jdText") || jdAttachment?.text || "");
   const folder = normalizeScreeningFolder({
     id: createId("screening-folder"),
     title,
     businessUnit: getScreeningFormBusinessUnit(getFormText(form, "businessUnit"), currentMember),
     department: getFormText(form, "department"),
     positionName,
-    jdText: getFormText(form, "jdText"),
-    jdAttachment: await attachmentFromFile(jdFile),
+    jdText,
+    jdAttachment,
     createdById: currentMember.id,
     createdByName: currentMember.name,
     createdAt: getTodayDate(),
@@ -22878,7 +22886,7 @@ async function registerScreeningApplicant(form) {
     career,
     resumeAttachment: await attachmentFromFile(resumeFile),
     attachments: await attachmentsFromFiles(otherAttachmentFiles),
-    stage: "reception",
+    stage: "registered",
     createdAt: getTodayDate(),
     updatedAt: getTodayDate()
   });
@@ -22892,13 +22900,25 @@ async function registerScreeningApplicant(form) {
   replaceScreeningFolder(folder);
   state.screeningApplicantModalOpen = false;
   state.screeningEditingApplicantId = "";
-  state.screeningDetailStep = "reception";
+  state.screeningDetailStep = "first";
   addAuditLog("Screening 지원자 등록", applicant.name, folder.title);
   persistState();
   showToast(isSearchFirmRole(currentMember)
-    ? `${applicant.name} 지원자를 접수 저장했습니다. 최종 제출하면 1차 스크리닝으로 이동합니다.`
-    : `${applicant.name} 지원자를 접수 단계에 등록했습니다.`);
+    ? `${applicant.name} 지원자를 1차 스크리닝에 등록했습니다.`
+    : `${applicant.name} 지원자를 1차 스크리닝에 등록했습니다.`);
   renderScreening();
+
+  refreshScreeningApplicantFit(folder, applicant)
+    .then(() => {
+      applicant.updatedAt = getTodayDate();
+      folder.updatedAt = getTodayDate();
+      replaceScreeningFolder(folder);
+      persistState();
+      renderScreening();
+    })
+    .catch((error) => {
+      console.warn("Screening fit refresh after applicant registration failed.", error);
+    });
 }
 
 async function registerScreeningApplicantsBulk(form) {
@@ -22962,7 +22982,7 @@ async function registerScreeningApplicantsBulk(form) {
         career: normalizeScreeningCareerRecords(parsed.career || []),
         resumeAttachment: await attachmentFromFileWithText(file, parsedResult.text),
         attachments: [],
-        stage: "reception",
+        stage: "registered",
         createdAt: getTodayDate(),
         updatedAt: getTodayDate()
       });
@@ -22987,14 +23007,25 @@ async function registerScreeningApplicantsBulk(form) {
     folder.updatedAt = getTodayDate();
     replaceScreeningFolder(folder);
     state.screeningBulkApplicantModalOpen = false;
-    state.screeningDetailStep = "reception";
+    state.screeningDetailStep = "first";
     addAuditLog("Screening 지원자 대량 등록", folder.title, `${createdApplicants.length}명 자동 등록`);
     persistState();
     setProgressStatus(status, `${createdApplicants.length}명 등록을 완료했습니다.`, 100);
     showToast(warnings.length
       ? `${createdApplicants.length}명 등록 완료. ${warnings.length}개 파일은 일부 정보만 추출되었습니다.`
-      : `${createdApplicants.length}명 지원자를 접수 단계에 등록했습니다.`);
+      : `${createdApplicants.length}명 지원자를 1차 스크리닝에 등록했습니다.`);
     renderScreening();
+
+    Promise.allSettled(createdApplicants.map((applicant) => refreshScreeningApplicantFit(folder, applicant)))
+      .then(() => {
+        folder.updatedAt = getTodayDate();
+        replaceScreeningFolder(folder);
+        persistState();
+        renderScreening();
+      })
+      .catch((error) => {
+        console.warn("Screening fit refresh after bulk registration failed.", error);
+      });
   } finally {
     if (submitButton) {
       submitButton.disabled = false;
@@ -23110,7 +23141,7 @@ async function deleteScreeningApplicant(applicantId) {
 
   addAuditLog("Screening 지원자 삭제", applicant.name, folder.title);
   persistState();
-  showToast("지원자 접수 정보를 삭제했습니다.");
+  showToast("지원자 정보를 삭제했습니다.");
   renderScreening();
 }
 
@@ -23123,21 +23154,20 @@ async function saveScreeningPositionJd(form) {
   }
 
   const jdFile = form.elements.jdFile?.files?.[0];
+  const jdAttachment = jdFile ? await attachmentFromFile(jdFile) : null;
   const positionName = normalizeScreeningJobCategory(getFormText(form, "positionName"));
   folder.title = getFormText(form, "title") || getFormText(form, "positionName") || folder.title || "신규 포지션";
   folder.businessUnit = getScreeningFormBusinessUnit(getFormText(form, "businessUnit"));
   folder.department = getFormText(form, "department");
   folder.positionName = positionName || folder.positionName;
-  folder.jdText = getFormText(form, "jdText");
+  folder.jdText = normalizeResumeText(getFormText(form, "jdText") || jdAttachment?.text || "");
 
-  if (jdFile) {
-    folder.jdAttachment = await attachmentFromFile(jdFile);
+  if (jdAttachment) {
+    folder.jdAttachment = jdAttachment;
   }
 
   for (const applicant of folder.applicants) {
-    if (applicant.stage !== "reception") {
-      await refreshScreeningApplicantFit(folder, applicant);
-    }
+    await refreshScreeningApplicantFit(folder, applicant);
   }
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
@@ -23188,43 +23218,6 @@ function updateScreeningApplicantStage(applicantId, stage, options = {}) {
   renderScreening();
 }
 
-async function submitScreeningApplicant(applicantId) {
-  const folder = getSelectedScreeningFolder();
-  const applicant = getScreeningApplicant(folder, applicantId);
-
-  if (!folder || !applicant || !canSubmitScreeningApplicant(folder, applicant)) {
-    showToast("지원자 최종 제출 권한이 없습니다.");
-    return;
-  }
-
-  const actor = getCurrentMember();
-  applicant.stage = "registered";
-  applicant.submittedAt = getTimestampText();
-  applicant.submittedById = actor?.id || "";
-  applicant.submittedByName = actor?.name || getCurrentActorName();
-  applicant.updatedAt = getTodayDate();
-  evaluateApplicantFit(folder, applicant);
-  folder.updatedAt = getTodayDate();
-  replaceScreeningFolder(folder);
-  addAuditLog("Screening 지원자 최종 제출", applicant.name, `${folder.title} · 1차 스크리닝 이동`);
-  persistState();
-
-  showToast(`${applicant.name} 지원자를 1차 스크리닝으로 제출했습니다.`);
-  renderScreening();
-
-  refreshScreeningApplicantFit(folder, applicant)
-    .then(() => {
-      applicant.updatedAt = getTodayDate();
-      folder.updatedAt = getTodayDate();
-      replaceScreeningFolder(folder);
-      persistState();
-      renderScreening();
-    })
-    .catch((error) => {
-      console.warn("Screening fit refresh after submit failed.", error);
-    });
-}
-
 function revertScreeningApplicantStage(applicantId) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
@@ -23235,7 +23228,6 @@ function revertScreeningApplicantStage(applicantId) {
   }
 
   const previousStageMap = {
-    registered: "reception",
     first_draft: "registered",
     first_pass: "registered",
     first_reject: "registered",
@@ -26018,7 +26010,7 @@ function bindEvents() {
     if (selectScreeningFolderButton) {
       state.selectedScreeningFolderId = selectScreeningFolderButton.dataset.selectScreeningFolder;
       state.screeningPage = "detail";
-      state.screeningDetailStep = "reception";
+      state.screeningDetailStep = "first";
       state.screeningPositionModalOpen = false;
       state.screeningApplicantModalOpen = false;
       state.screeningBulkApplicantModalOpen = false;
@@ -26156,15 +26148,6 @@ function bindEvents() {
         state.screeningResultPanelOpen = false;
       }
       renderScreening();
-      return;
-    }
-
-    const submitScreeningApplicantButton = event.target.closest("[data-screening-submit-applicant]");
-    if (submitScreeningApplicantButton) {
-      submitScreeningApplicant(submitScreeningApplicantButton.dataset.screeningSubmitApplicant).catch((error) => {
-        console.warn(error);
-        showToast("지원자 최종 제출 중 오류가 발생했습니다.");
-      });
       return;
     }
 
@@ -27479,6 +27462,23 @@ function bindEvents() {
 
     if (event.target.id === "screening-business-unit-filter") {
       updateScreeningBusinessUnitFilter(event.target.value);
+      return;
+    }
+
+    if (event.target.id === "screening-folder-jd-file") {
+      const file = event.target.files?.[0];
+      if (file) {
+        extractScreeningJdFileToTextarea(file, "#screening-folder-jd", "#screening-folder-jd-file-status");
+      }
+      return;
+    }
+
+    if (event.target.id === "screening-jd-file") {
+      const file = event.target.files?.[0];
+      if (file) {
+        extractScreeningJdFileToTextarea(file, "#screening-jd-text", "#screening-jd-file-status");
+      }
+      return;
     }
 
     if (event.target.matches("[data-screening-opinion-applicant]")) {
