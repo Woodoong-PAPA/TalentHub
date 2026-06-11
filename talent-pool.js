@@ -4327,10 +4327,11 @@ async function loadStateFromSupabase() {
     persistState({ skipRemoteSync: true });
     render();
   } catch (error) {
-    remoteSyncReady = false;
+    remoteSyncReady = true;
     state.remoteSyncStatus = "Supabase 불러오기 실패";
     console.warn(error);
     showToast("Supabase 연결을 확인해주세요. 로컬 데이터로 표시합니다.");
+    render();
   }
 }
 
@@ -4951,6 +4952,7 @@ function renderAuth() {
   const authenticated = isAuthenticated();
 
   document.body.classList.toggle("is-authenticated", authenticated);
+  updateMenuReadyState();
 
   if (!authContent) {
     return;
@@ -5183,6 +5185,8 @@ function applyAccessControls() {
     const view = element.dataset.view;
     element.hidden = !canAccessView(view);
   });
+
+  updateMenuReadyState();
 }
 
 function applyMenuOrderToSidebar() {
@@ -5211,6 +5215,13 @@ function applyMenuOrderToSidebar() {
       navList.appendChild(item);
     }
   });
+}
+
+function updateMenuReadyState() {
+  const authenticated = isAuthenticated();
+  const ready = !authenticated || !REMOTE_SYNC_ENABLED || remoteSyncReady;
+
+  document.body.classList.toggle("is-menu-ready", ready);
 }
 
 function createSidebarMenuItem(menu) {

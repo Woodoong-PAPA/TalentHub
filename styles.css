@@ -244,6 +244,10 @@ body.is-authenticated .app-shell {
   gap: 6px;
 }
 
+body.is-authenticated:not(.is-menu-ready) .nav-list {
+  visibility: hidden;
+}
+
 .nav-item {
   display: grid;
   min-height: 44px;
