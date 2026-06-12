@@ -2427,6 +2427,7 @@ function normalizeRecruitingMetricsState(value = {}) {
     detailUnitFilter,
     progressUnitFilter,
     weekOf,
+    updatedAt: String(value.updatedAt || value.syncUpdatedAt || "").trim(),
     weeklySnapshots,
     targets,
     detailSheet,
@@ -4060,10 +4061,11 @@ function buildRecruitingMetricsPayload() {
   syncRecruitingTargetsFromProgressSheet(metrics);
   syncRecruitingProgressSheetComputedValues(metrics);
   captureRecruitingMetricsWeekSnapshot(metrics);
+  touchRecruitingMetrics(metrics);
 
   return {
     metrics: normalizeRecruitingMetricsState(metrics),
-    updatedAt: new Date().toISOString(),
+    updatedAt: metrics.updatedAt,
     updatedBy: getCurrentActorName()
   };
 }
@@ -4266,7 +4268,20 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   }
 
   if (recruitingMetricsSetting?.payload?.metrics) {
-    state.recruitingMetrics = normalizeRecruitingMetricsState(recruitingMetricsSetting.payload.metrics);
+    const remoteMetrics = normalizeRecruitingMetricsState({
+      ...recruitingMetricsSetting.payload.metrics,
+      updatedAt: recruitingMetricsSetting.payload.metrics.updatedAt || recruitingMetricsSetting.payload.updatedAt || ""
+    });
+    const localMetrics = normalizeRecruitingMetricsState(state.recruitingMetrics);
+    const remoteUpdatedAt = dateSortValue(remoteMetrics.updatedAt);
+    const localUpdatedAt = dateSortValue(localMetrics.updatedAt);
+
+    if (localUpdatedAt > remoteUpdatedAt) {
+      state.recruitingMetrics = localMetrics;
+      recruitingMetricsRemoteSyncAfterLoadPending = true;
+    } else {
+      state.recruitingMetrics = remoteMetrics;
+    }
   }
 
   if (jdEnhancementSetting?.payload) {
@@ -4314,6 +4329,7 @@ let remoteSyncInFlight = false;
 let remoteSyncReady = !REMOTE_SYNC_ENABLED;
 let screeningLocalMutationAt = 0;
 let screeningRemoteSyncAfterLoadPending = false;
+let recruitingMetricsRemoteSyncAfterLoadPending = false;
 let recruitingMetricsMailModalOpen = false;
 let recruitingMetricsRequestMailModalOpen = false;
 
@@ -4516,6 +4532,10 @@ async function loadStateFromSupabase() {
     remoteSyncReady = true;
     if (screeningRemoteSyncAfterLoadPending) {
       screeningRemoteSyncAfterLoadPending = false;
+      scheduleRemoteSync();
+    }
+    if (recruitingMetricsRemoteSyncAfterLoadPending) {
+      recruitingMetricsRemoteSyncAfterLoadPending = false;
       scheduleRemoteSync();
     }
     Promise.allSettled([
@@ -10518,6 +10538,26 @@ function getRecruitingMetricsState() {
   return state.recruitingMetrics;
 }
 
+function touchRecruitingMetrics(metrics = getRecruitingMetricsState()) {
+  metrics.updatedAt = new Date().toISOString();
+  return metrics.updatedAt;
+}
+
+function persistRecruitingMetricsChange(status = "저장 전 변경사항이 있습니다.", options = {}) {
+  const metrics = getRecruitingMetricsState();
+  syncRecruitingTargetsFromProgressSheet(metrics);
+  syncRecruitingProgressSheetComputedValues(metrics);
+  captureRecruitingMetricsWeekSnapshot(metrics);
+  touchRecruitingMetrics(metrics);
+
+  if (status) {
+    metrics.saveStatus = status;
+  }
+
+  persistState(options);
+  return metrics;
+}
+
 function captureRecruitingMetricsWeekSnapshot(metrics = getRecruitingMetricsState()) {
   const weekKey = normalizeRecruitingMetricsWeekKey(metrics.weekOf);
   const currentSnapshot = metrics.weeklySnapshots?.[weekKey] || {};
@@ -10604,6 +10644,7 @@ function setRecruitingMetricsWeekClosed(closed) {
   metrics.saveStatus = closed
     ? `해당 주차 입력을 마감했습니다. · ${snapshot.closedAt}`
     : `해당 주차 마감을 취소했습니다. · ${getTimestampText()}`;
+  touchRecruitingMetrics(metrics);
   persistState();
   renderRecruitingMetrics();
   showToast(closed ? "선택 주차 입력을 마감했습니다." : "선택 주차 마감을 취소했습니다.");
@@ -10756,7 +10797,7 @@ function updateRecruitingMetricsField(field, value) {
     metrics.lastAutoSentWeek = "";
   }
 
-  persistState({ skipRemoteSync: true });
+  persistRecruitingMetricsChange("");
 }
 
 function updateRecruitingTargetField(input) {
@@ -10769,7 +10810,7 @@ function updateRecruitingTargetField(input) {
   }
 
   metrics.targets[unit][field] = field === "weeklyNote" ? input.value : Number(input.value || 0) || 0;
-  persistState({ skipRemoteSync: true });
+  persistRecruitingMetricsChange();
 }
 
 function toggleRecruitingMetricsComplete(input) {
@@ -10783,7 +10824,7 @@ function toggleRecruitingMetricsComplete(input) {
   metrics.targets[unit].completed = input.checked;
   metrics.targets[unit].completedAt = input.checked ? getTimestampText() : "";
   metrics.targets[unit].completedBy = input.checked ? getCurrentMember()?.name || "시스템" : "";
-  persistState();
+  persistRecruitingMetricsChange(input.checked ? "작성 완료 상태가 저장되었습니다." : "작성 완료 상태가 해제되었습니다.");
   renderRecruitingMetrics();
   maybeAutoSendRecruitingMetrics();
 }
@@ -11107,7 +11148,7 @@ function setRecruitingMetricsTab(tabKey) {
     syncRecruitingTargetsFromProgressSheet(metrics);
     syncRecruitingProgressSheetComputedValues(metrics);
   }
-  persistState();
+  persistRecruitingMetricsChange("");
   renderRecruitingMetrics();
 }
 
@@ -11126,7 +11167,7 @@ function updateRecruitingMetricsField(field, value) {
     metrics.lastAutoSentWeek = "";
   }
 
-  persistState();
+  persistRecruitingMetricsChange("");
 }
 
 function updateRecruitingSheetCell(input) {
@@ -11149,7 +11190,7 @@ function updateRecruitingSheetCell(input) {
   if (sheetKey === "progress") {
     syncRecruitingTargetsFromProgressSheet();
   }
-  persistState();
+  persistRecruitingMetricsChange();
 }
 
 function updateRecruitingSheetColumn(input) {
@@ -11171,7 +11212,7 @@ function updateRecruitingSheetColumn(input) {
   if (sheetKey === "progress") {
     syncRecruitingTargetsFromProgressSheet();
   }
-  persistState();
+  persistRecruitingMetricsChange();
 }
 
 function addRecruitingSheetRow(sheetKey) {
@@ -11190,7 +11231,7 @@ function addRecruitingSheetRow(sheetKey) {
   if (sheetKey === "progress") {
     syncRecruitingTargetsFromProgressSheet();
   }
-  persistState();
+  persistRecruitingMetricsChange();
   renderRecruitingMetrics();
 }
 
@@ -11211,7 +11252,7 @@ function deleteRecruitingSheetRow(sheetKey, rowIndex) {
   if (sheetKey === "progress") {
     syncRecruitingTargetsFromProgressSheet();
   }
-  persistState();
+  persistRecruitingMetricsChange();
   renderRecruitingMetrics();
 }
 
@@ -11232,7 +11273,7 @@ function addRecruitingSheetColumn(sheetKey) {
   if (sheetKey === "progress") {
     syncRecruitingTargetsFromProgressSheet();
   }
-  persistState();
+  persistRecruitingMetricsChange();
   renderRecruitingMetrics();
 }
 
@@ -11254,7 +11295,7 @@ function deleteRecruitingSheetColumn(sheetKey, columnIndex) {
   if (sheetKey === "progress") {
     syncRecruitingTargetsFromProgressSheet();
   }
-  persistState();
+  persistRecruitingMetricsChange();
   renderRecruitingMetrics();
 }
 
@@ -11458,6 +11499,7 @@ async function sendRecruitingMetricsRequestMail() {
     showToast(metrics.mailStatus);
   }
 
+  touchRecruitingMetrics(metrics);
   persistState();
   renderRecruitingMetrics();
 }
@@ -12009,6 +12051,7 @@ function saveRecruitingMetrics() {
   syncRecruitingProgressSheetComputedValues(metrics);
   captureRecruitingMetricsWeekSnapshot(metrics);
   metrics.saveStatus = `저장 완료 · ${getTimestampText()}`;
+  touchRecruitingMetrics(metrics);
   persistState();
   renderRecruitingMetrics();
   showToast("채용 지표 데이터가 저장되었습니다.");
@@ -12062,6 +12105,7 @@ function saveRecruitingMailTemplate() {
   metrics.recipients = draft.recipients;
   metrics.mailDraft = draft;
   metrics.saveStatus = `메일 양식 저장 완료 · ${getTimestampText()}`;
+  touchRecruitingMetrics(metrics);
   persistState();
   renderRecruitingMetrics();
   showToast("채용 지표 메일 양식이 저장되었습니다.");
@@ -12151,6 +12195,7 @@ function saveRecruitingRequestMailTemplate() {
   metrics.requestRecipients = draft.recipients;
   metrics.requestMailDraft = draft;
   metrics.saveStatus = `취합 요청 메일 양식 저장 완료 · ${getTimestampText()}`;
+  touchRecruitingMetrics(metrics);
   persistState();
   renderRecruitingMetrics();
   showToast("취합 요청 메일 양식이 저장되었습니다.");
@@ -12558,10 +12603,7 @@ function updateRecruitingSheetCell(input) {
     syncRecruitingProgressSheetComputedValues();
   }
 
-  const metrics = getRecruitingMetricsState();
-  metrics.saveStatus = "저장 전 변경사항이 있습니다.";
-  persistState({ skipRemoteSync: true });
-  syncRecruitingProgressSheetComputedValues(metrics);
+  persistRecruitingMetricsChange();
 }
 
 function addRecruitingSheetRow(sheetKey) {
@@ -12592,8 +12634,7 @@ function addRecruitingSheetRow(sheetKey) {
   }
 
   sheet.rows.push(row);
-  getRecruitingMetricsState().saveStatus = "저장 전 변경사항이 있습니다.";
-  persistState({ skipRemoteSync: true });
+  persistRecruitingMetricsChange();
   renderRecruitingMetrics();
 }
 
@@ -12666,8 +12707,7 @@ function handleRecruitingSheetPaste(event) {
   }
 
   syncRecruitingProgressSheetComputedValues();
-  getRecruitingMetricsState().saveStatus = "저장 전 변경사항이 있습니다.";
-  persistState({ skipRemoteSync: true });
+  persistRecruitingMetricsChange();
   renderRecruitingMetrics();
 }
 
@@ -12768,6 +12808,7 @@ async function sendRecruitingMetricsMail() {
     showToast(metrics.mailStatus);
   }
 
+  touchRecruitingMetrics(metrics);
   persistState();
   renderRecruitingMetrics();
 }
@@ -12881,6 +12922,7 @@ function syncInterviewOfferToRecruitingMetrics(interviewCase) {
   syncRecruitingProgressSheetComputedValues(metrics);
   captureRecruitingMetricsWeekSnapshot(metrics);
   metrics.saveStatus = `Interview 오퍼서명 정보가 채용 실적 상세에 반영되었습니다. · ${getTimestampText()}`;
+  touchRecruitingMetrics(metrics);
   syncRecruitingMetricsToSupabase().catch((error) => {
     console.warn("Recruiting metrics remote save failed.", error);
   });
@@ -28489,6 +28531,7 @@ function bindEvents() {
     if (event.target.id === "recruiting-metrics-auto-send") {
       const metrics = getRecruitingMetricsState();
       metrics.autoSendOnComplete = event.target.checked;
+      touchRecruitingMetrics(metrics);
       persistState();
       renderRecruitingMetrics();
       return;
