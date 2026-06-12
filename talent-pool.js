@@ -4312,8 +4312,14 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 let remoteSyncTimer = null;
 let remoteSyncInFlight = false;
 let remoteSyncReady = !REMOTE_SYNC_ENABLED;
+let screeningLocalMutationAt = 0;
+let screeningRemoteSyncAfterLoadPending = false;
 let recruitingMetricsMailModalOpen = false;
 let recruitingMetricsRequestMailModalOpen = false;
+
+function markScreeningLocalMutation() {
+  screeningLocalMutationAt = Date.now();
+}
 
 function scheduleRemoteSync() {
   if (!REMOTE_SYNC_ENABLED || !remoteSyncReady) {
@@ -4429,6 +4435,7 @@ async function loadStateFromSupabase() {
   }
 
   try {
+    const loadStartedAt = Date.now();
     remoteSyncReady = false;
     state.remoteSyncStatus = "Supabase 불러오는 중";
     const settingKeys = [
@@ -4472,10 +4479,12 @@ async function loadStateFromSupabase() {
         : state.candidates[0]?.id || "";
     }
 
-    if (Array.isArray(screeningFolderRows) && screeningFolderRows.length) {
+    if (Array.isArray(screeningFolderRows) && screeningFolderRows.length && screeningLocalMutationAt <= loadStartedAt) {
       const remoteFolders = filterDeletedScreeningFolders(screeningFolderRows.map(screeningFolderFromSupabaseRow).filter(Boolean));
       state.screeningFolders = filterDeletedScreeningFolders(mergeByLatest(state.screeningFolders, remoteFolders, normalizeScreeningFolder))
         .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt) || a.title.localeCompare(b.title));
+    } else if (screeningLocalMutationAt > loadStartedAt) {
+      screeningRemoteSyncAfterLoadPending = true;
     }
 
     if (Array.isArray(auditRows) && auditRows.length) {
@@ -4505,6 +4514,10 @@ async function loadStateFromSupabase() {
     ensurePolicySourceDefaults();
     state.remoteSyncStatus = "Supabase 연결됨";
     remoteSyncReady = true;
+    if (screeningRemoteSyncAfterLoadPending) {
+      screeningRemoteSyncAfterLoadPending = false;
+      scheduleRemoteSync();
+    }
     Promise.allSettled([
       syncRolePermissionsToSupabase(),
       syncInterviewCasesToSupabase(),
@@ -6236,7 +6249,7 @@ function getScreeningApplicant(folder, applicantId) {
   return folder?.applicants.find((applicant) => applicant.id === applicantId) || null;
 }
 
-function replaceScreeningFolder(folder) {
+function replaceScreeningFolder(folder, options = {}) {
   if (getDeletedScreeningFolderIdSet().has(folder?.id)) {
     return null;
   }
@@ -6248,9 +6261,16 @@ function replaceScreeningFolder(folder) {
     state.screeningFolders[index] = nextFolder;
   }
 
-  upsertScreeningFolderToSupabase(nextFolder).catch((error) => {
-    console.warn("Screening folder remote save failed.", error);
-  });
+  if (!options.skipMutationMark) {
+    markScreeningLocalMutation();
+  }
+
+  if (!options.skipRemoteSave) {
+    upsertScreeningFolderToSupabase(nextFolder).catch((error) => {
+      state.remoteSyncStatus = "Supabase 동기화 실패";
+      console.warn("Screening folder remote save failed.", error);
+    });
+  }
 
   return nextFolder;
 }
