@@ -19,18 +19,18 @@ const STATUS_ORDER = [
 ];
 
 const MENU_CONFIG = [
-  { view: "dashboard", label: "Dashboard", description: "운영 현황과 KPI 조회" },
+  { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
-  { view: "screening", label: "Screening", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
-  { view: "interview", label: "Interview", description: "면접 일정 조율, 제출자료, 결과 관리" },
-  { view: "interview-report", label: "면담록 생성", description: "면담 스크립트 기반 보고서 생성" },
-  { view: "recruiting-metrics", label: "채용 지표", description: "사업부별 채용 실적 취합과 보고" },
-  { view: "ai-search", label: "AI Search", description: "자연어/JD 기반 후보자 검색" },
+  { view: "screening", label: "서류 평가 지원", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
+  { view: "interview", label: "면접 운영 자동화", description: "면접 일정 조율, 제출자료, 결과 관리" },
+  { view: "interview-report", label: "면담록 작성", description: "면담 스크립트 기반 보고서 생성" },
+  { view: "recruiting-metrics", label: "채용 지표 자동화", description: "사업부별 채용 실적 취합과 보고" },
+  { view: "ai-search", label: "AI 인재검색", description: "자연어/JD 기반 후보자 검색" },
   { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
   { view: "jd-enhance", label: "채용공고 작성", description: "작성 가이드라인 기반 JD 점검과 문구 개선" },
-  { view: "policy-chat", label: "채용 AI 챗봇", description: "채용 기준 문서 기반 질의응답" },
+  { view: "policy-chat", label: "채용 기준 Q&A 챗봇", description: "채용 기준 문서 기반 질의응답" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
-  { view: "members", label: "Management", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
+  { view: "members", label: "관리자 메뉴", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
 ];
 
 const DEFAULT_MENU_ORDER = MENU_CONFIG.map((item) => item.view);
@@ -861,21 +861,21 @@ const state = {
 const interviewReportFileStore = new Map();
 
 const viewTitles = {
-  dashboard: "Dashboard",
+  dashboard: "대시보드",
   pool: "Talent Pool",
-  screening: "Screening",
-  interview: "Interview",
-  "interview-report": "면담록 생성",
-  "recruiting-metrics": "채용 지표",
+  screening: "서류 평가 지원",
+  interview: "면접 운영 자동화",
+  "interview-report": "면담록 작성",
+  "recruiting-metrics": "채용 지표 자동화",
   register: "Add Talent",
-  "ai-search": "AI Search",
+  "ai-search": "AI 인재검색",
   "job-fit": "직무적합도 분석",
   "jd-enhance": "채용공고 작성",
-  "policy-chat": "채용 AI 챗봇",
+  "policy-chat": "채용 기준 Q&A 챗봇",
   trending: "Today's Talent",
   detail: "상세 프로필",
   audit: "Log",
-  members: "Management"
+  members: "관리자 메뉴"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -2849,6 +2849,7 @@ function normalizeMenuSettingsUpdatedAt(value) {
 
 function markMenuSettingsChanged() {
   state.menuSettingsUpdatedAt = new Date().toISOString();
+  menuSettingsLocalDirty = true;
 }
 
 function getOrderedMenuConfig() {
@@ -4040,7 +4041,7 @@ function buildMenuSettingPayload() {
   return {
     menuOrder: normalizeMenuOrder(state.menuOrder),
     menuLabels: normalizeMenuLabels(state.menuLabels),
-    menuSettingsUpdatedAt: state.menuSettingsUpdatedAt || new Date().toISOString()
+    menuSettingsUpdatedAt: normalizeMenuSettingsUpdatedAt(state.menuSettingsUpdatedAt)
   };
 }
 
@@ -4066,7 +4067,7 @@ function buildInterviewCasesPayload() {
 function buildScreeningMailTemplatesPayload() {
   const templates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
   state.screeningMailTemplates = templates;
-  state.screeningMailTemplatesUpdatedAt = state.screeningMailTemplatesUpdatedAt || getScreeningMailTemplatesFreshnessText(templates) || new Date().toISOString();
+  state.screeningMailTemplatesUpdatedAt = state.screeningMailTemplatesUpdatedAt || getScreeningMailTemplatesFreshnessText(templates);
 
   return {
     templates,
@@ -4080,7 +4081,6 @@ function buildRecruitingMetricsPayload() {
   syncRecruitingTargetsFromProgressSheet(metrics);
   syncRecruitingProgressSheetComputedValues(metrics);
   captureRecruitingMetricsWeekSnapshot(metrics);
-  touchRecruitingMetrics(metrics);
 
   return {
     metrics: normalizeRecruitingMetricsState(metrics),
@@ -4147,12 +4147,18 @@ async function syncMenuSettingsToSupabase() {
     return false;
   }
 
+  if (!menuSettingsRemoteLoaded && !menuSettingsLocalDirty) {
+    return false;
+  }
+
   await supabaseRequest("app_settings?on_conflict=setting_key", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify([appSettingToSupabaseRow(MENU_SETTING_KEY, buildMenuSettingPayload())])
   });
 
+  menuSettingsRemoteLoaded = true;
+  menuSettingsLocalDirty = false;
   return true;
 }
 
@@ -4203,17 +4209,27 @@ async function syncScreeningMailTemplatesToSupabase() {
     return false;
   }
 
+  if (!screeningMailTemplatesRemoteLoaded && !screeningMailTemplatesLocalDirty) {
+    return false;
+  }
+
   await supabaseRequest("app_settings?on_conflict=setting_key", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify([appSettingToSupabaseRow(SCREENING_MAIL_TEMPLATES_SETTING_KEY, buildScreeningMailTemplatesPayload())])
   });
 
+  screeningMailTemplatesRemoteLoaded = true;
+  screeningMailTemplatesLocalDirty = false;
   return true;
 }
 
 async function syncRecruitingMetricsToSupabase() {
   if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  if (!recruitingMetricsRemoteLoaded && !recruitingMetricsLocalDirty) {
     return false;
   }
 
@@ -4223,6 +4239,8 @@ async function syncRecruitingMetricsToSupabase() {
     body: JSON.stringify([appSettingToSupabaseRow(RECRUITING_METRICS_SETTING_KEY, buildRecruitingMetricsPayload())])
   });
 
+  recruitingMetricsRemoteLoaded = true;
+  recruitingMetricsLocalDirty = false;
   return true;
 }
 
@@ -4302,6 +4320,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   }
 
   if (screeningMailTemplatesSetting?.payload) {
+    screeningMailTemplatesRemoteLoaded = true;
     const remoteTemplates = normalizeScreeningMailTemplates(
       screeningMailTemplatesSetting.payload.templates ||
       screeningMailTemplatesSetting.payload.screeningMailTemplates ||
@@ -4320,6 +4339,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
     if (localUpdatedAt > remoteUpdatedAt) {
       state.screeningMailTemplates = localTemplates;
+      screeningMailTemplatesLocalDirty = true;
       screeningMailTemplatesRemoteSyncAfterLoadPending = true;
     } else {
       state.screeningMailTemplates = remoteTemplates;
@@ -4332,6 +4352,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   }
 
   if (recruitingMetricsSetting?.payload?.metrics) {
+    recruitingMetricsRemoteLoaded = true;
     const remoteMetrics = normalizeRecruitingMetricsState({
       ...recruitingMetricsSetting.payload.metrics,
       updatedAt: recruitingMetricsSetting.payload.metrics.updatedAt || recruitingMetricsSetting.payload.updatedAt || ""
@@ -4342,6 +4363,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
     if (localUpdatedAt > remoteUpdatedAt) {
       state.recruitingMetrics = localMetrics;
+      recruitingMetricsLocalDirty = true;
       recruitingMetricsRemoteSyncAfterLoadPending = true;
     } else {
       state.recruitingMetrics = remoteMetrics;
@@ -4367,10 +4389,13 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
     return;
   }
 
+  menuSettingsRemoteLoaded = true;
   const remoteUpdatedAt = getRemoteMenuSettingsUpdatedAt(menuOrderSetting);
   const localUpdatedAt = normalizeMenuSettingsUpdatedAt(state.menuSettingsUpdatedAt);
 
   if (localUpdatedAt && remoteUpdatedAt && dateSortValue(localUpdatedAt) > dateSortValue(remoteUpdatedAt)) {
+    menuSettingsLocalDirty = true;
+    menuSettingsRemoteSyncAfterLoadPending = true;
     return;
   }
 
@@ -4392,8 +4417,15 @@ let remoteSyncTimer = null;
 let remoteSyncInFlight = false;
 let remoteSyncReady = !REMOTE_SYNC_ENABLED;
 let screeningLocalMutationAt = 0;
+let menuSettingsRemoteLoaded = false;
+let menuSettingsLocalDirty = false;
+let menuSettingsRemoteSyncAfterLoadPending = false;
 let screeningRemoteSyncAfterLoadPending = false;
+let screeningMailTemplatesRemoteLoaded = false;
+let screeningMailTemplatesLocalDirty = false;
 let screeningMailTemplatesRemoteSyncAfterLoadPending = false;
+let recruitingMetricsRemoteLoaded = false;
+let recruitingMetricsLocalDirty = false;
 let recruitingMetricsRemoteSyncAfterLoadPending = false;
 let recruitingMetricsMailModalOpen = false;
 let recruitingMetricsRequestMailModalOpen = false;
@@ -4597,6 +4629,10 @@ async function loadStateFromSupabase() {
     ensurePolicySourceDefaults();
     state.remoteSyncStatus = "Supabase 연결됨";
     remoteSyncReady = true;
+    if (menuSettingsRemoteSyncAfterLoadPending) {
+      menuSettingsRemoteSyncAfterLoadPending = false;
+      scheduleRemoteSync();
+    }
     if (screeningRemoteSyncAfterLoadPending) {
       screeningRemoteSyncAfterLoadPending = false;
       scheduleRemoteSync();
@@ -4609,14 +4645,6 @@ async function loadStateFromSupabase() {
       recruitingMetricsRemoteSyncAfterLoadPending = false;
       scheduleRemoteSync();
     }
-    Promise.allSettled([
-      syncRolePermissionsToSupabase(),
-      syncInterviewCasesToSupabase(),
-      syncScreeningMailTemplatesToSupabase(),
-      syncRecruitingMetricsToSupabase()
-    ]).catch((error) => {
-      console.warn("App settings warm sync failed.", error);
-    });
     persistState({ skipRemoteSync: true });
     render();
   } catch (error) {
@@ -10612,6 +10640,7 @@ function getRecruitingMetricsState() {
 
 function touchRecruitingMetrics(metrics = getRecruitingMetricsState()) {
   metrics.updatedAt = new Date().toISOString();
+  recruitingMetricsLocalDirty = true;
   return metrics.updatedAt;
 }
 
@@ -24500,6 +24529,7 @@ function getScreeningMailTemplatesFreshnessText(templatesByType = state.screenin
 
 function touchScreeningMailTemplates() {
   state.screeningMailTemplatesUpdatedAt = new Date().toISOString();
+  screeningMailTemplatesLocalDirty = true;
   return state.screeningMailTemplatesUpdatedAt;
 }
 
