@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
 };
 const LEGACY_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const APP_BASE_URL = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "https://talentpool-dx.com";
+const DEFAULT_TRENDING_MAIL_FROM = "TA@talentpool-dx.com";
 
 function loadLocalEnv() {
   try {
@@ -152,8 +153,18 @@ function normalizeSendTime(value) {
   return match ? `${match[1]}:${match[2]}` : DEFAULT_SETTINGS.sendTime;
 }
 
+function getTrendingMailFrom() {
+  return String(
+    process.env.TRENDING_RESEND_FROM ||
+    process.env.TRENDING_MAIL_FROM ||
+    process.env.RESEND_FROM ||
+    process.env.MAIL_FROM ||
+    DEFAULT_TRENDING_MAIL_FROM
+  ).trim();
+}
+
 function isProviderConfigured() {
-  return Boolean(process.env.RESEND_API_KEY && (process.env.RESEND_FROM || process.env.MAIL_FROM));
+  return Boolean(process.env.RESEND_API_KEY && getTrendingMailFrom());
 }
 
 function normalizeSettings(settings = {}) {
@@ -806,10 +817,10 @@ function buildReportHtml(report) {
 
 async function sendEmailViaResend(settings, report) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM || process.env.MAIL_FROM;
+  const from = getTrendingMailFrom();
 
   if (!apiKey || !from) {
-    throw new Error("메일 provider가 설정되어 있지 않습니다. RESEND_API_KEY와 RESEND_FROM을 환경변수로 설정해주세요.");
+    throw new Error("메일 provider가 설정되어 있지 않습니다. RESEND_API_KEY와 TRENDING_RESEND_FROM 또는 RESEND_FROM을 환경변수로 설정해주세요.");
   }
 
   const subject = `${settings.subjectPrefix} - ${report.targetDate || report.reportDate}`;
@@ -854,7 +865,7 @@ async function sendReport({ request, settings, report, eventType }) {
   validateSettings(settings, { requireRecipients: true });
 
   if (!isProviderConfigured()) {
-    throw new Error("메일 provider가 설정되어 있지 않습니다. RESEND_API_KEY와 RESEND_FROM을 환경변수로 설정해주세요.");
+    throw new Error("메일 provider가 설정되어 있지 않습니다. RESEND_API_KEY와 TRENDING_RESEND_FROM 또는 RESEND_FROM을 환경변수로 설정해주세요.");
   }
 
   const finalReport = await ensureReport(request, report);
