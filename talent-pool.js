@@ -39,6 +39,7 @@ const MENU_SETTING_KEY = "menu_order";
 const SCREENING_DELETED_FOLDERS_SETTING_KEY = "screening_deleted_folder_ids";
 const ROLE_PERMISSIONS_SETTING_KEY = "role_permissions";
 const INTERVIEW_CASES_SETTING_KEY = "interview_cases";
+const SCREENING_MAIL_TEMPLATES_SETTING_KEY = "screening_mail_templates";
 const RECRUITING_METRICS_SETTING_KEY = "recruiting_metrics";
 const JD_ENHANCEMENT_SETTING_KEY = "jd_enhancement";
 const VISIT_STATS_SETTING_KEY = "visit_stats";
@@ -718,6 +719,7 @@ const state = {
   screeningApplicantDetailId: "",
   screeningMailPreview: null,
   screeningMailTemplates: {},
+  screeningMailTemplatesUpdatedAt: "",
   screeningResultPanelOpen: false,
   screeningTimelineDrag: null,
   poolReturnScrollY: 0,
@@ -3292,6 +3294,7 @@ function persistState(options = {}) {
         selectedCandidateId: state.selectedCandidateId,
         selectedScreeningFolderId: state.selectedScreeningFolderId,
         screeningMailTemplates: state.screeningMailTemplates,
+        screeningMailTemplatesUpdatedAt: state.screeningMailTemplatesUpdatedAt,
         poolFilters: state.poolFilters,
         dashboardFilters: state.dashboardFilters,
         screeningFilters: state.screeningFilters,
@@ -3375,7 +3378,11 @@ function restorePersistedState() {
   }
 
   if (persisted.screeningMailTemplates && typeof persisted.screeningMailTemplates === "object") {
-    state.screeningMailTemplates = persisted.screeningMailTemplates;
+    state.screeningMailTemplates = normalizeScreeningMailTemplates(persisted.screeningMailTemplates);
+    state.screeningMailTemplatesUpdatedAt = String(
+      persisted.screeningMailTemplatesUpdatedAt ||
+      getScreeningMailTemplatesFreshnessText(state.screeningMailTemplates)
+    ).trim();
   }
 
   if (Array.isArray(persisted.members) && persisted.members.length) {
@@ -4056,6 +4063,18 @@ function buildInterviewCasesPayload() {
   };
 }
 
+function buildScreeningMailTemplatesPayload() {
+  const templates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
+  state.screeningMailTemplates = templates;
+  state.screeningMailTemplatesUpdatedAt = state.screeningMailTemplatesUpdatedAt || getScreeningMailTemplatesFreshnessText(templates) || new Date().toISOString();
+
+  return {
+    templates,
+    updatedAt: state.screeningMailTemplatesUpdatedAt,
+    updatedBy: getCurrentActorName()
+  };
+}
+
 function buildRecruitingMetricsPayload() {
   const metrics = getRecruitingMetricsState();
   syncRecruitingTargetsFromProgressSheet(metrics);
@@ -4179,6 +4198,20 @@ async function syncInterviewCasesToSupabase() {
   return true;
 }
 
+async function syncScreeningMailTemplatesToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(SCREENING_MAIL_TEMPLATES_SETTING_KEY, buildScreeningMailTemplatesPayload())])
+  });
+
+  return true;
+}
+
 async function syncRecruitingMetricsToSupabase() {
   if (!REMOTE_SYNC_ENABLED) {
     return false;
@@ -4213,6 +4246,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   const deletedFoldersSetting = settings.find((row) => row.setting_key === SCREENING_DELETED_FOLDERS_SETTING_KEY);
   const rolePermissionsSetting = settings.find((row) => row.setting_key === ROLE_PERMISSIONS_SETTING_KEY);
   const interviewCasesSetting = settings.find((row) => row.setting_key === INTERVIEW_CASES_SETTING_KEY);
+  const screeningMailTemplatesSetting = settings.find((row) => row.setting_key === SCREENING_MAIL_TEMPLATES_SETTING_KEY);
   const recruitingMetricsSetting = settings.find((row) => row.setting_key === RECRUITING_METRICS_SETTING_KEY);
   const jdEnhancementSetting = settings.find((row) => row.setting_key === JD_ENHANCEMENT_SETTING_KEY);
   const visitStatsSetting = settings.find((row) => row.setting_key === VISIT_STATS_SETTING_KEY);
@@ -4264,6 +4298,36 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
     if (INTERVIEW_STAGE_IDS.includes(selectedStage)) {
       state.selectedInterviewStage = selectedStage;
+    }
+  }
+
+  if (screeningMailTemplatesSetting?.payload) {
+    const remoteTemplates = normalizeScreeningMailTemplates(
+      screeningMailTemplatesSetting.payload.templates ||
+      screeningMailTemplatesSetting.payload.screeningMailTemplates ||
+      {}
+    );
+    const localTemplates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
+    const remoteUpdatedAt = dateSortValue(
+      screeningMailTemplatesSetting.payload.updatedAt ||
+      getScreeningMailTemplatesFreshnessText(remoteTemplates) ||
+      screeningMailTemplatesSetting.updated_at
+    );
+    const localUpdatedAt = dateSortValue(
+      state.screeningMailTemplatesUpdatedAt ||
+      getScreeningMailTemplatesFreshnessText(localTemplates)
+    );
+
+    if (localUpdatedAt > remoteUpdatedAt) {
+      state.screeningMailTemplates = localTemplates;
+      screeningMailTemplatesRemoteSyncAfterLoadPending = true;
+    } else {
+      state.screeningMailTemplates = remoteTemplates;
+      state.screeningMailTemplatesUpdatedAt = String(
+        screeningMailTemplatesSetting.payload.updatedAt ||
+        getScreeningMailTemplatesFreshnessText(remoteTemplates) ||
+        ""
+      ).trim();
     }
   }
 
@@ -4329,6 +4393,7 @@ let remoteSyncInFlight = false;
 let remoteSyncReady = !REMOTE_SYNC_ENABLED;
 let screeningLocalMutationAt = 0;
 let screeningRemoteSyncAfterLoadPending = false;
+let screeningMailTemplatesRemoteSyncAfterLoadPending = false;
 let recruitingMetricsRemoteSyncAfterLoadPending = false;
 let recruitingMetricsMailModalOpen = false;
 let recruitingMetricsRequestMailModalOpen = false;
@@ -4430,6 +4495,7 @@ async function syncStateToSupabase() {
       await syncScreeningDeletedFoldersToSupabase();
       await syncRolePermissionsToSupabase();
       await syncInterviewCasesToSupabase();
+      await syncScreeningMailTemplatesToSupabase();
       await syncRecruitingMetricsToSupabase();
       await syncJdEnhancementToSupabase();
     } catch (error) {
@@ -4459,6 +4525,7 @@ async function loadStateFromSupabase() {
       SCREENING_DELETED_FOLDERS_SETTING_KEY,
       ROLE_PERMISSIONS_SETTING_KEY,
       INTERVIEW_CASES_SETTING_KEY,
+      SCREENING_MAIL_TEMPLATES_SETTING_KEY,
       RECRUITING_METRICS_SETTING_KEY,
       JD_ENHANCEMENT_SETTING_KEY,
       VISIT_STATS_SETTING_KEY
@@ -4534,6 +4601,10 @@ async function loadStateFromSupabase() {
       screeningRemoteSyncAfterLoadPending = false;
       scheduleRemoteSync();
     }
+    if (screeningMailTemplatesRemoteSyncAfterLoadPending) {
+      screeningMailTemplatesRemoteSyncAfterLoadPending = false;
+      scheduleRemoteSync();
+    }
     if (recruitingMetricsRemoteSyncAfterLoadPending) {
       recruitingMetricsRemoteSyncAfterLoadPending = false;
       scheduleRemoteSync();
@@ -4541,6 +4612,7 @@ async function loadStateFromSupabase() {
     Promise.allSettled([
       syncRolePermissionsToSupabase(),
       syncInterviewCasesToSupabase(),
+      syncScreeningMailTemplatesToSupabase(),
       syncRecruitingMetricsToSupabase()
     ]).catch((error) => {
       console.warn("App settings warm sync failed.", error);
@@ -24374,31 +24446,66 @@ const SCREENING_MAIL_VARIABLES = [
   { key: "{{면접위원메일}}", label: "면접위원 메일" }
 ];
 
+function normalizeScreeningMailTemplate(template = {}, fallbackIndex = 0) {
+  if (!template || typeof template !== "object") {
+    return null;
+  }
+
+  const subject = String(template.subject || "").trim();
+  const body = String(template.body || "").trim();
+  const bodyHtml = String(template.bodyHtml || template.body_html || "").trim();
+
+  if (!subject && !body && !bodyHtml) {
+    return null;
+  }
+
+  const updatedAt = String(template.updatedAt || template.updated_at || template.savedAt || "").trim();
+
+  return {
+    id: String(template.id || createId("screening-mail-template")).trim(),
+    name: String(template.name || `저장 양식 ${fallbackIndex + 1}`).trim(),
+    subject,
+    body,
+    bodyHtml,
+    savedAt: String(template.savedAt || template.saved_at || updatedAt || "").trim(),
+    savedBy: String(template.savedBy || template.saved_by || "").trim(),
+    updatedAt
+  };
+}
+
+function normalizeScreeningMailTemplates(value = {}) {
+  return Object.entries(value && typeof value === "object" ? value : {}).reduce((templatesByType, [type, rawTemplates]) => {
+    const list = Array.isArray(rawTemplates) ? rawTemplates : [rawTemplates];
+    const templates = list
+      .map((template, index) => normalizeScreeningMailTemplate(template, index))
+      .filter(Boolean)
+      .sort((a, b) => dateSortValue(a.updatedAt || a.savedAt) - dateSortValue(b.updatedAt || b.savedAt));
+
+    if (templates.length) {
+      templatesByType[type] = templates;
+    }
+
+    return templatesByType;
+  }, {});
+}
+
+function getScreeningMailTemplatesFreshnessText(templatesByType = state.screeningMailTemplates) {
+  const templates = Object.values(normalizeScreeningMailTemplates(templatesByType)).flat();
+
+  return templates.reduce((latest, template) => {
+    const timestamp = template.updatedAt || template.savedAt || "";
+    return dateSortValue(timestamp) > dateSortValue(latest) ? timestamp : latest;
+  }, "");
+}
+
+function touchScreeningMailTemplates() {
+  state.screeningMailTemplatesUpdatedAt = new Date().toISOString();
+  return state.screeningMailTemplatesUpdatedAt;
+}
+
 function getScreeningMailTemplates(type) {
-  const stored = state.screeningMailTemplates?.[type];
-
-  if (Array.isArray(stored)) {
-    return stored
-      .filter((template) => template && (template.subject || template.body || template.bodyHtml))
-      .map((template) => ({
-        ...template,
-        bodyHtml: template.bodyHtml || ""
-      }));
-  }
-
-  if (stored && typeof stored === "object" && (stored.subject || stored.body || stored.bodyHtml)) {
-    return [{
-      id: stored.id || "legacy-template",
-      name: stored.name || "저장 양식 1",
-      subject: stored.subject || "",
-      body: stored.body || "",
-      bodyHtml: stored.bodyHtml || "",
-      savedAt: stored.savedAt || "",
-      savedBy: stored.savedBy || ""
-    }];
-  }
-
-  return [];
+  state.screeningMailTemplates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
+  return state.screeningMailTemplates?.[type] || [];
 }
 
 function getScreeningMailTemplate(type, templateId) {
@@ -24670,14 +24777,17 @@ function saveScreeningMailTemplateFromPreview(form) {
     return;
   }
 
+  const savedAt = getTimestampText();
+  const updatedAt = touchScreeningMailTemplates();
   const nextTemplate = {
     id: existing?.id || createId("screening-mail-template"),
     name,
     subject,
     body,
     bodyHtml,
-    savedAt: getTimestampText(),
-    savedBy: getCurrentActorName()
+    savedAt,
+    savedBy: getCurrentActorName(),
+    updatedAt
   };
 
   state.screeningMailTemplates = {
@@ -24687,12 +24797,16 @@ function saveScreeningMailTemplateFromPreview(form) {
       nextTemplate
     ]
   };
+  state.screeningMailTemplates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
   preview.templateId = nextTemplate.id;
   preview.templateName = nextTemplate.name;
   preview.subject = subject;
   preview.body = body;
   preview.bodyHtml = bodyHtml;
   persistState();
+  syncScreeningMailTemplatesToSupabase().catch((error) => {
+    console.warn("Screening mail templates remote save failed.", error);
+  });
   showToast(`${nextTemplate.name} 양식을 저장했습니다.`);
   renderScreening();
 }
