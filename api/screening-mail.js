@@ -111,7 +111,7 @@ function tableRows(rows) {
 
 function buildMailFrame(title, intro, rows, footer = "") {
   return `
-    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.65;max-width:720px;margin:0 auto">
+    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.65;max-width:720px;margin:0;text-align:left">
       <h2 style="margin:0 0 14px;font-size:22px;line-height:1.35">${escapeHtml(title)}</h2>
       ${intro ? `<p style="margin:0 0 18px">${escapeHtml(intro)}</p>` : ""}
       <table style="border-collapse:collapse;width:100%;margin:0 0 16px">
@@ -329,8 +329,27 @@ function buildMailPayload(body) {
 
 function textToHtml(text) {
   return `
-    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.7;max-width:720px;margin:0 auto">
+    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.7;max-width:720px;margin:0;text-align:left">
       ${escapeHtml(text).replace(/\r?\n/g, "<br>")}
+    </div>
+  `;
+}
+
+function cleanMailHtmlFragment(html) {
+  return String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, "")
+    .replace(/javascript:/gi, "");
+}
+
+function richTextToHtml(html) {
+  return `
+    <div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.7;max-width:720px;margin:0;text-align:left">
+      ${cleanMailHtmlFragment(html)}
     </div>
   `;
 }
@@ -350,7 +369,7 @@ function applyMailOverride(mail, override = {}) {
     to: recipients.length ? recipients : mail.to,
     subject: subject || mail.subject,
     text: text || mail.text,
-    html: html || (text ? textToHtml(text) : mail.html)
+    html: html ? richTextToHtml(html) : (text ? textToHtml(text) : mail.html)
   };
 }
 

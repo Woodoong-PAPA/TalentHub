@@ -8239,7 +8239,7 @@ function renderScreeningMailPreviewModal() {
             </div>
             <div class="field">
               <label for="screening-mail-preview-body">본문</label>
-              <textarea class="control-textarea mail-body-editor" id="screening-mail-preview-body" name="body" rows="14">${escapeHtml(preview.body || "")}</textarea>
+              ${renderScreeningMailEditor(preview)}
             </div>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-mail-preview>취소</button>
@@ -24336,15 +24336,21 @@ function getScreeningMailTemplates(type) {
   const stored = state.screeningMailTemplates?.[type];
 
   if (Array.isArray(stored)) {
-    return stored.filter((template) => template && (template.subject || template.body));
+    return stored
+      .filter((template) => template && (template.subject || template.body || template.bodyHtml))
+      .map((template) => ({
+        ...template,
+        bodyHtml: template.bodyHtml || ""
+      }));
   }
 
-  if (stored && typeof stored === "object" && (stored.subject || stored.body)) {
+  if (stored && typeof stored === "object" && (stored.subject || stored.body || stored.bodyHtml)) {
     return [{
       id: stored.id || "legacy-template",
       name: stored.name || "저장 양식 1",
       subject: stored.subject || "",
       body: stored.body || "",
+      bodyHtml: stored.bodyHtml || "",
       savedAt: stored.savedAt || "",
       savedBy: stored.savedBy || ""
     }];
@@ -24384,6 +24390,99 @@ function resolveScreeningMailVariables(text, preview) {
     (resolved, [key, value]) => resolved.split(key).join(value || "-"),
     String(text || "")
   );
+}
+
+function resolveScreeningMailHtmlVariables(html, preview) {
+  const context = getScreeningMailVariableContext(preview);
+
+  return Object.entries(context).reduce(
+    (resolved, [key, value]) => resolved.split(key).join(escapeHtml(value || "-")),
+    String(html || "")
+  );
+}
+
+function screeningMailTextToHtml(text = "") {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+
+  return lines
+    .map((line) => `<div>${line ? escapeHtml(line) : "<br>"}</div>`)
+    .join("");
+}
+
+function getScreeningMailInitialHtml(preview = {}) {
+  return String(preview.bodyHtml || "").trim() || screeningMailTextToHtml(preview.body || "");
+}
+
+function getScreeningMailEditor(form) {
+  return form?.querySelector("[data-screening-mail-editor]") || null;
+}
+
+function screeningMailHtmlToText(html = "") {
+  const container = document.createElement("div");
+  container.innerHTML = html || "";
+  return String(container.innerText || container.textContent || "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+}
+
+function syncScreeningMailEditorFields(form) {
+  const editor = getScreeningMailEditor(form);
+  const bodyInput = form?.elements.body;
+  const bodyHtmlInput = form?.elements.bodyHtml;
+
+  if (!editor || !bodyInput || !bodyHtmlInput) {
+    return;
+  }
+
+  bodyHtmlInput.value = editor.innerHTML.trim();
+  bodyInput.value = screeningMailHtmlToText(editor.innerHTML);
+}
+
+function setScreeningMailEditorContent(form, text = "", html = "") {
+  const editor = getScreeningMailEditor(form);
+  const bodyInput = form?.elements.body;
+  const bodyHtmlInput = form?.elements.bodyHtml;
+  const nextHtml = String(html || "").trim() || screeningMailTextToHtml(text);
+
+  if (editor) {
+    editor.innerHTML = nextHtml;
+  }
+  if (bodyHtmlInput) {
+    bodyHtmlInput.value = nextHtml;
+  }
+  if (bodyInput) {
+    bodyInput.value = screeningMailHtmlToText(nextHtml);
+  }
+}
+
+function renderScreeningMailEditor(preview) {
+  const initialHtml = getScreeningMailInitialHtml(preview);
+
+  return `
+    <div class="mail-rich-toolbar" aria-label="메일 본문 서식 도구">
+      <select class="control-select mail-format-select" data-screening-mail-format="fontName" title="글꼴">
+        <option value="Malgun Gothic">맑은 고딕</option>
+        <option value="Arial">Arial</option>
+        <option value="Noto Sans KR">Noto Sans KR</option>
+        <option value="Georgia">Georgia</option>
+      </select>
+      <select class="control-select mail-format-select" data-screening-mail-format="fontSize" title="글자 크기">
+        <option value="2">작게</option>
+        <option value="3" selected>보통</option>
+        <option value="4">크게</option>
+      </select>
+      <button class="ghost-button compact-button mail-format-button" type="button" data-screening-mail-command="bold" title="굵게"><strong>B</strong></button>
+      <button class="ghost-button compact-button mail-format-button" type="button" data-screening-mail-command="underline" title="밑줄"><u>U</u></button>
+      <button class="ghost-button compact-button mail-format-button" type="button" data-screening-mail-command="removeFormat">서식 제거</button>
+    </div>
+    <textarea class="sr-only" id="screening-mail-preview-body" name="body">${escapeHtml(preview.body || "")}</textarea>
+    <textarea class="sr-only" name="bodyHtml">${escapeHtml(initialHtml)}</textarea>
+    <div class="control-textarea mail-body-editor mail-rich-editor"
+      contenteditable="true"
+      role="textbox"
+      aria-multiline="true"
+      data-screening-mail-editor>${initialHtml}</div>
+  `;
 }
 
 function renderScreeningMailVariableGuide(preview) {
@@ -24498,6 +24597,7 @@ function openScreeningMailPreview(type, applicantId) {
     preview.templateName = template.name;
     preview.subject = template.subject || preview.subject;
     preview.body = template.body || preview.body;
+    preview.bodyHtml = template.bodyHtml || "";
   }
 
   state.screeningMailPreview = preview;
@@ -24511,9 +24611,11 @@ function saveScreeningMailTemplateFromPreview(form) {
     return;
   }
 
+  syncScreeningMailEditorFields(form);
   const formData = new FormData(form);
   const subject = String(formData.get("subject") || "").trim();
   const body = String(formData.get("body") || "").trim();
+  const bodyHtml = String(formData.get("bodyHtml") || "").trim();
   const templateId = String(formData.get("templateId") || "").trim();
   const existing = getScreeningMailTemplate(preview.type, templateId);
   const templates = getScreeningMailTemplates(preview.type);
@@ -24531,6 +24633,7 @@ function saveScreeningMailTemplateFromPreview(form) {
     name,
     subject,
     body,
+    bodyHtml,
     savedAt: getTimestampText(),
     savedBy: getCurrentActorName()
   };
@@ -24544,6 +24647,9 @@ function saveScreeningMailTemplateFromPreview(form) {
   };
   preview.templateId = nextTemplate.id;
   preview.templateName = nextTemplate.name;
+  preview.subject = subject;
+  preview.body = body;
+  preview.bodyHtml = bodyHtml;
   persistState();
   showToast(`${nextTemplate.name} 양식을 저장했습니다.`);
   renderScreening();
@@ -24559,7 +24665,6 @@ function applyScreeningMailTemplateSelection(select) {
 
   const template = getScreeningMailTemplate(preview.type, select.value);
   const subjectInput = form.elements.subject;
-  const bodyInput = form.elements.body;
   const nameInput = form.elements.templateName;
 
   if (template) {
@@ -24567,8 +24672,9 @@ function applyScreeningMailTemplateSelection(select) {
     preview.templateName = template.name;
     preview.subject = template.subject || preview.subject;
     preview.body = template.body || preview.body;
+    preview.bodyHtml = template.bodyHtml || screeningMailTextToHtml(preview.body);
     if (subjectInput) subjectInput.value = preview.subject;
-    if (bodyInput) bodyInput.value = preview.body;
+    setScreeningMailEditorContent(form, preview.body, preview.bodyHtml);
     if (nameInput) nameInput.value = preview.templateName || "";
     return;
   }
@@ -24582,27 +24688,41 @@ function applyScreeningMailTemplateSelection(select) {
   if (basePreview) {
     preview.subject = basePreview.subject;
     preview.body = basePreview.body;
+    preview.bodyHtml = "";
     if (subjectInput) subjectInput.value = preview.subject;
-    if (bodyInput) bodyInput.value = preview.body;
+    setScreeningMailEditorContent(form, preview.body, "");
     if (nameInput) nameInput.value = "";
   }
 }
 
 function insertScreeningMailVariable(button) {
   const form = button?.closest("#screening-mail-preview-form");
-  const textarea = form?.elements.body;
+  const editor = getScreeningMailEditor(form);
   const variable = button?.dataset.copyMailVariable || "";
 
-  if (!textarea || !variable) {
+  if (!editor || !variable) {
     return;
   }
 
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? textarea.value.length;
-  textarea.value = `${textarea.value.slice(0, start)}${variable}${textarea.value.slice(end)}`;
-  textarea.focus();
-  const nextPosition = start + variable.length;
-  textarea.setSelectionRange(nextPosition, nextPosition);
+  editor.focus();
+  document.execCommand("insertText", false, variable);
+  syncScreeningMailEditorFields(form);
+}
+
+function applyScreeningMailEditorCommand(control) {
+  const form = control?.closest("#screening-mail-preview-form");
+  const editor = getScreeningMailEditor(form);
+
+  if (!editor) {
+    return;
+  }
+
+  const command = control.dataset.screeningMailCommand || control.dataset.screeningMailFormat || "";
+  const value = control.value || null;
+
+  editor.focus();
+  document.execCommand(command, false, value);
+  syncScreeningMailEditorFields(form);
 }
 
 async function sendScreeningMailPreview(form) {
@@ -24612,19 +24732,22 @@ async function sendScreeningMailPreview(form) {
     return;
   }
 
+  syncScreeningMailEditorFields(form);
   const formData = new FormData(form);
   const recipients = normalizeEmailList(formData.get("recipients"));
   const subjectTemplate = String(formData.get("subject") || "").trim();
   const textTemplate = String(formData.get("body") || "").trim();
+  const htmlTemplate = String(formData.get("bodyHtml") || "").trim();
   const subject = resolveScreeningMailVariables(subjectTemplate, preview);
   const text = resolveScreeningMailVariables(textTemplate, preview);
+  const html = resolveScreeningMailHtmlVariables(htmlTemplate || screeningMailTextToHtml(textTemplate), preview);
 
   if (!recipients.length || !subject || !text) {
     showToast("수신자, 제목, 본문을 모두 입력해주세요.");
     return;
   }
 
-  const mailOverride = { recipients, subject, text };
+  const mailOverride = { recipients, subject, text, html };
 
   if (preview.type === "contact_request") {
     await requestScreeningContact(preview.applicantId, mailOverride);
@@ -27045,6 +27168,12 @@ function bindEvents() {
       return;
     }
 
+    const mailEditorCommandButton = event.target.closest("[data-screening-mail-command]");
+    if (mailEditorCommandButton) {
+      applyScreeningMailEditorCommand(mailEditorCommandButton);
+      return;
+    }
+
     const mailVariableButton = event.target.closest("[data-copy-mail-variable]");
     if (mailVariableButton) {
       insertScreeningMailVariable(mailVariableButton);
@@ -28159,6 +28288,10 @@ function bindEvents() {
       updateAgeOutput("#screening-applicant-birth-year", "#screening-applicant-age");
     }
 
+    if (event.target.matches("[data-screening-mail-editor]")) {
+      syncScreeningMailEditorFields(event.target.closest("#screening-mail-preview-form"));
+    }
+
     if (event.target.matches("[data-screening-access-search]")) {
       updateScreeningAccessResults(event.target);
     }
@@ -28415,6 +28548,11 @@ function bindEvents() {
 
     if (event.target.matches("[data-screening-mail-template-select]")) {
       applyScreeningMailTemplateSelection(event.target);
+      return;
+    }
+
+    if (event.target.matches("[data-screening-mail-format]")) {
+      applyScreeningMailEditorCommand(event.target);
       return;
     }
 
