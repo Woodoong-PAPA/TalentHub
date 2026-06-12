@@ -1958,7 +1958,7 @@ function normalizeScreeningApplicant(applicant = {}) {
 
 function normalizeScreeningSpecialNotes(value, options = {}) {
   const maxLines = Number(options.maxLines || 3);
-  const maxLength = Number(options.maxLength || 54);
+  const maxLength = Number(options.maxLength || 30);
 
   return splitNonEmptyLines(value)
     .flatMap((line) => String(line || "").split(/[•·]\s*/))
@@ -1971,25 +1971,52 @@ function normalizeScreeningSpecialNotes(value, options = {}) {
     .join("\n");
 }
 
+function splitScreeningAchievementText(value) {
+  return String(value || "")
+    .replace(/\r/g, "\n")
+    .split(/\n|[。.!?;；]+/)
+    .map((line) => cleanParsedValue(line)
+      .replace(/^(주요성과\/실적|주요성과|성과|실적|담당업무|수행업무|업무내용)\s*[:：-]?\s*/i, "")
+      .trim())
+    .filter(Boolean);
+}
+
+function addScreeningAchievementCandidates(target, value) {
+  splitScreeningAchievementText(value).forEach((line) => {
+    const normalized = normalizeScreeningSpecialNotes(line, { maxLines: 1, maxLength: 30 });
+
+    if (normalized && !target.includes(normalized)) {
+      target.push(normalized);
+    }
+  });
+}
+
 function buildScreeningSpecialNotesFromParsedResume(parsed = {}) {
-  const direct = normalizeScreeningSpecialNotes(parsed.summary || parsed.achievementSummary?.join?.("\n") || parsed.achievement_summary?.join?.("\n"));
+  const candidates = [];
+  const directAchievements = Array.isArray(parsed.achievementSummary)
+    ? parsed.achievementSummary
+    : Array.isArray(parsed.achievement_summary)
+      ? parsed.achievement_summary
+      : [];
 
-  if (direct) {
-    return direct;
-  }
+  directAchievements.forEach((line) => addScreeningAchievementCandidates(candidates, line));
 
-  const careerAchievements = (Array.isArray(parsed.career) ? parsed.career : [])
-    .flatMap((item) => splitNonEmptyLines(item.achievements));
+  (Array.isArray(parsed.career) ? parsed.career : [])
+    .forEach((item) => addScreeningAchievementCandidates(candidates, item.achievements));
 
-  if (careerAchievements.length) {
-    return normalizeScreeningSpecialNotes(careerAchievements.join("\n"));
+  addScreeningAchievementCandidates(candidates, parsed.summary);
+
+  if (candidates.length >= 3) {
+    return candidates.slice(0, 3).join("\n");
   }
 
   const careerFallback = (Array.isArray(parsed.career) ? parsed.career : [])
     .map((item) => [item.company, item.rank, item.position].filter(Boolean).join(", "))
     .filter(Boolean);
 
-  return normalizeScreeningSpecialNotes(careerFallback.join("\n"));
+  careerFallback.forEach((line) => addScreeningAchievementCandidates(candidates, line));
+
+  return candidates.slice(0, 3).join("\n");
 }
 
 function normalizeIdList(value) {
@@ -6960,7 +6987,7 @@ function renderApplicantRegistrationModal(folder) {
                 <input class="control-input" id="screening-applicant-phone" name="phone" type="tel" value="${inputValue(editingApplicant?.phone || "")}" ${contactDisabledAttr} />
               </div>
               <div class="field full">
-                <label for="screening-applicant-summary">특이사항</label>
+                <label for="screening-applicant-summary">주요성과/실적</label>
                 <textarea class="control-textarea" id="screening-applicant-summary" name="summary" rows="4" ${coreDisabledAttr}>${escapeHtml(editingApplicant?.summary || "")}</textarea>
                 <span class="form-help">지원자의 주요성과/실적을 3줄로 정리합니다. 한 줄에 한 가지씩 입력해주세요.</span>
               </div>
@@ -7745,7 +7772,7 @@ function formatScreeningBirthAge(applicant) {
 function renderScreeningApplicantSpecialBox(folder, applicant, step) {
   if (step === "reception") {
     return renderScreeningOpinionField(folder, applicant, "reception", {
-      label: "특이사항",
+      label: "주요성과/실적",
       rows: 4,
       className: "screening-structured-special-input"
     });
@@ -7758,11 +7785,11 @@ function renderScreeningApplicantSpecialBox(folder, applicant, step) {
 
   return `
     <div class="screening-structured-special">
-      <strong>특이사항</strong>
+      <strong>주요성과/실적</strong>
       <div class="screening-structured-special-box">
         ${specialText
           ? splitNonEmptyLines(specialText).map((line) => `<p>${escapeHtml(line)}</p>`).join("")
-          : `<p class="screening-structured-empty">특이사항 없음</p>`}
+          : `<p class="screening-structured-empty">주요성과/실적 없음</p>`}
       </div>
     </div>
   `;
@@ -23571,6 +23598,13 @@ async function registerScreeningApplicant(form) {
 
   try {
     setProgressStatus(status, "지원자 정보를 저장 전 분석 중입니다.", 16);
+    const resumeAttachment = await attachmentFromFile(resumeFile);
+    let summary = normalizeScreeningSpecialNotes(getFormText(form, "summary"));
+
+    if (!summary && resumeAttachment?.text) {
+      const parsedForSummary = normalizeParsedResumeForForm(parseResumeText(resumeAttachment.text, resumeAttachment.name));
+      summary = buildScreeningSpecialNotesFromParsedResume(parsedForSummary);
+    }
 
     const applicant = normalizeScreeningApplicant({
       id: createId("screening-applicant"),
@@ -23583,10 +23617,10 @@ async function registerScreeningApplicant(form) {
       nationality: getFormText(form, "nationality"),
       email: getFormText(form, "email"),
       phone: getFormText(form, "phone"),
-      summary: normalizeScreeningSpecialNotes(getFormText(form, "summary")),
+      summary,
       education,
       career,
-      resumeAttachment: await attachmentFromFile(resumeFile),
+      resumeAttachment,
       attachments: await attachmentsFromFiles(otherAttachmentFiles),
       stage: "registered",
       createdAt: getTodayDate(),
@@ -23759,13 +23793,20 @@ async function updateScreeningApplicant(form) {
     applicant.birthYear = getFormText(form, "birthYear");
     applicant.age = calculateAge(applicant.birthYear);
     applicant.nationality = getFormText(form, "nationality");
-    applicant.summary = normalizeScreeningSpecialNotes(getFormText(form, "summary"));
     applicant.education = normalizeScreeningEducationRecords(collectScreeningEducationFromForm(form));
     applicant.career = normalizeScreeningCareerRecords(collectScreeningCareerFromForm(form));
+    let summary = normalizeScreeningSpecialNotes(getFormText(form, "summary"));
 
     if (resumeFile) {
       applicant.resumeAttachment = await attachmentFromFile(resumeFile);
+
+      if (!summary && applicant.resumeAttachment?.text) {
+        const parsedForSummary = normalizeParsedResumeForForm(parseResumeText(applicant.resumeAttachment.text, applicant.resumeAttachment.name));
+        summary = buildScreeningSpecialNotesFromParsedResume(parsedForSummary);
+      }
     }
+
+    applicant.summary = summary;
 
     if (otherAttachmentFiles.length) {
       applicant.attachments = [
