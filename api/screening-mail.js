@@ -180,6 +180,7 @@ function buildPhoneInterviewMail(body) {
 
   return {
     to: normalizeEmailList(body.recipients),
+    cc: normalizeEmailList(body.cc),
     subject: `[TalentHub Screening] ${applicant.name || "후보자"} 전화면접 안내`,
     text,
     html: buildMailFrame(
@@ -354,12 +355,38 @@ function richTextToHtml(html) {
   `;
 }
 
+function dataUrlToBase64(value = "") {
+  const text = String(value || "").trim();
+  const match = text.match(/^data:[^;]+;base64,(.+)$/);
+  return match ? match[1] : text;
+}
+
+function normalizeMailAttachments(attachments = []) {
+  return (Array.isArray(attachments) ? attachments : [])
+    .map((attachment) => {
+      const filename = String(attachment?.filename || attachment?.name || "").trim();
+      const content = dataUrlToBase64(attachment?.content || attachment?.dataUrl || attachment?.data_url || "");
+
+      if (!filename || !content) {
+        return null;
+      }
+
+      return {
+        filename,
+        content
+      };
+    })
+    .filter(Boolean);
+}
+
 function applyMailOverride(mail, override = {}) {
   if (!override || typeof override !== "object") {
     return mail;
   }
 
   const recipients = normalizeEmailList(override.recipients || override.to || override.recipient);
+  const cc = normalizeEmailList(override.cc);
+  const attachments = normalizeMailAttachments(override.attachments);
   const subject = String(override.subject || "").trim();
   const text = String(override.text || "").trim();
   const html = String(override.html || "").trim();
@@ -367,6 +394,8 @@ function applyMailOverride(mail, override = {}) {
   return {
     ...mail,
     to: recipients.length ? recipients : mail.to,
+    cc,
+    attachments,
     subject: subject || mail.subject,
     text: text || mail.text,
     html: html ? richTextToHtml(html) : (text ? textToHtml(text) : mail.html)
@@ -376,6 +405,9 @@ function applyMailOverride(mail, override = {}) {
 async function sendEmailViaResend(mail) {
   const config = assertProviderConfigured();
   const invalidRecipients = mail.to.filter((email) => !isValidEmail(email));
+  const cc = normalizeEmailList(mail.cc);
+  const invalidCc = cc.filter((email) => !isValidEmail(email));
+  const attachments = normalizeMailAttachments(mail.attachments);
 
   if (!mail.to.length) {
     const error = new Error("메일 수신처가 없습니다.");
@@ -389,6 +421,12 @@ async function sendEmailViaResend(mail) {
     throw error;
   }
 
+  if (invalidCc.length) {
+    const error = new Error(`올바르지 않은 참조 메일 주소입니다: ${invalidCc.join(", ")}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -398,9 +436,11 @@ async function sendEmailViaResend(mail) {
     body: JSON.stringify({
       from: config.from,
       to: mail.to,
+      cc: cc.length ? cc : undefined,
       subject: mail.subject,
       html: mail.html,
-      text: mail.text
+      text: mail.text,
+      attachments: attachments.length ? attachments : undefined
     })
   });
   const text = await response.text();
@@ -444,6 +484,7 @@ module.exports = async function screeningMail(request, response) {
       ok: true,
       message: "메일 발송이 완료되었습니다.",
       recipients: mail.to,
+      cc: normalizeEmailList(mail.cc),
       result
     });
   } catch (error) {

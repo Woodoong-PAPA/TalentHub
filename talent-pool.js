@@ -747,6 +747,7 @@ const state = {
   screeningMailPreview: null,
   screeningMailTemplates: {},
   screeningMailTemplatesUpdatedAt: "",
+  screeningMailCommonAttachments: [],
   screeningResultPanelOpen: false,
   screeningTimelineDrag: null,
   poolReturnScrollY: 0,
@@ -1936,6 +1937,31 @@ function normalizeScreeningCareerRecords(records = []) {
     .sort((a, b) => recentRecordSortValue(b).localeCompare(recentRecordSortValue(a)));
 }
 
+function getScreeningApplicantSearchFirmEmails(applicant = {}) {
+  const explicitEmails = normalizeEmailList(
+    applicant.searchFirmEmails ||
+    applicant.search_firm_emails ||
+    applicant.searchFirmEmail ||
+    applicant.search_firm_email ||
+    ""
+  );
+
+  if (explicitEmails.length) {
+    return explicitEmails;
+  }
+
+  const firmMember = state?.members?.find((member) =>
+    member.id === applicant.searchFirmMemberId ||
+    (applicant.sourceType === "search_firm" && member.id === applicant.registeredById)
+  );
+
+  return normalizeEmailList(firmMember?.email || "");
+}
+
+function getScreeningApplicantSearchFirmText(applicant = {}) {
+  return getScreeningApplicantSearchFirmEmails(applicant).join(", ");
+}
+
 function getScreeningCurrentProfileFromCareer(career = []) {
   const current = Array.isArray(career) ? career.find(hasAnyRecordValue) || {} : {};
   return {
@@ -1960,6 +1986,7 @@ function normalizeScreeningApplicant(applicant = {}) {
     name: String(applicant.name || "").trim(),
     sourceType,
     searchFirmMemberId: String(applicant.searchFirmMemberId || "").trim(),
+    searchFirmEmails: sourceType === "search_firm" ? getScreeningApplicantSearchFirmEmails(applicant) : [],
     registeredById: String(applicant.registeredById || "").trim(),
     registeredByName: String(applicant.registeredByName || "").trim(),
     company: String(applicant.company || currentProfile.company || "").trim(),
@@ -3342,6 +3369,7 @@ function persistState(options = {}) {
         selectedScreeningFolderId: state.selectedScreeningFolderId,
         screeningMailTemplates: state.screeningMailTemplates,
         screeningMailTemplatesUpdatedAt: state.screeningMailTemplatesUpdatedAt,
+        screeningMailCommonAttachments: state.screeningMailCommonAttachments,
         poolFilters: state.poolFilters,
         dashboardFilters: state.dashboardFilters,
         screeningFilters: state.screeningFilters,
@@ -3432,6 +3460,10 @@ function restorePersistedState() {
       persisted.screeningMailTemplatesUpdatedAt ||
       getScreeningMailTemplatesFreshnessText(state.screeningMailTemplates)
     ).trim();
+  }
+
+  if (Array.isArray(persisted.screeningMailCommonAttachments)) {
+    state.screeningMailCommonAttachments = normalizeScreeningMailAttachments(persisted.screeningMailCommonAttachments);
   }
 
   if (Array.isArray(persisted.members) && persisted.members.length) {
@@ -4392,6 +4424,7 @@ function buildScreeningMailTemplatesPayload() {
 
   return {
     templates,
+    commonAttachments: normalizeScreeningMailAttachments(state.screeningMailCommonAttachments),
     updatedAt: state.screeningMailTemplatesUpdatedAt,
     updatedBy: getCurrentActorName()
   };
@@ -4675,7 +4708,13 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
       screeningMailTemplatesSetting.payload.screeningMailTemplates ||
       {}
     );
+    const remoteCommonAttachments = normalizeScreeningMailAttachments(
+      screeningMailTemplatesSetting.payload.commonAttachments ||
+      screeningMailTemplatesSetting.payload.screeningMailCommonAttachments ||
+      []
+    );
     const localTemplates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
+    const localCommonAttachments = normalizeScreeningMailAttachments(state.screeningMailCommonAttachments);
     const remoteUpdatedAt = dateSortValue(
       screeningMailTemplatesSetting.payload.updatedAt ||
       getScreeningMailTemplatesFreshnessText(remoteTemplates) ||
@@ -4688,10 +4727,12 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
     if (localUpdatedAt > remoteUpdatedAt) {
       state.screeningMailTemplates = localTemplates;
+      state.screeningMailCommonAttachments = localCommonAttachments;
       screeningMailTemplatesLocalDirty = true;
       screeningMailTemplatesRemoteSyncAfterLoadPending = true;
     } else {
       state.screeningMailTemplates = remoteTemplates;
+      state.screeningMailCommonAttachments = remoteCommonAttachments;
       state.screeningMailTemplatesUpdatedAt = String(
         screeningMailTemplatesSetting.payload.updatedAt ||
         getScreeningMailTemplatesFreshnessText(remoteTemplates) ||
@@ -7303,14 +7344,15 @@ function screeningJdSummary(folder) {
   const text = getScreeningJdAnalysisText(folder);
 
   if (text) {
-    const requirements = extractJobFitRequirements(text)
+    const tasks = extractScreeningJdTaskLines(text);
+    const requirements = (tasks.length ? tasks : extractJobFitRequirements(text))
       .map((item) => item.replace(/[.。!?！？]+$/, "").trim())
       .filter(Boolean)
       .slice(0, 3);
     const roleName = folder?.positionName || folder?.title || "해당 포지션";
 
     if (requirements.length) {
-      return `${roleName}은 ${requirements.join(", ")} 역량을 바탕으로 채용 부서의 핵심 업무를 수행할 인재를 찾는 포지션입니다.`;
+      return `${roleName}은 ${requirements.join(", ")} 업무를 중심으로 수행할 인재를 찾는 포지션입니다.`;
     }
 
     return `${roleName}은 입력된 JD를 기준으로 직무 수행 경험과 조직 적합성을 함께 검토하는 포지션입니다.`;
@@ -7319,6 +7361,22 @@ function screeningJdSummary(folder) {
   return folder?.jdAttachment
     ? `${folder.jdAttachment.name} 첨부 파일 기준으로 JD 확인 필요`
     : "JD 요약 정보가 아직 입력되지 않았습니다.";
+}
+
+function extractScreeningJdTaskLines(text = "") {
+  const lines = splitNonEmptyLines(text)
+    .map((line) => line.replace(/^[-*•\d.)\s]+/, "").trim())
+    .filter(Boolean);
+  const headingPattern = /(수행\s*업무|담당\s*업무|주요\s*업무|업무\s*내용|responsibilit|what\s+you|role\s+and\s+responsibilit)/i;
+  const introPattern = /(조직\s*소개|회사\s*소개|부서\s*소개|팀\s*소개|비전|미션|about\s+us|organization|company\s+overview)/i;
+  const taskKeywordPattern = /(개발|설계|기획|운영|관리|분석|검증|평가|리딩|구축|개선|협업|수행|담당|연구|고도화|최적화|design|develop|manage|analy|lead|build|operate|evaluate|validate)/i;
+  const headingIndex = lines.findIndex((line) => headingPattern.test(line));
+  const scopedLines = headingIndex >= 0 ? lines.slice(headingIndex + 1, headingIndex + 8) : lines;
+
+  return scopedLines
+    .filter((line) => !headingPattern.test(line) && !introPattern.test(line))
+    .filter((line) => taskKeywordPattern.test(line) || line.length >= 16)
+    .slice(0, 4);
 }
 
 function renderScreeningJdModal(folder) {
@@ -7469,6 +7527,13 @@ function renderApplicantRegistrationModal(folder) {
 
   const sourceType = editingApplicant?.sourceType || (searchFirmMember ? "search_firm" : "direct");
   const selectedFirmId = editingApplicant?.searchFirmMemberId || (searchFirmMember ? currentMember?.id || "" : "");
+  const searchFirmEmailText = sourceType === "search_firm"
+    ? getScreeningApplicantSearchFirmText(editingApplicant || {
+      sourceType,
+      searchFirmMemberId: selectedFirmId,
+      registeredById: searchFirmMember ? currentMember?.id || "" : ""
+    }) || (searchFirmMember ? currentMember?.email || "" : "")
+    : "";
   const coreDisabled = isEditing && !coreEditable;
   const coreDisabledAttr = coreDisabled ? "disabled" : "";
   const contactDisabledAttr = contactEditable ? "" : "disabled";
@@ -7516,13 +7581,11 @@ function renderApplicantRegistrationModal(folder) {
                       <option value="search_firm" ${sourceType === "search_firm" ? "selected" : ""}>서치펌 등록</option>
                     </select>`}
               </div>
-              <div class="field">
-                <label for="screening-applicant-firm">서치펌 담당자</label>
-                ${searchFirmMember
-                  ? `<input type="hidden" name="searchFirmMemberId" value="${escapeHtml(selectedFirmId)}" /><input class="control-input" id="screening-applicant-firm" value="${escapeHtml([currentMember?.name, currentMember?.email].filter(Boolean).join(" · "))}" disabled />`
-                  : `<select class="control-select" id="screening-applicant-firm" name="searchFirmMemberId" ${coreDisabledAttr}>
-                      ${activeSearchFirmOptions(selectedFirmId)}
-                    </select>`}
+              <div class="field screening-search-firm-email-field ${sourceType === "search_firm" ? "" : "is-hidden"}">
+                <label for="screening-applicant-firm-emails">서치펌 담당자 이메일</label>
+                <input type="hidden" name="searchFirmMemberId" value="${escapeHtml(selectedFirmId)}" />
+                <textarea class="control-textarea compact-textarea" id="screening-applicant-firm-emails" name="searchFirmEmails" rows="2" placeholder="firm1@example.com, firm2@example.com" ${coreDisabledAttr}>${escapeHtml(searchFirmEmailText)}</textarea>
+                <span class="form-help">여러 명이면 줄바꿈, 쉼표, 세미콜론으로 구분합니다.</span>
               </div>
               <div class="field">
                 <label for="screening-applicant-birth-year">출생년도</label>
@@ -7621,6 +7684,7 @@ function renderBulkApplicantRegistrationModal(folder) {
   const searchFirmMember = isSearchFirmRole(currentMember);
   const sourceType = searchFirmMember ? "search_firm" : "direct";
   const selectedFirmId = searchFirmMember ? currentMember?.id || "" : "";
+  const searchFirmEmailText = searchFirmMember ? currentMember?.email || "" : "";
 
   return `
     <div class="trending-modal-backdrop" data-screening-bulk-applicant-backdrop>
@@ -7645,13 +7709,11 @@ function renderBulkApplicantRegistrationModal(folder) {
                       <option value="search_firm">서치펌 등록</option>
                     </select>`}
               </div>
-              <div class="field">
-                <label for="screening-bulk-firm">서치펌 담당자</label>
-                ${searchFirmMember
-                  ? `<input type="hidden" name="searchFirmMemberId" value="${escapeHtml(selectedFirmId)}" /><input class="control-input" id="screening-bulk-firm" value="${escapeHtml([currentMember?.name, currentMember?.email].filter(Boolean).join(" · "))}" disabled />`
-                  : `<select class="control-select" id="screening-bulk-firm" name="searchFirmMemberId">
-                      ${activeSearchFirmOptions(selectedFirmId)}
-                    </select>`}
+              <div class="field screening-search-firm-email-field ${sourceType === "search_firm" ? "" : "is-hidden"}">
+                <label for="screening-bulk-firm-emails">서치펌 담당자 이메일</label>
+                <input type="hidden" name="searchFirmMemberId" value="${escapeHtml(selectedFirmId)}" />
+                <textarea class="control-textarea compact-textarea" id="screening-bulk-firm-emails" name="searchFirmEmails" rows="2" placeholder="firm1@example.com, firm2@example.com">${escapeHtml(searchFirmEmailText)}</textarea>
+                <span class="form-help">여러 명이면 줄바꿈, 쉼표, 세미콜론으로 구분합니다.</span>
               </div>
             </div>
             <div class="field">
@@ -8028,6 +8090,30 @@ function renderApplicantActions(folder, applicant, step = state.screeningDetailS
   return `<div class="member-actions">${actions.join("")}</div>`;
 }
 
+function getScreeningFitSortValue(applicant = {}) {
+  const score = Number(applicant.fitScore || 0);
+
+  if (Number.isFinite(score) && score > 0) {
+    return score;
+  }
+
+  return {
+    A: 90,
+    B: 80,
+    C: 60,
+    D: 40,
+    E: 20
+  }[applicant.fitGrade] || 0;
+}
+
+function sortScreeningApplicantsByFit(applicants = []) {
+  return [...(Array.isArray(applicants) ? applicants : [])].sort((a, b) =>
+    getScreeningFitSortValue(b) - getScreeningFitSortValue(a) ||
+    dateSortValue(b.createdAt) - dateSortValue(a.createdAt) ||
+    String(a.name || "").localeCompare(String(b.name || ""), "ko")
+  );
+}
+
 function getScreeningStepApplicants(folder, step = state.screeningDetailStep) {
   const stageMap = {
     first: ["registered", "first_draft", "first_pass", "first_reject", "second_draft", "second_pass", "second_reject", "contact_requested", "contact_ready", "interview_mail_sent"],
@@ -8036,13 +8122,13 @@ function getScreeningStepApplicants(folder, step = state.screeningDetailStep) {
   };
   const stages = stageMap[step] || stageMap.first;
 
-  return folder.applicants.filter((applicant) => {
+  return sortScreeningApplicantsByFit(folder.applicants.filter((applicant) => {
     if (!canViewScreeningApplicant(applicant)) {
       return false;
     }
 
     return stages.includes(applicant.stage);
-  });
+  }));
 }
 
 function screeningStepCount(folder, step) {
@@ -8370,7 +8456,10 @@ function renderScreeningStructuredFitPanel(folder, applicant) {
 function renderScreeningStructuredApplicantCard(folder, applicant, step) {
   const firm = applicant.searchFirmMemberId ? state.members.find((member) => member.id === applicant.searchFirmMemberId) : null;
   const sourceLabel = applicant.sourceType === "search_firm" ? "서치펌" : "직접 등록";
-  const sourceMeta = firm ? `${firm.name} · ${firm.email}` : applicant.registeredByName || "-";
+  const firmEmails = getScreeningApplicantSearchFirmEmails(applicant);
+  const sourceMeta = applicant.sourceType === "search_firm"
+    ? firmEmails.join(", ") || firm?.email || applicant.registeredByName || "-"
+    : applicant.registeredByName || "-";
   const educationLines = getScreeningApplicantEducationLines(applicant);
   const careerLines = getScreeningApplicantCareerLines(applicant);
   const locked = isScreeningStageSnapshotLocked(applicant, step);
@@ -8411,6 +8500,15 @@ function renderScreeningStructuredApplicantCard(folder, applicant, step) {
       </div>
 
       ${renderScreeningApplicantSpecialBox(folder, applicant, step)}
+
+      ${step === "mail" && applicant.secondOpinion ? `
+        <div class="screening-structured-special screening-second-opinion-summary">
+          <strong>2차 평가의견</strong>
+          <div class="screening-structured-special-box">
+            ${splitNonEmptyLines(applicant.secondOpinion).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+          </div>
+        </div>
+      ` : ""}
 
       ${showReviewArea ? `
         <div class="screening-structured-review-row">
@@ -8810,6 +8908,8 @@ function renderScreeningAvailabilityTimeline(folder) {
       <div class="screening-selected-slots" data-screening-selected-slots>
         ${selectedSlots.map((slot) => `<input type="hidden" name="availabilitySlot" value="${inputValue(slot)}" data-screening-slot-input />`).join("")}
       </div>
+      <label class="screening-availability-preview-label" for="screening-panel-availability">선택된 면접 가능 시간대</label>
+      <textarea class="control-textarea screening-availability-preview-text" id="screening-panel-availability" name="availability" rows="3" readonly>${escapeHtml(previewText)}</textarea>
       <div class="screening-calendar-layout">
         <aside class="screening-mini-calendar">
           <div class="screening-calendar-nav">
@@ -8867,7 +8967,6 @@ function renderScreeningAvailabilityTimeline(folder) {
         </section>
       </div>
       <span class="form-help">날짜를 여러 개 선택할 수 있고, 오른쪽 시간표에서 클릭하거나 드래그해 가능한 시간대를 지정할 수 있습니다.</span>
-      <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="3" readonly>${escapeHtml(previewText)}</textarea>
     </div>
   `;
 }
@@ -8910,7 +9009,10 @@ function renderSecondScreeningPanel(folder) {
             <strong id="screening-result-modal-title">결과 발송</strong>
             <span>2차 합격 예정자와 면접위원, 가능 시간대를 확인한 뒤 저장합니다.</span>
           </div>
-          <button class="ghost-button compact-button" type="button" data-close-screening-result-panel>닫기</button>
+          <div class="screening-result-modal-actions">
+            <button class="primary-button compact-button" type="submit" form="screening-final-pass-form" ${([draftApplicants.length, passedApplicants.length].some(Boolean) && canFinalize) ? "" : "disabled"}>합격자 확정 및 저장</button>
+            <button class="ghost-button compact-button" type="button" data-close-screening-result-panel>닫기</button>
+          </div>
         </div>
         <div class="trending-modal-body">
           <form id="screening-final-pass-form">
@@ -8941,12 +9043,8 @@ function renderSecondScreeningPanel(folder) {
                 <div class="panel-header compact-panel-header">
                   <h5>면접 가능 시간대</h5>
                 </div>
-                <label class="screening-availability-preview-label" for="screening-panel-availability">메일 표기 문구</label>
                 ${renderScreeningAvailabilityTimeline(folder)}
               </section>
-            </div>
-            <div class="form-actions screening-final-form-actions">
-              <button class="primary-button" type="submit" ${([draftApplicants.length, passedApplicants.length].some(Boolean) && canFinalize) ? "" : "disabled"}>합격자 확정 및 저장</button>
             </div>
           </form>
         </div>
@@ -9049,6 +9147,11 @@ function renderScreeningMailPreviewModal() {
               <span class="form-help">여러 명에게 보낼 경우 줄바꿈, 쉼표, 세미콜론으로 구분합니다.</span>
             </div>
             <div class="field">
+              <label for="screening-mail-preview-cc">참조</label>
+              <textarea class="control-textarea" id="screening-mail-preview-cc" name="cc" rows="2">${escapeHtml(preview.ccText || "")}</textarea>
+              <span class="form-help">참조 수신자가 있으면 입력합니다. 여러 명이면 줄바꿈, 쉼표, 세미콜론으로 구분합니다.</span>
+            </div>
+            <div class="field">
               <label for="screening-mail-preview-subject">제목</label>
               <input class="control-input" id="screening-mail-preview-subject" name="subject" value="${inputValue(preview.subject || "")}" />
             </div>
@@ -9056,6 +9159,36 @@ function renderScreeningMailPreviewModal() {
               <label for="screening-mail-preview-body">본문</label>
               ${renderScreeningMailEditor(preview)}
             </div>
+            <section class="screening-mail-attachment-panel">
+              <div class="panel-header compact-panel-header">
+                <h5>첨부파일</h5>
+                <span class="small-pill">고정 ${state.screeningMailCommonAttachments.length}개</span>
+              </div>
+              <div class="screening-mail-attachment-grid">
+                <div class="field">
+                  <label for="screening-mail-common-attachments">고정 첨부파일 저장</label>
+                  <input class="control-input" id="screening-mail-common-attachments" name="commonAttachmentFiles" type="file" multiple />
+                  <span class="form-help">자주 보내는 첨부파일을 한 번 저장해두면 전화면접 안내 메일에 자동 포함됩니다.</span>
+                </div>
+                <div class="field">
+                  <label for="screening-mail-attachments">이번 메일 첨부파일</label>
+                  <input class="control-input" id="screening-mail-attachments" name="mailAttachments" type="file" multiple />
+                  <span class="form-help">이번 발송에만 추가할 파일을 선택합니다.</span>
+                </div>
+              </div>
+              <div class="screening-mail-common-list">
+                ${state.screeningMailCommonAttachments.length
+                  ? state.screeningMailCommonAttachments.map((attachment) => `
+                    <span class="screening-mail-common-file">
+                      <strong>${escapeHtml(attachment.name)}</strong>
+                      <small>${escapeHtml(formatFileSize(attachment.size))}</small>
+                      <button class="ghost-button compact-button" type="button" data-remove-screening-common-mail-attachment="${escapeHtml(attachment.id)}">삭제</button>
+                    </span>
+                  `).join("")
+                  : `<span class="muted-text">저장된 고정 첨부파일이 없습니다.</span>`}
+              </div>
+              <button class="ghost-button compact-button" type="button" data-save-screening-common-mail-attachments>고정 첨부 저장</button>
+            </section>
             <div class="form-actions">
               <button class="ghost-button" type="button" data-close-screening-mail-preview>취소</button>
               <button class="ghost-button" type="button" data-save-screening-mail-template>양식 저장</button>
@@ -25047,6 +25180,19 @@ function syncScreeningAvailabilityPreview(form) {
   updateScreeningCalendarSelectionClasses(form);
 }
 
+function syncScreeningSearchFirmEmailVisibility(form) {
+  if (!form) {
+    return;
+  }
+
+  const sourceValue = String(form.elements.sourceType?.value || "").trim();
+  const isSearchFirm = sourceValue === "search_firm";
+
+  form.querySelectorAll(".screening-search-firm-email-field").forEach((field) => {
+    field.classList.toggle("is-hidden", !isSearchFirm);
+  });
+}
+
 function rerenderScreeningAvailabilityPicker(form, nextDate) {
   const picker = form?.querySelector("[data-screening-timeline-picker]");
   const output = form?.querySelector("textarea[name='availability']");
@@ -25320,9 +25466,12 @@ async function registerScreeningApplicant(form) {
   const currentMember = getCurrentMember();
   const sourceType = isSearchFirmRole(currentMember) || getFormText(form, "sourceType") === "search_firm" ? "search_firm" : "direct";
   const searchFirmMemberId = sourceType === "search_firm" ? getFormText(form, "searchFirmMemberId") || (isSearchFirmRole() ? currentMember.id : "") : "";
+  const searchFirmEmails = sourceType === "search_firm"
+    ? normalizeEmailList(getFormText(form, "searchFirmEmails") || (isSearchFirmRole(currentMember) ? currentMember.email : ""))
+    : [];
 
-  if (sourceType === "search_firm" && !searchFirmMemberId) {
-    showToast("서치펌 등록 지원자는 서치펌 담당자를 선택해주세요.");
+  if (sourceType === "search_firm" && !searchFirmEmails.length) {
+    showToast("서치펌 담당자 이메일을 1개 이상 입력해주세요.");
     return;
   }
 
@@ -25353,6 +25502,7 @@ async function registerScreeningApplicant(form) {
       name,
       sourceType,
       searchFirmMemberId,
+      searchFirmEmails,
       registeredById: currentMember.id,
       registeredByName: currentMember.name,
       birthYear,
@@ -25372,7 +25522,7 @@ async function registerScreeningApplicant(form) {
     setProgressStatus(status, "직무적합도 분석을 완료한 뒤 등록합니다.", 58);
     await refreshScreeningApplicantFit(folder, applicant);
 
-    folder.applicants.unshift(applicant);
+    folder.applicants = sortScreeningApplicantsByFit([applicant, ...folder.applicants]);
     folder.updatedAt = getTodayDate();
     replaceScreeningFolder(folder);
     state.screeningApplicantModalOpen = false;
@@ -25412,9 +25562,12 @@ async function registerScreeningApplicantsBulk(form) {
   const searchFirmMemberId = sourceType === "search_firm"
     ? getFormText(form, "searchFirmMemberId") || (isSearchFirmRole(currentMember) ? currentMember.id : "")
     : "";
+  const searchFirmEmails = sourceType === "search_firm"
+    ? normalizeEmailList(getFormText(form, "searchFirmEmails") || (isSearchFirmRole(currentMember) ? currentMember.email : ""))
+    : [];
 
-  if (sourceType === "search_firm" && !searchFirmMemberId) {
-    showToast("서치펌 등록 지원자는 서치펌 담당자를 선택해주세요.");
+  if (sourceType === "search_firm" && !searchFirmEmails.length) {
+    showToast("서치펌 담당자 이메일을 1개 이상 입력해주세요.");
     return;
   }
 
@@ -25442,6 +25595,7 @@ async function registerScreeningApplicantsBulk(form) {
         name,
         sourceType,
         searchFirmMemberId,
+        searchFirmEmails,
         registeredById: currentMember.id,
         registeredByName: currentMember.name,
         birthYear,
@@ -25473,7 +25627,7 @@ async function registerScreeningApplicantsBulk(form) {
       return;
     }
 
-    folder.applicants = [...createdApplicants, ...folder.applicants];
+    folder.applicants = sortScreeningApplicantsByFit([...createdApplicants, ...folder.applicants]);
     folder.updatedAt = getTodayDate();
     replaceScreeningFolder(folder);
     state.screeningBulkApplicantModalOpen = false;
@@ -25523,15 +25677,19 @@ async function updateScreeningApplicant(form) {
     const currentMember = getCurrentMember();
     const sourceType = isSearchFirmRole(currentMember) || getFormText(form, "sourceType") === "search_firm" ? "search_firm" : "direct";
     const searchFirmMemberId = sourceType === "search_firm" ? getFormText(form, "searchFirmMemberId") || applicant.searchFirmMemberId || (isSearchFirmRole() ? currentMember.id : "") : "";
+    const searchFirmEmails = sourceType === "search_firm"
+      ? normalizeEmailList(getFormText(form, "searchFirmEmails") || applicant.searchFirmEmails || (isSearchFirmRole(currentMember) ? currentMember.email : ""))
+      : [];
 
-    if (sourceType === "search_firm" && !searchFirmMemberId) {
-      showToast("서치펌 등록 지원자는 서치펌 담당자를 선택해주세요.");
+    if (sourceType === "search_firm" && !searchFirmEmails.length) {
+      showToast("서치펌 담당자 이메일을 1개 이상 입력해주세요.");
       return;
     }
 
     applicant.name = name;
     applicant.sourceType = sourceType;
     applicant.searchFirmMemberId = searchFirmMemberId;
+    applicant.searchFirmEmails = searchFirmEmails;
     applicant.birthYear = getFormText(form, "birthYear");
     applicant.age = calculateAge(applicant.birthYear);
     applicant.nationality = getFormText(form, "nationality");
@@ -25572,6 +25730,7 @@ async function updateScreeningApplicant(form) {
 
   applicant.updatedAt = getTodayDate();
   folder.updatedAt = getTodayDate();
+  folder.applicants = sortScreeningApplicantsByFit(folder.applicants);
   replaceScreeningFolder(folder);
   state.screeningApplicantModalOpen = false;
   state.screeningEditingApplicantId = "";
@@ -25637,6 +25796,7 @@ async function saveScreeningPositionJd(form) {
     await refreshScreeningApplicantFit(folder, applicant);
   }
   folder.updatedAt = getTodayDate();
+  folder.applicants = sortScreeningApplicantsByFit(folder.applicants);
   replaceScreeningFolder(folder);
   state.screeningJdModalOpen = false;
   addAuditLog("Screening JD 수정", folder.title, "포지션 정보 및 JD 기준 변경");
@@ -25938,6 +26098,11 @@ function getSearchFirmMember(applicant) {
   return state.members.find((member) => member.id === applicant.searchFirmMemberId || member.id === applicant.registeredById) || null;
 }
 
+function getScreeningSearchFirmDisplayName(applicant) {
+  const firm = getSearchFirmMember(applicant);
+  return firm?.name || "서치펌 담당자";
+}
+
 function compactScreeningMailApplicant(applicant = {}) {
   return {
     id: String(applicant.id || "").trim(),
@@ -25947,7 +26112,8 @@ function compactScreeningMailApplicant(applicant = {}) {
     sourceType: String(applicant.sourceType || "").trim(),
     registeredById: String(applicant.registeredById || "").trim(),
     registeredByName: String(applicant.registeredByName || "").trim(),
-    searchFirmMemberId: String(applicant.searchFirmMemberId || "").trim()
+    searchFirmMemberId: String(applicant.searchFirmMemberId || "").trim(),
+    searchFirmEmails: getScreeningApplicantSearchFirmEmails(applicant)
   };
 }
 
@@ -26057,6 +26223,95 @@ const SCREENING_MAIL_VARIABLES = [
   { key: "{{면접위원메일}}", label: "면접위원 메일" }
 ];
 
+function normalizeScreeningMailAttachment(attachment = {}) {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+
+  const name = String(attachment.name || attachment.fileName || "").trim();
+  const dataUrl = String(attachment.dataUrl || attachment.data_url || "").trim();
+
+  if (!name || !dataUrl) {
+    return null;
+  }
+
+  return {
+    id: String(attachment.id || createId("screening-mail-attachment")).trim(),
+    name,
+    type: String(attachment.type || attachment.mimeType || "").trim(),
+    size: Number(attachment.size || 0) || 0,
+    dataUrl,
+    savedAt: String(attachment.savedAt || attachment.saved_at || "").trim(),
+    savedBy: String(attachment.savedBy || attachment.saved_by || "").trim()
+  };
+}
+
+function normalizeScreeningMailAttachments(attachments = []) {
+  return (Array.isArray(attachments) ? attachments : [])
+    .map(normalizeScreeningMailAttachment)
+    .filter(Boolean);
+}
+
+async function screeningMailAttachmentsFromFiles(files = []) {
+  const now = getTimestampText();
+  const actor = getCurrentActorName();
+  const attachments = await Promise.all([...(files || [])].map(async (file) => {
+    if (!file || !file.size) {
+      return null;
+    }
+
+    return normalizeScreeningMailAttachment({
+      id: createId("screening-mail-attachment"),
+      name: file.name,
+      type: file.type || "",
+      size: file.size,
+      dataUrl: await readFileAsDataUrl(file),
+      savedAt: now,
+      savedBy: actor
+    });
+  }));
+
+  return attachments.filter(Boolean);
+}
+
+async function saveScreeningCommonMailAttachmentsFromForm(form) {
+  const fileInput = form?.elements?.commonAttachmentFiles;
+  const files = Array.from(fileInput?.files || []);
+
+  if (!files.length) {
+    showToast("저장할 고정 첨부파일을 선택해주세요.");
+    return;
+  }
+
+  const nextAttachments = await screeningMailAttachmentsFromFiles(files);
+  const existing = normalizeScreeningMailAttachments(state.screeningMailCommonAttachments);
+  const existingKeys = new Set(existing.map((attachment) => `${attachment.name}:${attachment.size}`));
+
+  state.screeningMailCommonAttachments = normalizeScreeningMailAttachments([
+    ...existing,
+    ...nextAttachments.filter((attachment) => !existingKeys.has(`${attachment.name}:${attachment.size}`))
+  ]);
+  touchScreeningMailTemplates();
+  persistState();
+  syncScreeningMailTemplatesToSupabase().catch((error) => {
+    console.warn("Screening common mail attachments remote save failed.", error);
+  });
+  showToast("고정 첨부파일을 저장했습니다.");
+  renderScreening();
+}
+
+function removeScreeningCommonMailAttachment(attachmentId) {
+  state.screeningMailCommonAttachments = normalizeScreeningMailAttachments(state.screeningMailCommonAttachments)
+    .filter((attachment) => attachment.id !== attachmentId);
+  touchScreeningMailTemplates();
+  persistState();
+  syncScreeningMailTemplatesToSupabase().catch((error) => {
+    console.warn("Screening common mail attachments remote save failed.", error);
+  });
+  showToast("고정 첨부파일을 삭제했습니다.");
+  renderScreening();
+}
+
 function normalizeScreeningMailTemplate(template = {}, fallbackIndex = 0) {
   if (!template || typeof template !== "object") {
     return null;
@@ -26128,6 +26383,7 @@ function getScreeningMailVariableContext(preview) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, preview?.applicantId);
   const searchFirm = applicant ? getSearchFirmMember(applicant) : null;
+  const searchFirmEmails = applicant ? getScreeningApplicantSearchFirmEmails(applicant) : [];
   const interviewPanel = folder?.interviewPanel || {};
 
   return {
@@ -26135,7 +26391,7 @@ function getScreeningMailVariableContext(preview) {
     "{{지원자이메일}}": applicant?.email || "",
     "{{지원자전화번호}}": applicant?.phone || "",
     "{{서치펌담당자명}}": searchFirm?.name || "서치펌 담당자",
-    "{{서치펌이메일}}": searchFirm?.email || "",
+    "{{서치펌이메일}}": searchFirmEmails.join(", ") || searchFirm?.email || "",
     "{{채용부서명}}": folder?.department || "",
     "{{포지션명}}": folder?.positionName || folder?.title || "",
     "{{면접가능시간대}}": interviewPanel.availability || "",
@@ -26268,13 +26524,14 @@ function buildScreeningContactRequestPreview(applicantId) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
   const searchFirm = applicant ? getSearchFirmMember(applicant) : null;
+  const searchFirmEmails = applicant ? getScreeningApplicantSearchFirmEmails(applicant) : [];
 
   if (!folder || !applicant || applicant.sourceType !== "search_firm") {
     showToast("서치펌 등록 지원자에게만 연락처 요청 메일을 보낼 수 있습니다.");
     return null;
   }
 
-  if (!searchFirm?.email) {
+  if (!searchFirmEmails.length && !searchFirm?.email) {
     showToast("서치펌 담당자 이메일이 없습니다.");
     return null;
   }
@@ -26283,7 +26540,7 @@ function buildScreeningContactRequestPreview(applicantId) {
     type: "contact_request",
     applicantId: applicant.id,
     title: "서치펌 연락처 요청 메일",
-    recipientsText: searchFirm.email,
+    recipientsText: normalizeEmailList(searchFirmEmails.length ? searchFirmEmails : searchFirm.email).join("\n"),
     subject: "[TalentHub Screening] {{지원자명}} 연락처 정보 요청",
     body: [
       "{{서치펌담당자명}}님",
@@ -26319,13 +26576,13 @@ function buildPhoneInterviewPreview(applicantId) {
   }
 
   const interviewerEmails = normalizeEmailList(folder.interviewPanel.emails);
-  const recipients = normalizeEmailList([applicant.email, ...interviewerEmails]);
 
   return {
     type: "phone_interview",
     applicantId: applicant.id,
     title: "전화면접 안내 메일",
-    recipientsText: recipients.join("\n"),
+    recipientsText: normalizeEmailList(applicant.email).join("\n"),
+    ccText: interviewerEmails.join("\n"),
     subject: "[TalentHub Screening] {{지원자명}} 전화면접 안내",
     body: [
       "{{지원자명}}님",
@@ -26433,6 +26690,7 @@ function applyScreeningMailTemplateSelection(select) {
 
   const template = getScreeningMailTemplate(preview.type, select.value);
   const subjectInput = form.elements.subject;
+  const ccInput = form.elements.cc;
   const nameInput = form.elements.templateName;
 
   if (template) {
@@ -26457,7 +26715,9 @@ function applyScreeningMailTemplateSelection(select) {
     preview.subject = basePreview.subject;
     preview.body = basePreview.body;
     preview.bodyHtml = "";
+    preview.ccText = basePreview.ccText || "";
     if (subjectInput) subjectInput.value = preview.subject;
+    if (ccInput) ccInput.value = preview.ccText;
     setScreeningMailEditorContent(form, preview.body, "");
     if (nameInput) nameInput.value = "";
   }
@@ -26503,19 +26763,25 @@ async function sendScreeningMailPreview(form) {
   syncScreeningMailEditorFields(form);
   const formData = new FormData(form);
   const recipients = normalizeEmailList(formData.get("recipients"));
+  const cc = normalizeEmailList(formData.get("cc"));
   const subjectTemplate = String(formData.get("subject") || "").trim();
   const textTemplate = String(formData.get("body") || "").trim();
   const htmlTemplate = String(formData.get("bodyHtml") || "").trim();
   const subject = resolveScreeningMailVariables(subjectTemplate, preview);
   const text = resolveScreeningMailVariables(textTemplate, preview);
   const html = resolveScreeningMailHtmlVariables(htmlTemplate || screeningMailTextToHtml(textTemplate), preview);
+  const oneOffAttachments = await screeningMailAttachmentsFromFiles(form.elements.mailAttachments?.files || []);
+  const attachments = normalizeScreeningMailAttachments([
+    ...normalizeScreeningMailAttachments(state.screeningMailCommonAttachments),
+    ...oneOffAttachments
+  ]);
 
   if (!recipients.length || !subject || !text) {
     showToast("수신자, 제목, 본문을 모두 입력해주세요.");
     return;
   }
 
-  const mailOverride = { recipients, subject, text, html };
+  const mailOverride = { recipients, cc, subject, text, html, attachments };
 
   if (preview.type === "contact_request") {
     await requestScreeningContact(preview.applicantId, mailOverride);
@@ -26531,27 +26797,30 @@ async function requestScreeningContact(applicantId, mailOverride = null) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
   const searchFirm = applicant ? getSearchFirmMember(applicant) : null;
+  const searchFirmEmails = applicant ? getScreeningApplicantSearchFirmEmails(applicant) : [];
 
   if (!folder || !applicant || applicant.sourceType !== "search_firm") {
     showToast("서치펌 등록 지원자에게만 연락처 요청이 가능합니다.");
     return;
   }
 
-  if (!searchFirm?.email) {
+  if (!searchFirmEmails.length && !searchFirm?.email) {
     showToast("서치펌 담당자 이메일이 없습니다.");
     return;
   }
 
+  const recipients = normalizeEmailList(searchFirmEmails.length ? searchFirmEmails : searchFirm.email);
+
   await sendScreeningMail({
     action: "contact_request",
-    recipient: searchFirm.email,
-    searchFirmName: searchFirm.name,
+    recipient: recipients,
+    searchFirmName: searchFirm?.name || "서치펌 담당자",
     folder,
     applicant,
     mailOverride
   });
 
-  const sentRecipientText = normalizeEmailList(mailOverride?.recipients || searchFirm.email).join(", ") || searchFirm.email;
+  const sentRecipientText = normalizeEmailList(mailOverride?.recipients || mailOverride?.to || recipients).join(", ") || recipients.join(", ");
 
   applicant.stage = "contact_requested";
   applicant.contactRequest = {
@@ -26562,7 +26831,7 @@ async function requestScreeningContact(applicantId, mailOverride = null) {
   applicant.updatedAt = getTodayDate();
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
-  addAuditLog("Screening 연락처 요청 메일", applicant.name, searchFirm.email);
+  addAuditLog("Screening 연락처 요청 메일", applicant.name, sentRecipientText);
   persistState();
   showToast("서치펌 담당자에게 연락처 요청 메일을 발송했습니다.");
   renderScreening();
@@ -26591,19 +26860,22 @@ async function sendPhoneInterviewMail(applicantId, mailOverride = null) {
 
   await sendScreeningMail({
     action: "phone_interview",
-    recipients: [applicant.email, ...interviewerEmails],
+    recipients: [applicant.email],
+    cc: interviewerEmails,
     folder,
     applicant,
     interviewPanel: folder.interviewPanel,
     mailOverride
   });
 
-  const sentRecipientText = normalizeEmailList(mailOverride?.recipients || [applicant.email, ...interviewerEmails]).join(", ");
+  const sentRecipientText = normalizeEmailList(mailOverride?.recipients || mailOverride?.to || [applicant.email]).join(", ");
+  const sentCcText = normalizeEmailList(mailOverride?.cc || interviewerEmails).join(", ");
 
   applicant.stage = "interview_mail_sent";
   applicant.phoneInterviewMail = {
     sentAt: getTimestampText(),
     recipients: sentRecipientText,
+    cc: sentCcText,
     by: getCurrentActorName()
   };
   applicant.updatedAt = getTodayDate();
@@ -28937,6 +29209,23 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-save-screening-common-mail-attachments]")) {
+      const form = event.target.closest("#screening-mail-preview-form");
+      if (form) {
+        saveScreeningCommonMailAttachmentsFromForm(form).catch((error) => {
+          console.warn(error);
+          showToast(error.message || "고정 첨부파일 저장 중 오류가 발생했습니다.");
+        });
+      }
+      return;
+    }
+
+    const removeCommonAttachmentButton = event.target.closest("[data-remove-screening-common-mail-attachment]");
+    if (removeCommonAttachmentButton) {
+      removeScreeningCommonMailAttachment(removeCommonAttachmentButton.dataset.removeScreeningCommonMailAttachment);
+      return;
+    }
+
     const mailEditorCommandButton = event.target.closest("[data-screening-mail-command]");
     if (mailEditorCommandButton) {
       applyScreeningMailEditorCommand(mailEditorCommandButton);
@@ -30375,6 +30664,11 @@ function bindEvents() {
 
     if (event.target.id === "screening-business-unit-filter") {
       updateScreeningBusinessUnitFilter(event.target.value);
+      return;
+    }
+
+    if (event.target.id === "screening-applicant-source" || event.target.id === "screening-bulk-source") {
+      syncScreeningSearchFirmEmailVisibility(event.target.closest("form"));
       return;
     }
 

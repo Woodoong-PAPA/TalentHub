@@ -2660,7 +2660,8 @@ tr:last-child td {
 }
 
 @media (max-width: 640px) {
-  .screening-mail-template-row {
+  .screening-mail-template-row,
+  .screening-mail-attachment-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -2669,6 +2670,50 @@ tr:last-child td {
   min-height: 280px;
   line-height: 1.65;
   white-space: pre-wrap;
+}
+
+.screening-mail-attachment-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--surface-muted);
+}
+
+.screening-mail-attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.screening-mail-common-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.screening-mail-common-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 8px 6px 12px;
+  background: #fff;
+}
+
+.screening-mail-common-file strong {
+  max-width: 220px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screening-mail-common-file small {
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .sr-only {
@@ -2753,6 +2798,17 @@ tr:last-child td {
 }
 
 .trending-modal.screening-applicant-detail-modal {
+  width: min(1880px, calc(100vw - 32px));
+  height: min(1120px, calc(100vh - 32px));
+  min-width: min(1320px, calc(100vw - 24px));
+  min-height: min(760px, calc(100vh - 24px));
+  max-width: none;
+  max-height: none;
+  resize: both;
+  overflow: hidden;
+}
+
+.trending-modal.screening-result-modal {
   width: min(1880px, calc(100vw - 32px));
   height: min(1120px, calc(100vh - 32px));
   min-width: min(1320px, calc(100vw - 24px));
@@ -3755,7 +3811,7 @@ tr:last-child td {
 
 .screening-result-send-grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(220px, 0.3fr) minmax(0, 0.7fr);
   gap: 12px;
   margin-top: 12px;
 }
@@ -3812,11 +3868,12 @@ tr:last-child td {
 }
 
 .screening-result-modal {
-  width: min(980px, calc(100vw - 32px));
-  min-width: min(720px, calc(100vw - 24px));
-  min-height: min(560px, calc(100vh - 24px));
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
+  width: min(98vw, 1860px);
+  height: min(96vh, 1180px);
+  min-width: min(1040px, calc(100vw - 18px));
+  min-height: min(820px, calc(100vh - 18px));
+  max-width: none;
+  max-height: none;
   resize: both;
   overflow: hidden;
 }
@@ -3839,7 +3896,8 @@ tr:last-child td {
   overflow: auto;
 }
 
-.screening-applicant-detail-modal {
+.screening-applicant-detail-modal,
+.screening-result-modal {
   width: min(98vw, 1860px);
   height: min(96vh, 1180px);
   min-width: min(1040px, calc(100vw - 18px));
@@ -3863,6 +3921,14 @@ tr:last-child td {
 
 .screening-final-form-actions {
   margin-top: 18px;
+}
+
+.screening-result-modal-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .compact-panel-header {
@@ -3896,6 +3962,10 @@ tr:last-child td {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.screening-availability-preview-text {
+  min-height: 76px;
 }
 
 .screening-timeline-picker {
