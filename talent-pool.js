@@ -1870,7 +1870,8 @@ function normalizeInterviewPanelMembers(panel = {}) {
 function normalizeInterviewPanelSlots(panel = {}) {
   return (Array.isArray(panel.slots) ? panel.slots : [])
     .map((slot) => String(slot || "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => dateSortValue(a) - dateSortValue(b) || a.localeCompare(b));
 }
 
 function normalizeScreeningEducationRecords(records = []) {
@@ -8179,11 +8180,169 @@ function formatScreeningAvailabilitySlot(slot) {
   return `${year}.${month}.${day} ${hours}:${minutes}`;
 }
 
-function buildScreeningAvailabilityText(slots = [], fallback = "") {
-  const slotLines = slots
-    .map(formatScreeningAvailabilitySlot)
+const SCREENING_CALENDAR_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+function parseScreeningDateValue(value = "") {
+  const text = normalizeScreeningTimelineDate(value);
+  const [year, month, day] = text.split("-").map(Number);
+
+  return new Date(year, month - 1, day);
+}
+
+function formatDateInputValue(date) {
+  const target = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const year = target.getFullYear();
+  const month = String(target.getMonth() + 1).padStart(2, "0");
+  const day = String(target.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function addDaysToScreeningDate(value, days) {
+  const date = parseScreeningDateValue(value);
+  date.setDate(date.getDate() + Number(days || 0));
+  return formatDateInputValue(date);
+}
+
+function addMonthsToScreeningDate(value, months) {
+  const date = parseScreeningDateValue(value);
+  date.setMonth(date.getMonth() + Number(months || 0), 1);
+  return formatDateInputValue(date);
+}
+
+function getScreeningWeekDates(anchorDate) {
+  const anchor = parseScreeningDateValue(anchorDate);
+  const start = new Date(anchor);
+  start.setDate(anchor.getDate() - anchor.getDay());
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return formatDateInputValue(date);
+  });
+}
+
+function getScreeningCalendarDates(anchorDate) {
+  const anchor = parseScreeningDateValue(anchorDate);
+  const firstDay = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const start = new Date(firstDay);
+  start.setDate(firstDay.getDate() - firstDay.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return formatDateInputValue(date);
+  });
+}
+
+function formatScreeningDateLabel(value, options = {}) {
+  const date = parseScreeningDateValue(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const weekday = SCREENING_CALENDAR_WEEKDAYS[date.getDay()] || "";
+
+  if (options.short) {
+    return `${month}.${day}(${weekday})`;
+  }
+
+  return `${year}.${month}.${day}(${weekday})`;
+}
+
+function formatScreeningHourLabel(hour) {
+  const normalizedHour = normalizeScreeningTimelineHour(hour, 9);
+  return `${String(normalizedHour).padStart(2, "0")}:00`;
+}
+
+function buildScreeningSlotValue(dateValue, hour) {
+  return `${normalizeScreeningTimelineDate(dateValue)}T${String(normalizeScreeningTimelineHour(hour, 9)).padStart(2, "0")}:00`;
+}
+
+function getScreeningSlotParts(slot) {
+  const value = String(slot || "").trim();
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):/);
+
+  if (match) {
+    return {
+      date: match[1],
+      hour: normalizeScreeningTimelineHour(match[2], 9)
+    };
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return {
+    date: formatDateInputValue(date),
+    hour: normalizeScreeningTimelineHour(date.getHours(), 9)
+  };
+}
+
+function normalizeScreeningSlotValues(slots = []) {
+  return [...new Set((Array.isArray(slots) ? slots : [])
+    .map(getScreeningSlotParts)
     .filter(Boolean)
-    .map((slot) => `- ${slot}`);
+    .map((slot) => buildScreeningSlotValue(slot.date, slot.hour)))]
+    .sort((a, b) => dateSortValue(a) - dateSortValue(b) || a.localeCompare(b));
+}
+
+function groupScreeningAvailabilitySlots(slots = []) {
+  const grouped = new Map();
+
+  normalizeScreeningSlotValues(slots).forEach((slot) => {
+    const parts = getScreeningSlotParts(slot);
+
+    if (!parts) {
+      return;
+    }
+
+    const hours = grouped.get(parts.date) || [];
+    hours.push(parts.hour);
+    grouped.set(parts.date, hours);
+  });
+
+  const lines = [];
+
+  [...grouped.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([date, hours]) => {
+      const sortedHours = [...new Set(hours)].sort((a, b) => a - b);
+      let start = null;
+      let previous = null;
+
+      sortedHours.forEach((hour, index) => {
+        if (start === null) {
+          start = hour;
+          previous = hour;
+        }
+
+        const nextHour = sortedHours[index + 1];
+
+        if (nextHour === previous + 1) {
+          previous = nextHour;
+          return;
+        }
+
+        lines.push(`${formatScreeningDateLabel(date)} ${formatScreeningHourLabel(start)}~${formatScreeningHourLabel(previous + 1)}`);
+        start = null;
+        previous = null;
+      });
+    });
+
+  return lines;
+}
+
+function buildScreeningAvailabilityText(slots = [], fallback = "") {
+  const groupedLines = groupScreeningAvailabilitySlots(slots);
+  const slotLines = groupedLines.length
+    ? groupedLines.map((slot) => `- ${slot}`)
+    : slots
+      .map(formatScreeningAvailabilitySlot)
+      .filter(Boolean)
+      .map((slot) => `- ${slot}`);
 
   return slotLines.length ? slotLines.join("\n") : String(fallback || "").trim();
 }
@@ -8205,13 +8364,16 @@ function normalizeScreeningTimelineHour(value, fallback) {
 function getScreeningTimelineState(folder = {}) {
   const panel = folder.interviewPanel || {};
   const date = normalizeScreeningTimelineDate(panel.timelineDate);
-  const startHour = normalizeScreeningTimelineHour(panel.timelineStartHour, 10);
+  const slots = normalizeScreeningSlotValues(normalizeInterviewPanelSlots(panel));
+  const firstSlot = getScreeningSlotParts(slots[0]);
+  const startHour = normalizeScreeningTimelineHour(panel.timelineStartHour || firstSlot?.hour, 10);
   const endHour = Math.max(startHour + 1, normalizeScreeningTimelineHour(panel.timelineEndHour, 14));
 
   return {
-    date,
+    date: firstSlot?.date || date,
     startHour: Math.min(startHour, 19),
-    endHour: Math.min(endHour, 20)
+    endHour: Math.min(endHour, 20),
+    slots
   };
 }
 
@@ -8247,6 +8409,87 @@ function renderScreeningAvailabilityTimeline(folder) {
         }).join("")}
       </div>
       <span class="form-help">타임라인을 마우스로 드래그해 가능 시간 범위를 선택하세요.</span>
+      <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="3" readonly>${escapeHtml(previewText)}</textarea>
+    </div>
+  `;
+}
+
+function renderScreeningAvailabilityTimeline(folder) {
+  const timeline = getScreeningTimelineState(folder);
+  const selectedSlots = normalizeScreeningSlotValues(timeline.slots);
+  const selectedSlotSet = new Set(selectedSlots);
+  const previewText = buildScreeningAvailabilityText(selectedSlots, "");
+  const anchorDate = normalizeScreeningTimelineDate(timeline.date);
+  const anchor = parseScreeningDateValue(anchorDate);
+  const monthDates = getScreeningCalendarDates(anchorDate);
+  const weekDates = getScreeningWeekDates(anchorDate);
+  const monthTitle = `${anchor.getFullYear()}년 ${anchor.getMonth() + 1}월`;
+
+  return `
+    <div class="screening-timeline-picker" data-screening-timeline-picker>
+      <input type="hidden" name="timelineDate" value="${inputValue(anchorDate)}" data-screening-timeline-date />
+      <input type="hidden" name="timelineStartHour" value="${escapeHtml(timeline.startHour)}" data-screening-timeline-start />
+      <input type="hidden" name="timelineEndHour" value="${escapeHtml(timeline.endHour)}" data-screening-timeline-end />
+      <div class="screening-selected-slots" data-screening-selected-slots>
+        ${selectedSlots.map((slot) => `<input type="hidden" name="availabilitySlot" value="${inputValue(slot)}" data-screening-slot-input />`).join("")}
+      </div>
+      <div class="screening-calendar-layout">
+        <aside class="screening-mini-calendar">
+          <div class="screening-calendar-nav">
+            <button class="icon-button" type="button" data-screening-calendar-shift="-1" aria-label="이전 달">‹</button>
+            <strong>${escapeHtml(monthTitle)}</strong>
+            <button class="icon-button" type="button" data-screening-calendar-shift="1" aria-label="다음 달">›</button>
+          </div>
+          <div class="screening-calendar-weekdays">
+            ${SCREENING_CALENDAR_WEEKDAYS.map((weekday) => `<span>${escapeHtml(weekday)}</span>`).join("")}
+          </div>
+          <div class="screening-calendar-days">
+            ${monthDates.map((dateValue) => {
+              const date = parseScreeningDateValue(dateValue);
+              const isCurrentMonth = date.getMonth() === anchor.getMonth();
+              const isActive = dateValue === anchorDate;
+              const hasSlot = selectedSlots.some((slot) => slot.startsWith(`${dateValue}T`));
+              return `
+                <button class="screening-calendar-day ${isCurrentMonth ? "" : "is-muted"} ${isActive ? "is-active" : ""} ${hasSlot ? "has-slot" : ""}"
+                  type="button"
+                  data-screening-calendar-date="${escapeHtml(dateValue)}">
+                  <span>${date.getDate()}</span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+        </aside>
+        <section class="screening-week-scheduler">
+          <div class="screening-week-toolbar">
+            <button class="icon-button" type="button" data-screening-week-shift="-7" aria-label="이전 주">‹</button>
+            <strong>${escapeHtml(formatScreeningDateLabel(weekDates[0], { short: true }))} ~ ${escapeHtml(formatScreeningDateLabel(weekDates[6], { short: true }))}</strong>
+            <button class="icon-button" type="button" data-screening-week-shift="7" aria-label="다음 주">›</button>
+          </div>
+          <div class="screening-week-grid" data-screening-week-grid aria-label="면접 가능 시간대 선택">
+            <div class="screening-week-corner"></div>
+            ${weekDates.map((dateValue) => `
+              <div class="screening-week-day ${dateValue === anchorDate ? "is-active" : ""}">
+                <span>${escapeHtml(formatScreeningDateLabel(dateValue, { short: true }))}</span>
+              </div>
+            `).join("")}
+            ${SCREENING_TIMELINE_HOURS.map((hour) => `
+              <div class="screening-week-hour">${escapeHtml(formatScreeningHourLabel(hour))}</div>
+              ${weekDates.map((dateValue) => {
+                const slotValue = buildScreeningSlotValue(dateValue, hour);
+                return `
+                  <button class="screening-time-cell ${selectedSlotSet.has(slotValue) ? "is-selected" : ""}"
+                    type="button"
+                    data-screening-time-cell
+                    data-screening-slot-date="${escapeHtml(dateValue)}"
+                    data-screening-slot-hour="${escapeHtml(hour)}"
+                    aria-label="${escapeHtml(`${formatScreeningDateLabel(dateValue)} ${formatScreeningHourLabel(hour)}`)}"></button>
+                `;
+              }).join("")}
+            `).join("")}
+          </div>
+        </section>
+      </div>
+      <span class="form-help">날짜를 여러 개 선택할 수 있고, 오른쪽 시간표에서 클릭하거나 드래그해 가능한 시간대를 지정할 수 있습니다.</span>
       <textarea class="control-textarea" id="screening-panel-availability" name="availability" rows="3" readonly>${escapeHtml(previewText)}</textarea>
     </div>
   `;
@@ -23645,6 +23888,153 @@ function updateScreeningTimelineSelection(cell, options = {}) {
   syncScreeningAvailabilityPreview(form);
 }
 
+function getScreeningAvailabilitySlotsFromForm(form) {
+  return normalizeScreeningSlotValues([...(form?.querySelectorAll("input[name='availabilitySlot']") || [])]
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean));
+}
+
+function setScreeningAvailabilitySlotsForForm(form, slots = []) {
+  const holder = form?.querySelector("[data-screening-selected-slots]");
+
+  if (!holder) {
+    return;
+  }
+
+  holder.innerHTML = normalizeScreeningSlotValues(slots)
+    .map((slot) => `<input type="hidden" name="availabilitySlot" value="${inputValue(slot)}" data-screening-slot-input />`)
+    .join("");
+}
+
+function updateScreeningCalendarSelectionClasses(form) {
+  const selectedSlots = getScreeningAvailabilitySlotsFromForm(form);
+  const selectedSlotSet = new Set(selectedSlots);
+  const selectedDateSet = new Set(selectedSlots.map((slot) => getScreeningSlotParts(slot)?.date).filter(Boolean));
+  const activeDate = normalizeScreeningTimelineDate(form?.querySelector("[data-screening-timeline-date]")?.value);
+
+  form?.querySelectorAll("[data-screening-time-cell]").forEach((cell) => {
+    const slot = buildScreeningSlotValue(cell.dataset.screeningSlotDate, cell.dataset.screeningSlotHour);
+    cell.classList.toggle("is-selected", selectedSlotSet.has(slot));
+  });
+
+  form?.querySelectorAll("[data-screening-calendar-date]").forEach((button) => {
+    const dateValue = normalizeScreeningTimelineDate(button.dataset.screeningCalendarDate);
+    button.classList.toggle("is-active", dateValue === activeDate);
+    button.classList.toggle("has-slot", selectedDateSet.has(dateValue));
+  });
+
+  form?.querySelectorAll(".screening-week-day").forEach((day) => {
+    const label = day.textContent || "";
+    day.classList.toggle("is-active", label.includes(formatScreeningDateLabel(activeDate, { short: true })));
+  });
+}
+
+function syncScreeningAvailabilityPreview(form) {
+  const output = form?.querySelector("textarea[name='availability']");
+
+  if (!output) {
+    return;
+  }
+
+  const slots = getScreeningAvailabilitySlotsFromForm(form);
+  output.value = slots.length ? buildScreeningAvailabilityText(slots, "") : "";
+  updateScreeningCalendarSelectionClasses(form);
+}
+
+function rerenderScreeningAvailabilityPicker(form, nextDate) {
+  const picker = form?.querySelector("[data-screening-timeline-picker]");
+  const output = form?.querySelector("textarea[name='availability']");
+
+  if (!picker) {
+    return;
+  }
+
+  const folder = {
+    interviewPanel: {
+      slots: getScreeningAvailabilitySlotsFromForm(form),
+      availability: output?.value || "",
+      timelineDate: normalizeScreeningTimelineDate(nextDate)
+    }
+  };
+
+  picker.outerHTML = renderScreeningAvailabilityTimeline(folder);
+}
+
+function getScreeningDateRange(startDate, endDate) {
+  const start = normalizeScreeningTimelineDate(startDate);
+  const end = normalizeScreeningTimelineDate(endDate);
+  const direction = dateSortValue(start) <= dateSortValue(end) ? 1 : -1;
+  const dates = [];
+  let cursor = start;
+
+  while (true) {
+    dates.push(cursor);
+
+    if (cursor === end) {
+      break;
+    }
+
+    cursor = addDaysToScreeningDate(cursor, direction);
+  }
+
+  return direction === 1 ? dates : dates.reverse();
+}
+
+function updateScreeningTimelineSelection(cell, options = {}) {
+  const form = cell?.closest("#screening-final-pass-form");
+
+  if (!form) {
+    return;
+  }
+
+  const dateValue = normalizeScreeningTimelineDate(cell.dataset.screeningSlotDate);
+  const hour = normalizeScreeningTimelineHour(cell.dataset.screeningSlotHour, 9);
+  const drag = state.screeningTimelineDrag || {};
+  const startDate = normalizeScreeningTimelineDate(drag.startDate || dateValue);
+  const startHour = normalizeScreeningTimelineHour(drag.startHour || hour, hour);
+  const action = drag.action || (cell.classList.contains("is-selected") ? "remove" : "add");
+  const dates = getScreeningDateRange(startDate, dateValue);
+  const start = Math.min(startHour, hour);
+  const end = Math.max(startHour, hour);
+  const nextSlots = new Set(getScreeningAvailabilitySlotsFromForm(form));
+
+  dates.forEach((date) => {
+    for (let currentHour = start; currentHour <= end; currentHour += 1) {
+      const slot = buildScreeningSlotValue(date, currentHour);
+
+      if (action === "remove") {
+        nextSlots.delete(slot);
+      } else {
+        nextSlots.add(slot);
+      }
+    }
+  });
+
+  setScreeningAvailabilitySlotsForForm(form, [...nextSlots]);
+
+  const dateInput = form.querySelector("[data-screening-timeline-date]");
+  const startInput = form.querySelector("[data-screening-timeline-start]");
+  const endInput = form.querySelector("[data-screening-timeline-end]");
+
+  if (dateInput) {
+    dateInput.value = dateValue;
+  }
+
+  if (startInput) {
+    startInput.value = String(Math.min(start, 19));
+  }
+
+  if (endInput) {
+    endInput.value = String(Math.min(end + 1, 20));
+  }
+
+  if (options.startDrag) {
+    state.screeningTimelineDrag = { startDate: dateValue, startHour: hour, action };
+  }
+
+  syncScreeningAvailabilityPreview(form);
+}
+
 async function attachmentFromFile(file) {
   if (!file || !file.size) {
     return null;
@@ -27525,6 +27915,31 @@ function bindEvents() {
       return;
     }
 
+    const calendarShiftButton = event.target.closest("[data-screening-calendar-shift]");
+    if (calendarShiftButton) {
+      const form = calendarShiftButton.closest("#screening-final-pass-form");
+      const currentDate = form?.querySelector("[data-screening-timeline-date]")?.value || getTodayDate();
+      rerenderScreeningAvailabilityPicker(form, addMonthsToScreeningDate(currentDate, Number(calendarShiftButton.dataset.screeningCalendarShift)));
+      return;
+    }
+
+    const weekShiftButton = event.target.closest("[data-screening-week-shift]");
+    if (weekShiftButton) {
+      const form = weekShiftButton.closest("#screening-final-pass-form");
+      const currentDate = form?.querySelector("[data-screening-timeline-date]")?.value || getTodayDate();
+      rerenderScreeningAvailabilityPicker(form, addDaysToScreeningDate(currentDate, Number(weekShiftButton.dataset.screeningWeekShift)));
+      return;
+    }
+
+    const calendarDateButton = event.target.closest("[data-screening-calendar-date]");
+    if (calendarDateButton) {
+      rerenderScreeningAvailabilityPicker(
+        calendarDateButton.closest("#screening-final-pass-form"),
+        calendarDateButton.dataset.screeningCalendarDate
+      );
+      return;
+    }
+
     const removeSlotButton = event.target.closest("[data-remove-screening-slot]");
     if (removeSlotButton) {
       removeScreeningDynamicRow(removeSlotButton, "[data-screening-slot-row]");
@@ -28663,7 +29078,11 @@ function bindEvents() {
     }
 
     event.preventDefault();
-    state.screeningTimelineDrag = { startHour: Number(cell.dataset.screeningTimeCell) };
+    state.screeningTimelineDrag = {
+      startDate: cell.dataset.screeningSlotDate,
+      startHour: Number(cell.dataset.screeningSlotHour),
+      action: cell.classList.contains("is-selected") ? "remove" : "add"
+    };
     updateScreeningTimelineSelection(cell, { startDrag: true });
   });
 
