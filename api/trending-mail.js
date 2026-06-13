@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
 };
 const LEGACY_SUBJECT_PREFIX = "[TalentHub] 오늘의 화제 인물";
 const APP_BASE_URL = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "https://talentpool-dx.com";
-const DEFAULT_TRENDING_MAIL_FROM = "TA@talentpool-dx.com";
+const DEFAULT_TRENDING_MAIL_FROM = "Talent Pool <TA@talentpool-dx.com>";
 
 function loadLocalEnv() {
   try {
