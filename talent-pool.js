@@ -8249,13 +8249,45 @@ function formatScreeningDateLabel(value, options = {}) {
   return `${year}.${month}.${day}(${weekday})`;
 }
 
+const SCREENING_SLOT_INTERVAL_MINUTES = 30;
+const SCREENING_DAY_START_MINUTE = 8 * 60;
+const SCREENING_DAY_END_MINUTE = 20 * 60;
+
+function normalizeScreeningTimelineMinute(value, fallback = 9 * 60) {
+  const rawValue = Number(value);
+  const rawFallback = Number(fallback);
+  const source = Number.isFinite(rawValue) ? rawValue : rawFallback;
+  const minutes = Number.isFinite(source)
+    ? source <= 24
+      ? source * 60
+      : source
+    : 9 * 60;
+  const rounded = Math.round(minutes / SCREENING_SLOT_INTERVAL_MINUTES) * SCREENING_SLOT_INTERVAL_MINUTES;
+
+  return Math.max(SCREENING_DAY_START_MINUTE, Math.min(SCREENING_DAY_END_MINUTE, rounded));
+}
+
+function normalizeScreeningSlotStartMinute(value, fallback = 9 * 60) {
+  return Math.min(
+    normalizeScreeningTimelineMinute(value, fallback),
+    SCREENING_DAY_END_MINUTE - SCREENING_SLOT_INTERVAL_MINUTES
+  );
+}
+
 function formatScreeningHourLabel(hour) {
-  const normalizedHour = normalizeScreeningTimelineHour(hour, 9);
-  return `${String(normalizedHour).padStart(2, "0")}:00`;
+  const minuteValue = normalizeScreeningTimelineMinute(hour, 9 * 60);
+  const hours = Math.floor(minuteValue / 60);
+  const minutes = minuteValue % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function buildScreeningSlotValue(dateValue, hour) {
-  return `${normalizeScreeningTimelineDate(dateValue)}T${String(normalizeScreeningTimelineHour(hour, 9)).padStart(2, "0")}:00`;
+  const minuteValue = normalizeScreeningSlotStartMinute(hour, 9 * 60);
+  const hours = Math.floor(minuteValue / 60);
+  const minutes = minuteValue % 60;
+
+  return `${normalizeScreeningTimelineDate(dateValue)}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function getScreeningSlotParts(slot) {
@@ -8263,9 +8295,11 @@ function getScreeningSlotParts(slot) {
   const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):/);
 
   if (match) {
+    const minuteValue = normalizeScreeningSlotStartMinute((Number(match[2]) * 60) + Number(String(value).slice(14, 16) || 0), 9 * 60);
     return {
       date: match[1],
-      hour: normalizeScreeningTimelineHour(match[2], 9)
+      hour: minuteValue,
+      minute: minuteValue
     };
   }
 
@@ -8277,7 +8311,8 @@ function getScreeningSlotParts(slot) {
 
   return {
     date: formatDateInputValue(date),
-    hour: normalizeScreeningTimelineHour(date.getHours(), 9)
+    hour: normalizeScreeningSlotStartMinute(date.getHours() * 60 + date.getMinutes(), 9 * 60),
+    minute: normalizeScreeningSlotStartMinute(date.getHours() * 60 + date.getMinutes(), 9 * 60)
   };
 }
 
@@ -8321,12 +8356,12 @@ function groupScreeningAvailabilitySlots(slots = []) {
 
         const nextHour = sortedHours[index + 1];
 
-        if (nextHour === previous + 1) {
+        if (nextHour === previous + SCREENING_SLOT_INTERVAL_MINUTES) {
           previous = nextHour;
           return;
         }
 
-        lines.push(`${formatScreeningDateLabel(date)} ${formatScreeningHourLabel(start)}~${formatScreeningHourLabel(previous + 1)}`);
+        lines.push(`${formatScreeningDateLabel(date)} ${formatScreeningHourLabel(start)}~${formatScreeningHourLabel(previous + SCREENING_SLOT_INTERVAL_MINUTES)}`);
         start = null;
         previous = null;
       });
@@ -8347,7 +8382,10 @@ function buildScreeningAvailabilityText(slots = [], fallback = "") {
   return slotLines.length ? slotLines.join("\n") : String(fallback || "").trim();
 }
 
-const SCREENING_TIMELINE_HOURS = Array.from({ length: 13 }, (_, index) => index + 8);
+const SCREENING_TIMELINE_HOURS = Array.from(
+  { length: (SCREENING_DAY_END_MINUTE - SCREENING_DAY_START_MINUTE) / SCREENING_SLOT_INTERVAL_MINUTES },
+  (_, index) => SCREENING_DAY_START_MINUTE + (index * SCREENING_SLOT_INTERVAL_MINUTES)
+);
 
 function normalizeScreeningTimelineDate(value = "") {
   const text = String(value || "").trim();
@@ -8355,10 +8393,7 @@ function normalizeScreeningTimelineDate(value = "") {
 }
 
 function normalizeScreeningTimelineHour(value, fallback) {
-  const hour = Number(value);
-  return Number.isFinite(hour)
-    ? Math.max(8, Math.min(20, Math.round(hour)))
-    : fallback;
+  return normalizeScreeningTimelineMinute(value, fallback);
 }
 
 function getScreeningTimelineState(folder = {}) {
@@ -8367,12 +8402,12 @@ function getScreeningTimelineState(folder = {}) {
   const slots = normalizeScreeningSlotValues(normalizeInterviewPanelSlots(panel));
   const firstSlot = getScreeningSlotParts(slots[0]);
   const startHour = normalizeScreeningTimelineHour(panel.timelineStartHour || firstSlot?.hour, 10);
-  const endHour = Math.max(startHour + 1, normalizeScreeningTimelineHour(panel.timelineEndHour, 14));
+  const endHour = Math.max(startHour + SCREENING_SLOT_INTERVAL_MINUTES, normalizeScreeningTimelineHour(panel.timelineEndHour, 14));
 
   return {
     date: firstSlot?.date || date,
-    startHour: Math.min(startHour, 19),
-    endHour: Math.min(endHour, 20),
+    startHour: normalizeScreeningSlotStartMinute(startHour, 10 * 60),
+    endHour: Math.min(endHour, SCREENING_DAY_END_MINUTE),
     slots
   };
 }
@@ -8384,10 +8419,10 @@ function formatScreeningTimelineRange(dateValue, startHour, endHour) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   const weekday = weekdays[date.getDay()] || "";
-  const start = String(normalizeScreeningTimelineHour(startHour, 10)).padStart(2, "0");
-  const end = String(Math.max(Number(startHour) + 1, normalizeScreeningTimelineHour(endHour, 14))).padStart(2, "0");
+  const start = formatScreeningHourLabel(startHour);
+  const end = formatScreeningHourLabel(Math.max(normalizeScreeningTimelineMinute(startHour, 10 * 60) + SCREENING_SLOT_INTERVAL_MINUTES, normalizeScreeningTimelineMinute(endHour, 14 * 60)));
 
-  return `${year}.${month}.${day}(${weekday}) ${start}:00~${end}:00`;
+  return `${year}.${month}.${day}(${weekday}) ${start}~${end}`;
 }
 
 function renderScreeningAvailabilityTimeline(folder) {
@@ -23848,12 +23883,15 @@ function syncScreeningAvailabilityPreview(form) {
 
   if (dateInput && startInput && endInput) {
     const startHour = normalizeScreeningTimelineHour(startInput.value, 10);
-    const endHour = Math.max(startHour + 1, normalizeScreeningTimelineHour(endInput.value, startHour + 1));
-    startInput.value = String(Math.min(startHour, 19));
-    endInput.value = String(Math.min(endHour, 20));
+    const endHour = Math.max(
+      startHour + SCREENING_SLOT_INTERVAL_MINUTES,
+      normalizeScreeningTimelineHour(endInput.value, startHour + SCREENING_SLOT_INTERVAL_MINUTES)
+    );
+    startInput.value = String(normalizeScreeningSlotStartMinute(startHour, 10 * 60));
+    endInput.value = String(Math.min(endHour, SCREENING_DAY_END_MINUTE));
     output.value = formatScreeningTimelineRange(dateInput.value, startInput.value, endInput.value);
     form.querySelectorAll("[data-screening-time-cell]").forEach((cell) => {
-      const hour = Number(cell.dataset.screeningTimeCell);
+      const hour = normalizeScreeningSlotStartMinute(cell.dataset.screeningSlotHour || cell.dataset.screeningTimeCell, 9 * 60);
       cell.classList.toggle("is-selected", hour >= Number(startInput.value) && hour < Number(endInput.value));
     });
     return;
@@ -23988,10 +24026,10 @@ function updateScreeningTimelineSelection(cell, options = {}) {
   }
 
   const dateValue = normalizeScreeningTimelineDate(cell.dataset.screeningSlotDate);
-  const hour = normalizeScreeningTimelineHour(cell.dataset.screeningSlotHour, 9);
+  const hour = normalizeScreeningSlotStartMinute(cell.dataset.screeningSlotHour, 9 * 60);
   const drag = state.screeningTimelineDrag || {};
   const startDate = normalizeScreeningTimelineDate(drag.startDate || dateValue);
-  const startHour = normalizeScreeningTimelineHour(drag.startHour || hour, hour);
+  const startHour = normalizeScreeningSlotStartMinute(drag.startHour || hour, hour);
   const action = drag.action || (cell.classList.contains("is-selected") ? "remove" : "add");
   const dates = getScreeningDateRange(startDate, dateValue);
   const start = Math.min(startHour, hour);
@@ -23999,7 +24037,7 @@ function updateScreeningTimelineSelection(cell, options = {}) {
   const nextSlots = new Set(getScreeningAvailabilitySlotsFromForm(form));
 
   dates.forEach((date) => {
-    for (let currentHour = start; currentHour <= end; currentHour += 1) {
+    for (let currentHour = start; currentHour <= end; currentHour += SCREENING_SLOT_INTERVAL_MINUTES) {
       const slot = buildScreeningSlotValue(date, currentHour);
 
       if (action === "remove") {
@@ -24021,11 +24059,11 @@ function updateScreeningTimelineSelection(cell, options = {}) {
   }
 
   if (startInput) {
-    startInput.value = String(Math.min(start, 19));
+    startInput.value = String(normalizeScreeningSlotStartMinute(start, 10 * 60));
   }
 
   if (endInput) {
-    endInput.value = String(Math.min(end + 1, 20));
+    endInput.value = String(Math.min(end + SCREENING_SLOT_INTERVAL_MINUTES, SCREENING_DAY_END_MINUTE));
   }
 
   if (options.startDrag) {
@@ -24738,7 +24776,10 @@ function finalPassSecondScreening(form) {
   const availability = buildScreeningAvailabilityText(slots, getFormText(form, "availability"));
   const timelineDate = normalizeScreeningTimelineDate(getFormText(form, "timelineDate"));
   const timelineStartHour = normalizeScreeningTimelineHour(getFormText(form, "timelineStartHour"), 10);
-  const timelineEndHour = Math.max(timelineStartHour + 1, normalizeScreeningTimelineHour(getFormText(form, "timelineEndHour"), 14));
+  const timelineEndHour = Math.min(
+    SCREENING_DAY_END_MINUTE,
+    Math.max(timelineStartHour + SCREENING_SLOT_INTERVAL_MINUTES, normalizeScreeningTimelineHour(getFormText(form, "timelineEndHour"), 14))
+  );
 
   folder.interviewPanel = {
     names: members.map((member) => member.name).filter(Boolean).join(", "),
