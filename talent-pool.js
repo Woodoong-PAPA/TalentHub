@@ -2558,6 +2558,7 @@ function rememberDeletedInterviewCaseId(interviewCaseId) {
 
   state.interviewDeletedCaseIds = normalizeIdList([...(state.interviewDeletedCaseIds || []), id]);
   state.interviewCases = filterDeletedInterviewCases(state.interviewCases);
+  interviewCasesLocalDirty = true;
 }
 
 function syncInterviewCasesFromScreening() {
@@ -2623,6 +2624,10 @@ function syncInterviewCasesFromScreening() {
         }
       });
   });
+
+  if (changed) {
+    interviewCasesLocalDirty = true;
+  }
 
   return changed;
 }
@@ -4131,6 +4136,7 @@ function rememberDeletedScreeningFolderId(folderId) {
 
   state.screeningDeletedFolderIds = normalizeIdList([...(state.screeningDeletedFolderIds || []), id]);
   state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
+  screeningDeletedFoldersLocalDirty = true;
 }
 
 function getRemoteMenuSettingsUpdatedAt(row) {
@@ -4147,7 +4153,7 @@ async function syncMenuSettingsToSupabase() {
     return false;
   }
 
-  if (!menuSettingsRemoteLoaded && !menuSettingsLocalDirty) {
+  if (!menuSettingsLocalDirty) {
     return false;
   }
 
@@ -4167,17 +4173,27 @@ async function syncScreeningDeletedFoldersToSupabase() {
     return false;
   }
 
+  if (!screeningDeletedFoldersLocalDirty) {
+    return false;
+  }
+
   await supabaseRequest("app_settings?on_conflict=setting_key", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify([appSettingToSupabaseRow(SCREENING_DELETED_FOLDERS_SETTING_KEY, buildScreeningDeletedFoldersPayload())])
   });
 
+  screeningDeletedFoldersRemoteLoaded = true;
+  screeningDeletedFoldersLocalDirty = false;
   return true;
 }
 
 async function syncRolePermissionsToSupabase() {
   if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  if (!rolePermissionsLocalDirty) {
     return false;
   }
 
@@ -4187,11 +4203,17 @@ async function syncRolePermissionsToSupabase() {
     body: JSON.stringify([appSettingToSupabaseRow(ROLE_PERMISSIONS_SETTING_KEY, buildRolePermissionsPayload())])
   });
 
+  rolePermissionsRemoteLoaded = true;
+  rolePermissionsLocalDirty = false;
   return true;
 }
 
 async function syncInterviewCasesToSupabase() {
   if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  if (!interviewCasesLocalDirty) {
     return false;
   }
 
@@ -4201,6 +4223,8 @@ async function syncInterviewCasesToSupabase() {
     body: JSON.stringify([appSettingToSupabaseRow(INTERVIEW_CASES_SETTING_KEY, buildInterviewCasesPayload())])
   });
 
+  interviewCasesRemoteLoaded = true;
+  interviewCasesLocalDirty = false;
   return true;
 }
 
@@ -4209,7 +4233,7 @@ async function syncScreeningMailTemplatesToSupabase() {
     return false;
   }
 
-  if (!screeningMailTemplatesRemoteLoaded && !screeningMailTemplatesLocalDirty) {
+  if (!screeningMailTemplatesLocalDirty) {
     return false;
   }
 
@@ -4229,7 +4253,7 @@ async function syncRecruitingMetricsToSupabase() {
     return false;
   }
 
-  if (!recruitingMetricsRemoteLoaded && !recruitingMetricsLocalDirty) {
+  if (!recruitingMetricsLocalDirty) {
     return false;
   }
 
@@ -4249,12 +4273,18 @@ async function syncJdEnhancementToSupabase() {
     return false;
   }
 
+  if (!jdEnhancementLocalDirty) {
+    return false;
+  }
+
   await supabaseRequest("app_settings?on_conflict=setting_key", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify([appSettingToSupabaseRow(JD_ENHANCEMENT_SETTING_KEY, buildJdEnhancementPayload())])
   });
 
+  jdEnhancementRemoteLoaded = true;
+  jdEnhancementLocalDirty = false;
   return true;
 }
 
@@ -4270,6 +4300,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   const visitStatsSetting = settings.find((row) => row.setting_key === VISIT_STATS_SETTING_KEY);
 
   if (deletedFoldersSetting?.payload) {
+    screeningDeletedFoldersRemoteLoaded = true;
     const remoteDeletedIds = normalizeIdList(
       deletedFoldersSetting.payload.ids ||
       deletedFoldersSetting.payload.screeningDeletedFolderIds ||
@@ -4284,10 +4315,12 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   }
 
   if (rolePermissionsSetting?.payload?.permissions) {
+    rolePermissionsRemoteLoaded = true;
     state.rolePermissions = normalizeRolePermissions(rolePermissionsSetting.payload.permissions);
   }
 
   if (interviewCasesSetting?.payload) {
+    interviewCasesRemoteLoaded = true;
     const remoteDeletedCaseIds = normalizeIdList(
       interviewCasesSetting.payload.deletedCaseIds ||
       interviewCasesSetting.payload.deleted_case_ids ||
@@ -4371,6 +4404,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   }
 
   if (jdEnhancementSetting?.payload) {
+    jdEnhancementRemoteLoaded = true;
     const currentJd = getJdEnhancementState();
     state.jdEnhancement = normalizeJdEnhancementState({
       ...currentJd,
@@ -4421,12 +4455,20 @@ let menuSettingsRemoteLoaded = false;
 let menuSettingsLocalDirty = false;
 let menuSettingsRemoteSyncAfterLoadPending = false;
 let screeningRemoteSyncAfterLoadPending = false;
+let screeningDeletedFoldersRemoteLoaded = false;
+let screeningDeletedFoldersLocalDirty = false;
+let rolePermissionsRemoteLoaded = false;
+let rolePermissionsLocalDirty = false;
+let interviewCasesRemoteLoaded = false;
+let interviewCasesLocalDirty = false;
 let screeningMailTemplatesRemoteLoaded = false;
 let screeningMailTemplatesLocalDirty = false;
 let screeningMailTemplatesRemoteSyncAfterLoadPending = false;
 let recruitingMetricsRemoteLoaded = false;
 let recruitingMetricsLocalDirty = false;
 let recruitingMetricsRemoteSyncAfterLoadPending = false;
+let jdEnhancementRemoteLoaded = false;
+let jdEnhancementLocalDirty = false;
 let recruitingMetricsMailModalOpen = false;
 let recruitingMetricsRequestMailModalOpen = false;
 
@@ -4443,6 +4485,49 @@ function scheduleRemoteSync() {
   remoteSyncTimer = window.setTimeout(() => {
     syncStateToSupabase();
   }, 600);
+}
+
+async function syncDirtyAppSettingsToSupabase() {
+  const syncJobs = [];
+
+  if (menuSettingsLocalDirty) {
+    syncJobs.push(syncMenuSettingsToSupabase());
+  }
+
+  if (screeningDeletedFoldersLocalDirty) {
+    syncJobs.push(syncScreeningDeletedFoldersToSupabase());
+  }
+
+  if (rolePermissionsLocalDirty) {
+    syncJobs.push(syncRolePermissionsToSupabase());
+  }
+
+  if (interviewCasesLocalDirty) {
+    syncJobs.push(syncInterviewCasesToSupabase());
+  }
+
+  if (screeningMailTemplatesLocalDirty) {
+    syncJobs.push(syncScreeningMailTemplatesToSupabase());
+  }
+
+  if (recruitingMetricsLocalDirty) {
+    syncJobs.push(syncRecruitingMetricsToSupabase());
+  }
+
+  if (jdEnhancementLocalDirty) {
+    syncJobs.push(syncJdEnhancementToSupabase());
+  }
+
+  if (!syncJobs.length) {
+    return;
+  }
+
+  const results = await Promise.allSettled(syncJobs);
+  const failed = results.find((result) => result.status === "rejected");
+
+  if (failed) {
+    throw failed.reason;
+  }
 }
 
 async function syncStateToSupabase() {
@@ -4522,17 +4607,7 @@ async function syncStateToSupabase() {
       }
     }
 
-    try {
-      await syncMenuSettingsToSupabase();
-      await syncScreeningDeletedFoldersToSupabase();
-      await syncRolePermissionsToSupabase();
-      await syncInterviewCasesToSupabase();
-      await syncScreeningMailTemplatesToSupabase();
-      await syncRecruitingMetricsToSupabase();
-      await syncJdEnhancementToSupabase();
-    } catch (error) {
-      console.warn("App settings could not be synced.", error);
-    }
+    await syncDirtyAppSettingsToSupabase();
 
     state.remoteSyncStatus = "Supabase 연결됨";
   } catch (error) {
@@ -8599,6 +8674,7 @@ function mutateInterviewCase(interviewCaseId, updater, options = {}) {
   const saved = replaceInterviewCase(next);
 
   if (options.persist !== false) {
+    interviewCasesLocalDirty = true;
     persistState();
     syncInterviewCasesToSupabase().catch((error) => {
       console.warn("Interview cases remote save failed.", error);
@@ -13046,6 +13122,7 @@ function markInterviewOfferSigned(interviewCaseId) {
       saved.recruitingMetricRowId = metricRowId;
       saved.offerSyncedToMetricsAt = getTimestampText();
       replaceInterviewCase(saved);
+      interviewCasesLocalDirty = true;
       persistState();
       syncInterviewCasesToSupabase().catch((error) => {
         console.warn("Interview cases remote save failed.", error);
@@ -15504,6 +15581,10 @@ function saveJdGuideline() {
   jd.guidelineText = rawGuideline;
   jd.guidelineDraft = rawGuideline;
   jd.guidelineModalOpen = false;
+  jdEnhancementLocalDirty = true;
+  syncJdEnhancementToSupabase().catch((error) => {
+    console.warn("JD guideline remote save failed.", error);
+  });
   jd.status = "JD 작성 가이드라인 원문을 저장했습니다. 다음 점검부터 최신 가이드라인이 반영됩니다.";
   addAuditLog("JD 가이드라인 저장", "JD 고도화", getCurrentActorName());
   rerenderJdEnhancement();
@@ -15539,6 +15620,7 @@ async function saveJdDocumentResult() {
   }
 
   jd.savedDocuments = mergeSavedJdDocuments([saved, ...(jd.savedDocuments || [])], []);
+  jdEnhancementLocalDirty = true;
   jd.status = "채용공고 작성 결과물을 저장했습니다.";
   addAuditLog("채용공고 작성 결과 저장", saved.title, getCurrentActorName());
 
@@ -15591,6 +15673,7 @@ async function deleteSavedJdDocument(documentId) {
   const jd = getJdEnhancementState();
   const beforeCount = jd.savedDocuments.length;
   jd.savedDocuments = jd.savedDocuments.filter((document) => document.id !== documentId);
+  jdEnhancementLocalDirty = jdEnhancementLocalDirty || jd.savedDocuments.length !== beforeCount;
 
   if (jd.savedDocuments.length === beforeCount) {
     showToast("삭제할 저장 결과물을 찾지 못했습니다.");
@@ -26865,6 +26948,7 @@ function updateRolePermission(role, view, enabled) {
   state.rolePermissions[role] = MENU_CONFIG
     .map((item) => item.view)
     .filter((menuView) => permissions.has(menuView));
+  rolePermissionsLocalDirty = true;
   syncRolePermissionsToSupabase().catch((error) => {
     console.warn("Role permissions remote save failed.", error);
   });
