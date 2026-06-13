@@ -97,6 +97,33 @@ const DEFAULT_ROLE_PERMISSIONS = {
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
+const AI_SEARCH_TABS = [
+  { id: "talent-search", label: "Talent Search" },
+  { id: "competitor-org-map", label: "Competitor Org Map" },
+  { id: "key-talent-finder", label: "Key Talent Finder" }
+];
+const DEFAULT_AI_SEARCH_TAB = "talent-search";
+const COMPETITOR_KEY_TALENT_THRESHOLD = 75;
+const COMPETITOR_DEPARTMENT_RULES = [
+  { label: "AI/ML", pattern: /ai|machine learning|deep learning|ml|llm|computer vision|data scientist|data science|인공지능|머신러닝|딥러닝|데이터/i },
+  { label: "Robotics", pattern: /robot|robotics|autonomous|slam|motion|navigation|로봇|로보틱스|자율/i },
+  { label: "Software", pattern: /software|s\/w|frontend|backend|platform|cloud|devops|engineer|developer|sw|소프트웨어|개발/i },
+  { label: "Product", pattern: /product|program manager|pm|기획|상품|프로덕트/i },
+  { label: "Design", pattern: /design|ux|ui|designer|디자인/i },
+  { label: "Sales/Marketing", pattern: /sales|marketing|business development|growth|마케팅|영업/i },
+  { label: "Operations", pattern: /operations|supply|manufacturing|quality|scm|logistics|생산|품질|물류|운영/i },
+  { label: "HR/People", pattern: /hr|people|talent|recruit|인사|채용/i },
+  { label: "Finance/Legal", pattern: /finance|accounting|legal|counsel|재무|회계|법무/i },
+  { label: "Leadership", pattern: /ceo|cto|cpo|coo|chief|founder|president|대표|창업|임원/i }
+];
+const COMPETITOR_SENIORITY_RULES = [
+  { label: "C-level", pattern: /ceo|cto|cpo|coo|cfo|chief|founder|co-founder|president|대표|창업/i, weight: 28 },
+  { label: "VP/Executive", pattern: /vice president|vp|executive|임원|부사장|전무|상무/i, weight: 24 },
+  { label: "Head/Director", pattern: /head|director|lead|principal|lab lead|팀장|실장|센터장|랩장|수석/i, weight: 19 },
+  { label: "Manager", pattern: /manager|pm|project manager|product manager|매니저|책임|과장|차장/i, weight: 12 },
+  { label: "Senior IC", pattern: /senior|staff|sr\.|specialist|research scientist|선임|전문/i, weight: 10 }
+];
+
 const TEMP_PASSWORD = "Temp1234!";
 const DEFAULT_TRENDING_MAIL_SETTINGS = {
   enabled: false,
@@ -739,6 +766,19 @@ const state = {
   aiSearchFileName: "",
   aiSearchStatus: "",
   aiSearchProgress: 0,
+  aiSearchTab: DEFAULT_AI_SEARCH_TAB,
+  competitorOrg: {
+    companies: [],
+    employees: [],
+    reports: [],
+    selectedCompanyId: "",
+    uploadStatus: "",
+    uploadProgress: 0,
+    uploadLoading: false,
+    reportStatus: "",
+    reportLoading: false,
+    keyTalentQuery: ""
+  },
   jobFitAnalysis: {
     jdText: "",
     jdFile: null,
@@ -3314,6 +3354,8 @@ function persistState(options = {}) {
         managementTab: state.managementTab,
         visitStats: normalizeVisitStatsState(state.visitStats),
         currentUserId: state.currentUserId,
+        aiSearchTab: state.aiSearchTab,
+        competitorOrg: state.competitorOrg,
         jobFitAnalysis: state.jobFitAnalysis,
         interviewReport: state.interviewReport,
         recruitingMetrics: state.recruitingMetrics,
@@ -3426,6 +3468,14 @@ function restorePersistedState() {
 
   if (persisted.currentUserId) {
     state.currentUserId = persisted.currentUserId;
+  }
+
+  if (AI_SEARCH_TABS.some((tab) => tab.id === persisted.aiSearchTab)) {
+    state.aiSearchTab = persisted.aiSearchTab;
+  }
+
+  if (persisted.competitorOrg && typeof persisted.competitorOrg === "object") {
+    state.competitorOrg = normalizeCompetitorOrgState(persisted.competitorOrg);
   }
 
   if (persisted.trendingReport && typeof persisted.trendingReport === "object") {
@@ -3552,6 +3602,271 @@ async function deleteSupabaseRecord(tableName, id) {
     method: "DELETE",
     headers: { Prefer: "return=minimal" }
   });
+}
+
+function normalizeCompetitorCompany(company = {}) {
+  const id = String(company.id || createId("competitor-company")).trim();
+  const now = new Date().toISOString();
+
+  return {
+    id,
+    name: String(company.name || company.companyName || "신규 경쟁사").trim(),
+    website: String(company.website || "").trim(),
+    memo: String(company.memo || "").trim(),
+    createdAt: company.createdAt || company.created_at || now,
+    updatedAt: company.updatedAt || company.updated_at || now,
+    syncUpdatedAt: company.syncUpdatedAt || company.updated_at || company.updatedAt || now
+  };
+}
+
+function normalizeCompetitorEmployee(employee = {}) {
+  const now = new Date().toISOString();
+  const rawData = employee.rawData || employee.raw_data || {};
+  const title = String(employee.title || rawData["currentPosition/0/position"] || rawData.headline || "").trim();
+  const department = String(employee.department_ai || employee.departmentAi || "").trim() || inferCompetitorDepartment(title, employee.summary || rawData.headline || "");
+  const seniority = String(employee.seniority_ai || employee.seniorityAi || "").trim() || inferCompetitorSeniority(title);
+  const score = Number.isFinite(Number(employee.talent_score ?? employee.talentScore))
+    ? Number(employee.talent_score ?? employee.talentScore)
+    : scoreCompetitorTalent({ ...employee, title, department_ai: department, seniority_ai: seniority });
+
+  return {
+    id: String(employee.id || createId("competitor-employee")).trim(),
+    companyId: String(employee.companyId || employee.company_id || "").trim(),
+    name: String(employee.name || "").trim(),
+    title,
+    location: String(employee.location || rawData.location || rawData["currentPosition/0/location"] || "").trim(),
+    linkedinUrl: String(employee.linkedinUrl || employee.linkedin_url || rawData.linkedinUrl || "").trim(),
+    education: normalizeCompetitorArray(employee.education),
+    experience: normalizeCompetitorArray(employee.experience),
+    skills: normalizeCompetitorArray(employee.skills).map((item) => typeof item === "string" ? item : item.name || item.skill || "").filter(Boolean),
+    summary: String(employee.summary || rawData.about || rawData.headline || "").trim(),
+    departmentAi: department,
+    seniorityAi: seniority,
+    talentScore: Math.max(0, Math.min(100, Math.round(score))),
+    isKeyTalent: Boolean(employee.is_key_talent ?? employee.isKeyTalent ?? score >= COMPETITOR_KEY_TALENT_THRESHOLD),
+    rawData,
+    createdAt: employee.createdAt || employee.created_at || now,
+    updatedAt: employee.updatedAt || employee.updated_at || now,
+    syncUpdatedAt: employee.syncUpdatedAt || employee.updated_at || employee.updatedAt || now
+  };
+}
+
+function normalizeCompetitorArray(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== null && item !== undefined && String(typeof item === "object" ? Object.values(item).join("") : item).trim());
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return normalizeCompetitorArray(parsed);
+    } catch {
+      return value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+function normalizeCompetitorReport(report = {}) {
+  const now = new Date().toISOString();
+
+  return {
+    id: String(report.id || createId("competitor-report")).trim(),
+    companyId: String(report.companyId || report.company_id || "").trim(),
+    title: String(report.title || "조직 분석 리포트").trim(),
+    summary: String(report.summary || "").trim(),
+    departmentSummary: normalizeCompetitorArray(report.departmentSummary || report.department_summary),
+    keyTalentSummary: normalizeCompetitorArray(report.keyTalentSummary || report.key_talent_summary),
+    generatedAt: report.generatedAt || report.generated_at || now,
+    payload: report.payload || {}
+  };
+}
+
+function normalizeCompetitorOrgState(value = {}) {
+  const companies = normalizeCompetitorArray(value.companies).map(normalizeCompetitorCompany);
+  const companyIds = new Set(companies.map((company) => company.id));
+  const employees = normalizeCompetitorArray(value.employees)
+    .map(normalizeCompetitorEmployee)
+    .filter((employee) => companyIds.has(employee.companyId));
+  const reports = normalizeCompetitorArray(value.reports)
+    .map(normalizeCompetitorReport)
+    .filter((report) => companyIds.has(report.companyId));
+  const selectedCompanyId = companyIds.has(value.selectedCompanyId)
+    ? value.selectedCompanyId
+    : companies[0]?.id || "";
+
+  return {
+    companies,
+    employees,
+    reports,
+    selectedCompanyId,
+    uploadStatus: "",
+    uploadProgress: 0,
+    uploadLoading: false,
+    reportStatus: "",
+    reportLoading: false,
+    keyTalentQuery: String(value.keyTalentQuery || "").trim()
+  };
+}
+
+function competitorCompanyToSupabaseRow(company) {
+  const normalized = normalizeCompetitorCompany(company);
+
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    website: normalized.website || null,
+    memo: normalized.memo || null,
+    created_at: normalized.createdAt,
+    updated_at: normalized.syncUpdatedAt || new Date().toISOString(),
+    payload: normalized
+  };
+}
+
+function competitorCompanyFromSupabaseRow(row) {
+  return normalizeCompetitorCompany({
+    ...(row?.payload || {}),
+    id: row?.id,
+    name: row?.name || row?.payload?.name,
+    website: row?.website || row?.payload?.website,
+    memo: row?.memo || row?.payload?.memo,
+    createdAt: row?.created_at || row?.payload?.createdAt,
+    syncUpdatedAt: row?.updated_at || row?.payload?.syncUpdatedAt
+  });
+}
+
+function competitorEmployeeToSupabaseRow(employee) {
+  const normalized = normalizeCompetitorEmployee(employee);
+
+  return {
+    id: normalized.id,
+    company_id: normalized.companyId,
+    name: normalized.name,
+    title: normalized.title,
+    location: normalized.location,
+    linkedin_url: normalized.linkedinUrl || null,
+    education: normalized.education,
+    experience: normalized.experience,
+    skills: normalized.skills,
+    summary: normalized.summary,
+    department_ai: normalized.departmentAi,
+    seniority_ai: normalized.seniorityAi,
+    talent_score: normalized.talentScore,
+    is_key_talent: normalized.isKeyTalent,
+    raw_data: normalized.rawData,
+    created_at: normalized.createdAt,
+    updated_at: normalized.syncUpdatedAt || new Date().toISOString()
+  };
+}
+
+function competitorEmployeeFromSupabaseRow(row) {
+  return normalizeCompetitorEmployee({
+    id: row?.id,
+    companyId: row?.company_id,
+    name: row?.name,
+    title: row?.title,
+    location: row?.location,
+    linkedinUrl: row?.linkedin_url,
+    education: row?.education,
+    experience: row?.experience,
+    skills: row?.skills,
+    summary: row?.summary,
+    departmentAi: row?.department_ai,
+    seniorityAi: row?.seniority_ai,
+    talentScore: row?.talent_score,
+    isKeyTalent: row?.is_key_talent,
+    rawData: row?.raw_data,
+    createdAt: row?.created_at,
+    syncUpdatedAt: row?.updated_at
+  });
+}
+
+function competitorReportToSupabaseRow(report) {
+  const normalized = normalizeCompetitorReport(report);
+
+  return {
+    id: normalized.id,
+    company_id: normalized.companyId,
+    title: normalized.title,
+    summary: normalized.summary,
+    department_summary: normalized.departmentSummary,
+    key_talent_summary: normalized.keyTalentSummary,
+    generated_at: normalized.generatedAt,
+    payload: normalized.payload
+  };
+}
+
+function competitorReportFromSupabaseRow(row) {
+  return normalizeCompetitorReport({
+    id: row?.id,
+    companyId: row?.company_id,
+    title: row?.title,
+    summary: row?.summary,
+    departmentSummary: row?.department_summary,
+    keyTalentSummary: row?.key_talent_summary,
+    generatedAt: row?.generated_at,
+    payload: row?.payload
+  });
+}
+
+async function upsertCompetitorCompanyToSupabase(company) {
+  if (!REMOTE_SYNC_ENABLED || !company?.id) {
+    return;
+  }
+
+  await supabaseRequest("competitor_companies?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([competitorCompanyToSupabaseRow(company)])
+  });
+}
+
+async function upsertCompetitorEmployeesToSupabase(employees = []) {
+  if (!REMOTE_SYNC_ENABLED || !employees.length) {
+    return;
+  }
+
+  const rows = employees.map(competitorEmployeeToSupabaseRow);
+  const chunkSize = 200;
+
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    await supabaseRequest("competitor_employees?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(rows.slice(index, index + chunkSize))
+    });
+  }
+}
+
+async function upsertCompetitorReportToSupabase(report) {
+  if (!REMOTE_SYNC_ENABLED || !report?.id) {
+    return;
+  }
+
+  await supabaseRequest("competitor_org_reports?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([competitorReportToSupabaseRow(report)])
+  });
+}
+
+async function deleteCompetitorCompanyFromSupabase(companyId) {
+  if (!REMOTE_SYNC_ENABLED || !companyId) {
+    return;
+  }
+
+  await Promise.allSettled([
+    supabaseRequest(`competitor_org_reports?company_id=eq.${encodeURIComponent(companyId)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    }),
+    supabaseRequest(`competitor_employees?company_id=eq.${encodeURIComponent(companyId)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    }),
+    deleteSupabaseRecord("competitor_companies", companyId)
+  ]);
 }
 
 function candidateToSupabaseRow(candidate) {
@@ -4638,7 +4953,7 @@ async function loadStateFromSupabase() {
       JD_ENHANCEMENT_SETTING_KEY,
       VISIT_STATS_SETTING_KEY
     ].join(",");
-    const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows] = await Promise.all([
+    const [candidateRows, screeningFolderRows, auditRows, memberRows, permissionRows, policySourceRows, appSettingRows, competitorCompanyRows, competitorEmployeeRows, competitorReportRows] = await Promise.all([
       supabaseRequest("candidates?select=*&order=updated_at.desc"),
       supabaseRequest("screening_folders?select=*&order=updated_at.desc").catch((error) => {
         console.warn("Screening folders could not be loaded.", error);
@@ -4653,6 +4968,18 @@ async function loadStateFromSupabase() {
       }),
       supabaseRequest(`app_settings?select=*&setting_key=in.(${settingKeys})`).catch((error) => {
         console.warn("App settings could not be loaded.", error);
+        return [];
+      }),
+      supabaseRequest("competitor_companies?select=*&order=updated_at.desc").catch((error) => {
+        console.warn("Competitor companies could not be loaded.", error);
+        return [];
+      }),
+      supabaseRequest("competitor_employees?select=*&order=updated_at.desc").catch((error) => {
+        console.warn("Competitor employees could not be loaded.", error);
+        return [];
+      }),
+      supabaseRequest("competitor_org_reports?select=*&order=generated_at.desc").catch((error) => {
+        console.warn("Competitor org reports could not be loaded.", error);
         return [];
       })
     ]);
@@ -4696,6 +5023,21 @@ async function loadStateFromSupabase() {
 
     if (Array.isArray(policySourceRows) && policySourceRows.length) {
       state.policySources = policySourceRows.map(policySourceFromSupabaseRow).filter((source) => source.content);
+    }
+
+    if (Array.isArray(competitorCompanyRows) && competitorCompanyRows.length) {
+      const companies = competitorCompanyRows.map(competitorCompanyFromSupabaseRow).filter((company) => company.name);
+      const companyIds = new Set(companies.map((company) => company.id));
+      state.competitorOrg = normalizeCompetitorOrgState({
+        ...state.competitorOrg,
+        companies,
+        employees: Array.isArray(competitorEmployeeRows)
+          ? competitorEmployeeRows.map(competitorEmployeeFromSupabaseRow).filter((employee) => companyIds.has(employee.companyId))
+          : [],
+        reports: Array.isArray(competitorReportRows)
+          ? competitorReportRows.map(competitorReportFromSupabaseRow).filter((report) => companyIds.has(report.companyId))
+          : []
+      });
     }
 
     await mergeCurrentUserJobFitAnalysesFromSupabase();
@@ -13737,6 +14079,28 @@ function renderScreeningCareerRecord(item = {}, index = 0, disabledAttr = "") {
 }
 
 function renderAiSearch() {
+  const activeTab = AI_SEARCH_TABS.some((tab) => tab.id === state.aiSearchTab)
+    ? state.aiSearchTab
+    : DEFAULT_AI_SEARCH_TAB;
+  const tabContent = activeTab === "competitor-org-map"
+    ? renderCompetitorOrgMapTab()
+    : activeTab === "key-talent-finder"
+      ? renderKeyTalentFinderTab()
+      : renderTalentSearchTab();
+
+  $("#ai-search-content").innerHTML = `
+    <div class="ai-search-tabs" role="tablist" aria-label="AI 인재검색 기능">
+      ${AI_SEARCH_TABS.map((tab) => `
+        <button class="management-tab ${activeTab === tab.id ? "is-active" : ""}" type="button" data-ai-search-tab="${tab.id}" role="tab" aria-selected="${activeTab === tab.id ? "true" : "false"}">
+          ${escapeHtml(tab.label)}
+        </button>
+      `).join("")}
+    </div>
+    ${tabContent}
+  `;
+}
+
+function renderTalentSearchTab() {
   const interpreted = state.aiQuery ? interpretQuery(state.aiQuery) : [];
   const aiFileStatus = state.aiSearchStatus
     ? renderMaybeProgressStatus(state.aiSearchStatus, state.aiSearchLoading, state.aiSearchProgress)
@@ -13751,7 +14115,7 @@ function renderAiSearch() {
         : `<div class="empty-state">검색 조건에 맞는 후보자를 찾지 못했습니다. 조건을 조금 넓혀 다시 검색해주세요.</div>`
       : `<div class="empty-state">찾고 싶은 인재 조건을 자연어로 입력하면 조회 가능한 Pool에서 적합도 높은 후보자를 찾아드립니다.</div>`;
 
-  $("#ai-search-content").innerHTML = `
+  return `
     <div class="ai-layout">
       <section class="form-panel query-box">
         <label class="visually-hidden" for="ai-query">AI 검색어</label>
@@ -15282,6 +15646,710 @@ function renderJobFitPoolPickerModal() {
       </section>
     </div>
   `;
+}
+
+function renderCompetitorOrgMapTab() {
+  const org = normalizeCompetitorOrgState(state.competitorOrg);
+  state.competitorOrg = org;
+  const selectedCompany = org.companies.find((company) => company.id === org.selectedCompanyId) || org.companies[0] || null;
+  const employees = selectedCompany ? getCompetitorEmployees(selectedCompany.id) : [];
+  const keyTalents = employees.filter((employee) => employee.isKeyTalent).sort((a, b) => b.talentScore - a.talentScore);
+  const latestReport = selectedCompany ? getLatestCompetitorReport(selectedCompany.id) : null;
+
+  return `
+    <div class="competitor-workspace">
+      <section class="form-panel competitor-company-bar">
+        <div>
+          <strong>경쟁사 조직도 Agent</strong>
+          <span>Apify LinkedIn Company Employees CSV를 업로드하면 조직도와 핵심 인재 후보를 자동으로 구성합니다.</span>
+        </div>
+        <div class="competitor-company-create">
+          <input class="control-input" id="competitor-company-name" placeholder="회사명 입력" />
+          <button class="primary-button" type="button" data-create-competitor-company>회사 등록</button>
+        </div>
+      </section>
+
+      <div class="competitor-grid">
+        <aside class="form-panel competitor-company-list">
+          <div class="competitor-section-header">
+            <div>
+              <strong>회사 목록</strong>
+              <span>${org.companies.length}개 회사</span>
+            </div>
+          </div>
+          ${org.companies.length ? org.companies.map((company) => renderCompetitorCompanyCard(company, company.id === selectedCompany?.id)).join("") : `
+            <div class="empty-state">분석할 경쟁사를 먼저 등록해주세요.</div>
+          `}
+        </aside>
+
+        <section class="competitor-detail">
+          ${selectedCompany ? renderCompetitorCompanyDetail(selectedCompany, employees, keyTalents, latestReport) : `
+            <div class="form-panel">
+              <div class="empty-state">회사를 등록한 뒤 CSV를 업로드하면 조직 분석 화면이 표시됩니다.</div>
+            </div>
+          `}
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderKeyTalentFinderTab() {
+  const query = String(state.competitorOrg.keyTalentQuery || "").trim().toLowerCase();
+  const keyTalents = state.competitorOrg.employees
+    .filter((employee) => employee.isKeyTalent)
+    .filter((employee) => {
+      if (!query) return true;
+      return [
+        employee.name,
+        employee.title,
+        employee.departmentAi,
+        employee.seniorityAi,
+        employee.location,
+        ...(employee.skills || [])
+      ].join(" ").toLowerCase().includes(query);
+    })
+    .sort((a, b) => b.talentScore - a.talentScore);
+
+  return `
+    <div class="competitor-workspace">
+      <section class="form-panel competitor-company-bar">
+        <div>
+          <strong>Key Talent Finder</strong>
+          <span>업로드된 경쟁사 직원 데이터에서 핵심 인재 후보만 통합 조회합니다.</span>
+        </div>
+        <input class="control-input" id="competitor-key-talent-query" placeholder="이름, 직책, 기술, 부서 검색" value="${inputValue(state.competitorOrg.keyTalentQuery)}" />
+      </section>
+      <section class="competitor-key-grid">
+        ${keyTalents.length ? keyTalents.map((employee) => renderCompetitorTalentCard(employee, { showCompany: true })).join("") : `
+          <div class="empty-state">핵심 인재 후보가 아직 없습니다. Competitor Org Map에서 CSV를 업로드해주세요.</div>
+        `}
+      </section>
+    </div>
+  `;
+}
+
+function renderCompetitorCompanyCard(company, isActive = false) {
+  const employees = getCompetitorEmployees(company.id);
+  const keyTalentCount = employees.filter((employee) => employee.isKeyTalent).length;
+
+  return `
+    <button class="competitor-company-card ${isActive ? "is-active" : ""}" type="button" data-select-competitor-company="${company.id}">
+      <span>
+        <strong>${escapeHtml(company.name)}</strong>
+        <small>직원 ${employees.length}명 · 핵심 ${keyTalentCount}명</small>
+      </span>
+      <small>${escapeHtml(formatDateShort(company.updatedAt || company.syncUpdatedAt || company.createdAt))}</small>
+    </button>
+  `;
+}
+
+function renderCompetitorCompanyDetail(company, employees, keyTalents, latestReport) {
+  const departmentCounts = countBy(employees, (employee) => employee.departmentAi || "Unclassified");
+  const seniorityCounts = countBy(employees, (employee) => employee.seniorityAi || "Unclassified");
+  const uploadStatus = state.competitorOrg.uploadStatus
+    ? renderMaybeProgressStatus(state.competitorOrg.uploadStatus, state.competitorOrg.uploadLoading, state.competitorOrg.uploadProgress)
+    : "Apify LinkedIn Company Employees CSV를 업로드하세요.";
+
+  return `
+    <div class="competitor-detail-stack">
+      <section class="form-panel competitor-company-hero">
+        <div>
+          <span class="eyebrow">COMPETITOR PROFILE</span>
+          <h4>${escapeHtml(company.name)}</h4>
+          <p>${employees.length ? `업로드 직원 ${employees.length}명 기준으로 조직도를 구성했습니다.` : "CSV 업로드 전입니다."}</p>
+        </div>
+        <div class="competitor-actions">
+          <button class="ghost-button danger-button" type="button" data-delete-competitor-company="${company.id}">삭제</button>
+        </div>
+      </section>
+
+      <section class="form-panel">
+        <div class="competitor-section-header">
+          <div>
+            <strong>직원 데이터 업로드</strong>
+            <span>Apify LinkedIn Company Employees CSV</span>
+          </div>
+        </div>
+        <label class="dropzone competitor-upload-zone" for="competitor-csv-file">
+          <input id="competitor-csv-file" type="file" accept=".csv,text/csv" data-competitor-company-id="${company.id}" />
+          <strong>CSV 파일 업로드</strong>
+          <span id="competitor-upload-status">${uploadStatus}</span>
+        </label>
+      </section>
+
+      <section class="competitor-stats">
+        <article class="metric-card"><span>전체 직원</span><strong>${employees.length}</strong></article>
+        <article class="metric-card"><span>핵심 인재</span><strong>${keyTalents.length}</strong></article>
+        <article class="metric-card"><span>분류 부서</span><strong>${Object.keys(departmentCounts).length}</strong></article>
+        <article class="metric-card"><span>리더급</span><strong>${employees.filter((item) => /C-level|VP|Head|Director/i.test(item.seniorityAi)).length}</strong></article>
+      </section>
+
+      <section class="competitor-analysis-grid">
+        <article class="form-panel">
+          <div class="competitor-section-header">
+            <div>
+              <strong>조직도 Tree View</strong>
+              <span>AI 부서 분류와 시니어리티 기준</span>
+            </div>
+          </div>
+          ${employees.length ? renderCompetitorOrgTree(employees) : `<div class="empty-state">직원 CSV를 업로드하면 조직도가 생성됩니다.</div>`}
+        </article>
+
+        <article class="form-panel">
+          <div class="competitor-section-header">
+            <div>
+              <strong>조직 분석 대시보드</strong>
+              <span>부서와 직급 구조 요약</span>
+            </div>
+          </div>
+          ${employees.length ? renderCompetitorDistribution("부서", departmentCounts) + renderCompetitorDistribution("시니어리티", seniorityCounts) : `<div class="empty-state">분석할 직원 데이터가 없습니다.</div>`}
+        </article>
+      </section>
+
+      <section class="form-panel">
+        <div class="competitor-section-header">
+          <div>
+            <strong>핵심 인재 리스트</strong>
+            <span>점수 ${COMPETITOR_KEY_TALENT_THRESHOLD}점 이상 또는 리더급/핵심 직무</span>
+          </div>
+        </div>
+        <div class="competitor-key-grid">
+          ${keyTalents.length ? keyTalents.slice(0, 12).map((employee) => renderCompetitorTalentCard(employee)).join("") : `<div class="empty-state">핵심 인재 후보가 아직 없습니다.</div>`}
+        </div>
+      </section>
+
+      <section class="form-panel">
+        <div class="competitor-section-header">
+          <div>
+            <strong>조직 분석 리포트</strong>
+            <span>조직 구조와 핵심 인재 포인트를 보고서 형태로 정리합니다.</span>
+          </div>
+          <button class="primary-button" type="button" data-generate-competitor-report="${company.id}" ${state.competitorOrg.reportLoading ? "disabled" : ""}>${state.competitorOrg.reportLoading ? "생성 중" : "리포트 생성"}</button>
+        </div>
+        ${state.competitorOrg.reportStatus ? `<p class="form-help">${escapeHtml(state.competitorOrg.reportStatus)}</p>` : ""}
+        ${latestReport ? renderCompetitorReport(latestReport) : `<div class="empty-state">리포트를 생성하면 여기에 표시됩니다.</div>`}
+      </section>
+    </div>
+  `;
+}
+
+function renderCompetitorOrgTree(employees) {
+  const grouped = groupBy(employees, (employee) => employee.departmentAi || "Unclassified");
+
+  return `
+    <div class="competitor-org-tree">
+      ${Object.entries(grouped).sort((a, b) => b[1].length - a[1].length).map(([department, departmentEmployees]) => {
+        const seniorityGroups = groupBy(departmentEmployees, (employee) => employee.seniorityAi || "Unclassified");
+        return `
+          <details open>
+            <summary>${escapeHtml(department)} <span>${departmentEmployees.length}명</span></summary>
+            <div class="competitor-tree-branch">
+              ${Object.entries(seniorityGroups).map(([seniority, items]) => `
+                <div class="competitor-tree-node">
+                  <strong>${escapeHtml(seniority)}</strong>
+                  <ul>
+                    ${items.sort((a, b) => b.talentScore - a.talentScore).slice(0, 8).map((employee) => `
+                      <li>
+                        <span>${escapeHtml(employee.name || "이름 없음")}</span>
+                        <small>${escapeHtml(employee.title || "-")}</small>
+                      </li>
+                    `).join("")}
+                  </ul>
+                </div>
+              `).join("")}
+            </div>
+          </details>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderCompetitorDistribution(label, counts) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const max = Math.max(1, ...entries.map(([, count]) => count));
+
+  return `
+    <div class="competitor-distribution">
+      <strong>${escapeHtml(label)}</strong>
+      ${entries.map(([name, count]) => `
+        <div class="competitor-bar-row">
+          <span>${escapeHtml(name)}</span>
+          <div><i style="width:${Math.round((count / max) * 100)}%"></i></div>
+          <b>${count}</b>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderCompetitorTalentCard(employee, options = {}) {
+  const company = state.competitorOrg.companies.find((item) => item.id === employee.companyId);
+  const education = formatCompetitorEducation(employee.education).slice(0, 2);
+  const experience = formatCompetitorExperience(employee.experience).slice(0, 2);
+  const skills = (employee.skills || []).slice(0, 5);
+
+  return `
+    <article class="competitor-talent-card">
+      <div class="competitor-talent-head">
+        <div>
+          <strong>${escapeHtml(employee.name || "이름 없음")}</strong>
+          <span>${escapeHtml(employee.title || "-")}</span>
+          ${options.showCompany && company ? `<small>${escapeHtml(company.name)}</small>` : ""}
+        </div>
+        <b>${employee.talentScore}</b>
+      </div>
+      <div class="tag-row">
+        <span class="status-chip chip-blue">${escapeHtml(employee.departmentAi || "Unclassified")}</span>
+        <span class="status-chip chip-green">${escapeHtml(employee.seniorityAi || "Unclassified")}</span>
+      </div>
+      ${employee.summary ? `<p>${escapeHtml(truncateText(employee.summary, 150))}</p>` : ""}
+      ${education.length ? `<div class="competitor-mini-lines"><strong>학력</strong>${education.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}</div>` : ""}
+      ${experience.length ? `<div class="competitor-mini-lines"><strong>경력</strong>${experience.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}</div>` : ""}
+      ${skills.length ? `<div class="tag-row">${skills.map((skill) => `<span class="tag">${escapeHtml(skill)}</span>`).join("")}</div>` : ""}
+      ${employee.linkedinUrl ? `<a class="linkedin-link" href="${escapeHtml(employee.linkedinUrl)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}
+    </article>
+  `;
+}
+
+function renderCompetitorReport(report) {
+  return `
+    <article class="competitor-report">
+      <div>
+        <strong>${escapeHtml(report.title)}</strong>
+        <span>${escapeHtml(formatDateShort(report.generatedAt))}</span>
+      </div>
+      <p>${escapeHtml(report.summary)}</p>
+      <div class="competitor-report-columns">
+        <section>
+          <strong>조직 구조 인사이트</strong>
+          ${report.departmentSummary.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+        </section>
+        <section>
+          <strong>핵심 인재 인사이트</strong>
+          ${report.keyTalentSummary.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+        </section>
+      </div>
+    </article>
+  `;
+}
+
+function getCompetitorEmployees(companyId) {
+  return state.competitorOrg.employees
+    .filter((employee) => employee.companyId === companyId)
+    .sort((a, b) => b.talentScore - a.talentScore || a.name.localeCompare(b.name));
+}
+
+function getLatestCompetitorReport(companyId) {
+  return state.competitorOrg.reports
+    .filter((report) => report.companyId === companyId)
+    .sort((a, b) => dateSortValue(b.generatedAt) - dateSortValue(a.generatedAt))[0] || null;
+}
+
+function groupBy(items = [], iteratee = (item) => item) {
+  return items.reduce((groups, item) => {
+    const key = String(iteratee(item) || "기타");
+    groups[key] = groups[key] || [];
+    groups[key].push(item);
+    return groups;
+  }, {});
+}
+
+function countBy(items = [], iteratee = (item) => item) {
+  return Object.fromEntries(Object.entries(groupBy(items, iteratee)).map(([key, value]) => [key, value.length]));
+}
+
+function formatDateShort(value) {
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function truncateText(value, maxLength = 120) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function formatCompetitorEducation(education = []) {
+  return normalizeCompetitorArray(education)
+    .map((item) => {
+      const degree = formatEducationDegreeShort(item.degree || item.degreeName || item.fieldOfStudy || "");
+      const school = item.school || item.schoolName || item.school_name || item.institution || "";
+      const major = item.major || item.field || item.fieldOfStudy || item.field_of_study || "";
+      const period = formatDisplayPeriod(item.start || item.startDate, item.end || item.endDate) || formatSingleDisplayPeriod(item.end || item.endDate);
+      return [degree ? `${degree}) ${school}`.trim() : school, major].filter(Boolean).join(", ") + (period ? ` ${period}` : "");
+    })
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function formatCompetitorExperience(experience = []) {
+  return normalizeCompetitorArray(experience)
+    .map((item) => {
+      const title = uniqueTextParts([
+        item.company || item.companyName || item.company_name,
+        item.title || item.position || item.role,
+        item.department || item.organization || item.team
+      ]).join(", ");
+      const period = formatDisplayPeriod(item.start || item.startDate, item.end || item.endDate);
+      return [title, period].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+}
+
+function inferCompetitorDepartment(...values) {
+  const text = values.filter(Boolean).join(" ");
+  const matched = COMPETITOR_DEPARTMENT_RULES.find((rule) => rule.pattern.test(text));
+  return matched?.label || "Unclassified";
+}
+
+function inferCompetitorSeniority(...values) {
+  const text = values.filter(Boolean).join(" ");
+  const matched = COMPETITOR_SENIORITY_RULES.find((rule) => rule.pattern.test(text));
+  return matched?.label || "Individual Contributor";
+}
+
+function scoreCompetitorTalent(employee = {}) {
+  const text = [
+    employee.name,
+    employee.title,
+    employee.summary,
+    employee.department_ai,
+    employee.departmentAi,
+    employee.seniority_ai,
+    employee.seniorityAi,
+    ...(employee.skills || []),
+    ...normalizeCompetitorArray(employee.education).flatMap((item) => Object.values(item || {})),
+    ...normalizeCompetitorArray(employee.experience).flatMap((item) => Object.values(item || {}))
+  ].join(" ");
+  let score = 35;
+  const seniorityRule = COMPETITOR_SENIORITY_RULES.find((rule) => rule.pattern.test(text));
+
+  if (seniorityRule) {
+    score += seniorityRule.weight;
+  }
+
+  if (/ai|machine learning|deep learning|llm|robot|autonomous|computer vision|slam|인공지능|로봇|자율/i.test(text)) score += 15;
+  if (/stanford|mit|harvard|berkeley|kaist|서울대학교|seoul national|postech|박사|ph\.?d/i.test(text)) score += 10;
+  if (/patent|publication|paper|founder|lead|principal|architect|특허|논문|창업|리드|수석/i.test(text)) score += 10;
+  if ((employee.skills || []).length >= 5) score += 5;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === "\"" && inQuotes && next === "\"") {
+      field += "\"";
+      index += 1;
+    } else if (char === "\"") {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      row.push(field);
+      field = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(field);
+      if (row.some((cell) => String(cell).trim())) {
+        rows.push(row);
+      }
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+
+  row.push(field);
+  if (row.some((cell) => String(cell).trim())) {
+    rows.push(row);
+  }
+
+  if (!rows.length) {
+    return [];
+  }
+
+  const headers = rows[0].map((header) => String(header || "").trim());
+  return rows.slice(1).map((cells) => Object.fromEntries(headers.map((header, index) => [header, String(cells[index] || "").trim()])));
+}
+
+function collectIndexedCsvObjects(row, prefix, fieldMap = {}) {
+  const byIndex = {};
+  const pattern = new RegExp(`^${prefix}\\/(\\d+)\\/(.+)$`);
+
+  Object.entries(row).forEach(([key, value]) => {
+    if (!value) {
+      return;
+    }
+
+    const match = key.match(pattern);
+
+    if (!match) {
+      return;
+    }
+
+    const [, index, field] = match;
+    const mappedField = fieldMap[field] || field;
+    byIndex[index] = byIndex[index] || {};
+    byIndex[index][mappedField] = value;
+  });
+
+  return Object.values(byIndex).filter((item) => Object.values(item).some(Boolean));
+}
+
+function normalizeCompetitorDateRange(value) {
+  const period = extractEnhancedPeriod(value);
+  return {
+    start: period.start,
+    end: period.end || (/present|current|현재|재직/i.test(String(value || "")) ? "현재" : "")
+  };
+}
+
+function competitorEmployeeFromCsvRow(row, companyId) {
+  const name = [
+    row.firstName,
+    row.lastName
+  ].filter(Boolean).join(" ").trim() || row.fullName || row.name || row.publicIdentifier || "";
+  const education = collectIndexedCsvObjects(row, "education", {
+    schoolName: "school",
+    fieldOfStudy: "major",
+    degreeName: "degree",
+    dateRange: "dateRange"
+  }).map((item) => ({
+    ...item,
+    ...normalizeCompetitorDateRange(item.dateRange || `${item.startDate || ""} ${item.endDate || ""}`)
+  }));
+  const experience = collectIndexedCsvObjects(row, "experience", {
+    companyName: "company",
+    title: "title",
+    position: "title",
+    dateRange: "dateRange",
+    description: "description"
+  }).map((item) => ({
+    ...item,
+    ...normalizeCompetitorDateRange(item.dateRange || `${item.startDate || ""} ${item.endDate || ""}`)
+  }));
+  const skills = collectIndexedCsvObjects(row, "skills", { name: "name" })
+    .map((item) => item.name)
+    .filter(Boolean);
+  const title = row["currentPosition/0/position"] || row.headline || experience[0]?.title || "";
+  const location = row["currentPosition/0/location"] || row.location || experience[0]?.location || "";
+  const summary = row.about || row.headline || "";
+  const departmentAi = inferCompetitorDepartment(title, summary, skills.join(" "));
+  const seniorityAi = inferCompetitorSeniority(title, summary);
+  const candidate = {
+    companyId,
+    name,
+    title,
+    location,
+    linkedinUrl: row.linkedinUrl || row.linkedinURL || row.linkedin_url || "",
+    education,
+    experience,
+    skills,
+    summary,
+    departmentAi,
+    seniorityAi,
+    rawData: row
+  };
+  const stableKey = candidate.linkedinUrl || `${companyId}:${candidate.name}:${candidate.title}`;
+  const hash = Math.abs([...stableKey].reduce((sum, char) => ((sum << 5) - sum) + char.charCodeAt(0), 0)).toString(36);
+
+  return normalizeCompetitorEmployee({
+    ...candidate,
+    id: `competitor-employee-${hash}`,
+    talentScore: scoreCompetitorTalent(candidate)
+  });
+}
+
+async function createCompetitorCompany() {
+  const input = $("#competitor-company-name");
+  const name = String(input?.value || "").trim();
+
+  if (!name) {
+    showToast("회사명을 입력해주세요.");
+    return;
+  }
+
+  const company = normalizeCompetitorCompany({ name });
+  state.competitorOrg.companies.unshift(company);
+  state.competitorOrg.selectedCompanyId = company.id;
+  addAuditLog("경쟁사 등록", company.name, "Competitor Org Map 회사 생성");
+  persistState();
+  renderAiSearch();
+
+  try {
+    await upsertCompetitorCompanyToSupabase(company);
+    state.remoteSyncStatus = "Supabase 연결됨";
+  } catch (error) {
+    state.remoteSyncStatus = "Supabase 동기화 실패";
+    console.warn("Competitor company remote save failed.", error);
+  }
+}
+
+async function deleteCompetitorCompany(companyId) {
+  const company = state.competitorOrg.companies.find((item) => item.id === companyId);
+
+  if (!company || !window.confirm(`${company.name} 경쟁사 데이터와 직원 목록을 삭제할까요?`)) {
+    return;
+  }
+
+  state.competitorOrg.companies = state.competitorOrg.companies.filter((item) => item.id !== companyId);
+  state.competitorOrg.employees = state.competitorOrg.employees.filter((item) => item.companyId !== companyId);
+  state.competitorOrg.reports = state.competitorOrg.reports.filter((item) => item.companyId !== companyId);
+  state.competitorOrg.selectedCompanyId = state.competitorOrg.companies[0]?.id || "";
+  addAuditLog("경쟁사 삭제", company.name, "Competitor Org Map 회사 삭제");
+  persistState();
+  renderAiSearch();
+
+  try {
+    await deleteCompetitorCompanyFromSupabase(companyId);
+    state.remoteSyncStatus = "Supabase 연결됨";
+  } catch (error) {
+    state.remoteSyncStatus = "Supabase 동기화 실패";
+    console.warn("Competitor company remote delete failed.", error);
+  }
+}
+
+async function handleCompetitorCsvUpload(file, companyId) {
+  const company = state.competitorOrg.companies.find((item) => item.id === companyId);
+
+  if (!file || !company) {
+    return;
+  }
+
+  state.competitorOrg.uploadLoading = true;
+  state.competitorOrg.uploadProgress = 12;
+  state.competitorOrg.uploadStatus = `${file.name} 파일을 읽는 중입니다.`;
+  renderAiSearch();
+
+  try {
+    const text = await file.text();
+    state.competitorOrg.uploadProgress = 36;
+    state.competitorOrg.uploadStatus = "CSV 행을 직원 데이터로 변환하는 중입니다.";
+    renderAiSearch();
+
+    const rows = parseCsvText(text);
+
+    if (!rows.length) {
+      throw new Error("CSV에서 직원 행을 찾지 못했습니다.");
+    }
+
+    const employees = rows
+      .map((row) => competitorEmployeeFromCsvRow(row, companyId))
+      .filter((employee) => employee.name || employee.linkedinUrl);
+
+    if (!employees.length) {
+      throw new Error("이름 또는 LinkedIn URL이 있는 직원 데이터를 찾지 못했습니다.");
+    }
+
+    state.competitorOrg.uploadProgress = 72;
+    state.competitorOrg.uploadStatus = `${employees.length}명 직원 데이터를 저장하는 중입니다.`;
+    state.competitorOrg.employees = [
+      ...state.competitorOrg.employees.filter((employee) => employee.companyId !== companyId),
+      ...employees
+    ];
+    company.updatedAt = getTodayDate();
+    company.syncUpdatedAt = new Date().toISOString();
+    addAuditLog("경쟁사 CSV 업로드", company.name, `${employees.length}명 직원 데이터 저장`);
+    persistState();
+    renderAiSearch();
+
+    try {
+      await upsertCompetitorCompanyToSupabase(company);
+      await upsertCompetitorEmployeesToSupabase(employees);
+      state.remoteSyncStatus = "Supabase 연결됨";
+    } catch (error) {
+      state.remoteSyncStatus = "Supabase 동기화 실패";
+      console.warn("Competitor employees remote save failed.", error);
+    }
+
+    state.competitorOrg.uploadProgress = 100;
+    state.competitorOrg.uploadStatus = `${employees.length}명 직원 데이터를 반영했습니다.`;
+    showToast("경쟁사 직원 데이터를 업로드했습니다.");
+  } catch (error) {
+    console.warn("Competitor CSV upload failed.", error);
+    state.competitorOrg.uploadProgress = 0;
+    state.competitorOrg.uploadStatus = error.message || "CSV 파일을 처리하지 못했습니다.";
+    showToast(state.competitorOrg.uploadStatus);
+  } finally {
+    state.competitorOrg.uploadLoading = false;
+    persistState({ skipRemoteSync: true });
+    renderAiSearch();
+  }
+}
+
+function buildCompetitorReport(companyId) {
+  const company = state.competitorOrg.companies.find((item) => item.id === companyId);
+  const employees = getCompetitorEmployees(companyId);
+  const keyTalents = employees.filter((employee) => employee.isKeyTalent);
+  const departments = countBy(employees, (employee) => employee.departmentAi || "Unclassified");
+  const topDepartments = Object.entries(departments).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const leadershipCount = employees.filter((employee) => /C-level|VP|Head|Director/i.test(employee.seniorityAi)).length;
+  const keyDepartments = countBy(keyTalents, (employee) => employee.departmentAi || "Unclassified");
+
+  return normalizeCompetitorReport({
+    companyId,
+    title: `${company?.name || "경쟁사"} 조직 분석 리포트`,
+    summary: `${company?.name || "해당 회사"}는 업로드 직원 ${employees.length}명 중 핵심 인재 후보 ${keyTalents.length}명이 식별되었습니다. 리더급 비중은 ${employees.length ? Math.round((leadershipCount / employees.length) * 100) : 0}%이며, ${topDepartments[0]?.[0] || "주요 부서"} 중심으로 조직 밀도가 확인됩니다.`,
+    departmentSummary: topDepartments.map(([department, count]) => `${department}: ${count}명 분포, 조직 내 비중 ${Math.round((count / Math.max(1, employees.length)) * 100)}%`),
+    keyTalentSummary: Object.entries(keyDepartments).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([department, count]) => `${department}: 핵심 인재 ${count}명, 우선 모니터링 필요`),
+    payload: {
+      employeeCount: employees.length,
+      keyTalentCount: keyTalents.length,
+      departmentCounts: departments,
+      generatedBy: getCurrentMember()?.name || ""
+    }
+  });
+}
+
+async function generateCompetitorOrgReport(companyId) {
+  const employees = getCompetitorEmployees(companyId);
+
+  if (!employees.length) {
+    showToast("CSV 업로드 후 리포트를 생성할 수 있습니다.");
+    return;
+  }
+
+  state.competitorOrg.reportLoading = true;
+  state.competitorOrg.reportStatus = "조직 구조와 핵심 인재 분포를 정리하는 중입니다.";
+  renderAiSearch();
+
+  const report = buildCompetitorReport(companyId);
+  state.competitorOrg.reports = [
+    report,
+    ...state.competitorOrg.reports.filter((item) => !(item.companyId === companyId && item.title === report.title))
+  ];
+  addAuditLog("경쟁사 리포트 생성", report.title, "조직 분석 대시보드 생성");
+  persistState();
+
+  try {
+    await upsertCompetitorReportToSupabase(report);
+    state.remoteSyncStatus = "Supabase 연결됨";
+    state.competitorOrg.reportStatus = "조직 분석 리포트를 저장했습니다.";
+  } catch (error) {
+    state.remoteSyncStatus = "Supabase 동기화 실패";
+    state.competitorOrg.reportStatus = "리포트는 로컬에 저장됐고, Supabase 테이블 적용 후 원격 저장됩니다.";
+    console.warn("Competitor report remote save failed.", error);
+  } finally {
+    state.competitorOrg.reportLoading = false;
+    persistState({ skipRemoteSync: true });
+    renderAiSearch();
+  }
 }
 
 function renderSavedJobFitAnalyses() {
@@ -28474,6 +29542,48 @@ function bindEvents() {
       return;
     }
 
+    const aiSearchTabButton = event.target.closest("[data-ai-search-tab]");
+    if (aiSearchTabButton) {
+      state.aiSearchTab = aiSearchTabButton.dataset.aiSearchTab || DEFAULT_AI_SEARCH_TAB;
+      persistState({ skipRemoteSync: true });
+      renderAiSearch();
+      return;
+    }
+
+    if (event.target.closest("[data-create-competitor-company]")) {
+      createCompetitorCompany().catch((error) => {
+        console.warn(error);
+        showToast("경쟁사 회사 등록 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    const selectCompetitorCompanyButton = event.target.closest("[data-select-competitor-company]");
+    if (selectCompetitorCompanyButton) {
+      state.competitorOrg.selectedCompanyId = selectCompetitorCompanyButton.dataset.selectCompetitorCompany;
+      persistState({ skipRemoteSync: true });
+      renderAiSearch();
+      return;
+    }
+
+    const deleteCompetitorCompanyButton = event.target.closest("[data-delete-competitor-company]");
+    if (deleteCompetitorCompanyButton) {
+      deleteCompetitorCompany(deleteCompetitorCompanyButton.dataset.deleteCompetitorCompany).catch((error) => {
+        console.warn(error);
+        showToast("경쟁사 데이터 삭제 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
+    const generateCompetitorReportButton = event.target.closest("[data-generate-competitor-report]");
+    if (generateCompetitorReportButton) {
+      generateCompetitorOrgReport(generateCompetitorReportButton.dataset.generateCompetitorReport).catch((error) => {
+        console.warn(error);
+        showToast("조직 분석 리포트 생성 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
     const deletePolicySourceButton = event.target.closest("[data-delete-policy-source]");
     if (deletePolicySourceButton) {
       deletePolicySource(deletePolicySourceButton.dataset.deletePolicySource).catch((error) => {
@@ -29181,6 +30291,18 @@ function bindEvents() {
     }
   });
 
+  document.addEventListener("input", (event) => {
+    if (event.target.id === "competitor-key-talent-query") {
+      state.competitorOrg.keyTalentQuery = event.target.value;
+      window.clearTimeout(renderKeyTalentFinderTab.timer);
+      renderKeyTalentFinderTab.timer = window.setTimeout(() => {
+        if (state.currentView === "ai-search" && state.aiSearchTab === "key-talent-finder") {
+          renderAiSearch();
+        }
+      }, 350);
+    }
+  });
+
   document.addEventListener("change", (event) => {
     if (event.target.id === "dashboard-organization-filter") {
       updateDashboardFilters();
@@ -29409,6 +30531,16 @@ function bindEvents() {
 
       if (file) {
         handleAiSearchFileUpload(file);
+      }
+    }
+
+    if (event.target.id === "competitor-csv-file") {
+      const file = event.target.files?.[0];
+      const companyId = event.target.dataset.competitorCompanyId || state.competitorOrg.selectedCompanyId;
+
+      if (file) {
+        handleCompetitorCsvUpload(file, companyId);
+        event.target.value = "";
       }
     }
 

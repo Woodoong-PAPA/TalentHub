@@ -4684,6 +4684,348 @@ tr:last-child td {
   gap: 12px;
 }
 
+.ai-search-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 4px;
+  background: var(--surface);
+}
+
+.competitor-workspace,
+.competitor-detail-stack,
+.competitor-company-list,
+.competitor-key-grid,
+.competitor-mini-lines,
+.competitor-report section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.competitor-company-bar,
+.competitor-section-header,
+.competitor-company-hero,
+.competitor-talent-head,
+.competitor-report > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.competitor-company-bar > div:first-child,
+.competitor-section-header > div,
+.competitor-company-hero > div:first-child,
+.competitor-talent-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.competitor-company-bar strong,
+.competitor-section-header strong,
+.competitor-company-hero h4,
+.competitor-talent-card strong,
+.competitor-report strong {
+  color: var(--text);
+}
+
+.competitor-company-bar span,
+.competitor-section-header span,
+.competitor-company-hero p,
+.competitor-talent-card span,
+.competitor-talent-card small,
+.competitor-mini-lines span,
+.competitor-report span,
+.competitor-report p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.competitor-company-create {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.competitor-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.competitor-company-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.competitor-company-card:hover,
+.competitor-company-card.is-active {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.competitor-company-card span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.competitor-company-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.competitor-company-hero h4 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.competitor-actions,
+.competitor-company-hero .competitor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.competitor-upload-zone {
+  min-height: 108px;
+}
+
+.competitor-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.competitor-analysis-grid,
+.competitor-report-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.competitor-org-tree {
+  display: grid;
+  gap: 10px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.competitor-org-tree details {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.competitor-org-tree summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.competitor-org-tree summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.competitor-tree-branch {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.competitor-tree-node {
+  display: grid;
+  gap: 6px;
+  border-left: 2px solid var(--blue);
+  padding-left: 10px;
+}
+
+.competitor-tree-node ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.competitor-tree-node li {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.38fr) minmax(0, 1fr);
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.competitor-tree-node small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.competitor-distribution {
+  display: grid;
+  gap: 8px;
+}
+
+.competitor-distribution + .competitor-distribution {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.competitor-bar-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 130px) minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.competitor-bar-row div {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.competitor-bar-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.competitor-bar-row b {
+  color: var(--text);
+  text-align: right;
+}
+
+.competitor-key-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.competitor-talent-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface);
+}
+
+.competitor-talent-head b {
+  display: inline-grid;
+  min-width: 44px;
+  min-height: 34px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--blue-700);
+  background: var(--blue-soft);
+  font-size: 16px;
+}
+
+.competitor-talent-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.competitor-mini-lines {
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.competitor-report {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface-soft);
+}
+
+.competitor-report p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.competitor-report section {
+  border-left: 2px solid var(--blue);
+  padding-left: 10px;
+}
+
+@media (max-width: 980px) {
+  .competitor-grid,
+  .competitor-analysis-grid,
+  .competitor-report-columns,
+  .competitor-key-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .competitor-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .competitor-company-create {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .ai-search-tabs,
+  .competitor-company-bar,
+  .competitor-section-header,
+  .competitor-company-hero,
+  .competitor-talent-head,
+  .competitor-report > div:first-child {
+    align-items: stretch;
+  }
+
+  .competitor-company-bar,
+  .competitor-section-header,
+  .competitor-company-hero {
+    flex-direction: column;
+  }
+
+  .competitor-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .competitor-tree-node li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .match-score {
   display: grid;
   width: 76px;
