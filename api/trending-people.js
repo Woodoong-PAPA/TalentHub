@@ -1215,7 +1215,7 @@ async function callOpenAIForPeople(targetDate, articles, excludedNames, searchSe
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const model = process.env.OPENAI_TRENDING_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const model = process.env.OPENAI_TRENDING_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-nano";
   const settings = normalizeSearchSettings(searchSettings);
   const prompt = [
     `관리자 관심 분야 설정: ${settings.prompt}`,
@@ -1270,7 +1270,7 @@ async function callOpenAIForProfileEnrichment(targetDate, people) {
     return { people: [] };
   }
 
-  const model = process.env.OPENAI_PROFILE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1";
+  const model = process.env.OPENAI_PROFILE_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-mini";
   const prompt = [
     "너는 삼성전자 DX부문 채용 담당자를 위한 공개 웹 프로필 리서치 애널리스트다.",
     `대상 리포트 기사일: ${targetDate}.`,
