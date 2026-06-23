@@ -185,11 +185,28 @@ function mapGmailConnection(row = {}) {
 }
 
 async function listGmailConnections() {
-  const rows = await supabaseRest("gmail_connections?select=id,user_id,gmail_address,encrypted_refresh_token,granted_scopes,history_id,watch_expiration_at,last_watch_renewed_at,last_synced_at,status,last_error,created_at&status=eq.CONNECTED", {
+  const rows = await supabaseRest("gmail_connections?select=id,user_id,gmail_address,encrypted_refresh_token,granted_scopes,history_id,watch_expiration_at,last_watch_renewed_at,last_synced_at,status,last_error,created_at,updated_at&status=eq.CONNECTED", {
     method: "GET"
   });
 
-  return Array.isArray(rows) ? rows : [];
+  const list = Array.isArray(rows) ? rows : [];
+  const byAddress = new Map();
+
+  list
+    .slice()
+    .sort((a, b) => (
+      Date.parse(b.updated_at || b.last_synced_at || b.created_at || 0) -
+      Date.parse(a.updated_at || a.last_synced_at || a.created_at || 0)
+    ))
+    .forEach((row) => {
+      const key = normalizeEmailAddress(row.gmail_address || row.user_id || row.id);
+
+      if (!byAddress.has(key)) {
+        byAddress.set(key, row);
+      }
+    });
+
+  return [...byAddress.values()];
 }
 
 async function updateGmailConnection(row, changes = {}) {
