@@ -4673,7 +4673,7 @@ tr:last-child td {
 
 .scheduling-table {
   width: 100%;
-  min-width: 1180px;
+  min-width: 1260px;
   border-collapse: collapse;
 }
 
@@ -4698,8 +4698,16 @@ tr:last-child td {
   font-size: 14px;
 }
 
-.scheduling-table tr.is-review {
+.scheduling-table tr.is-review,
+.scheduling-table tr.is-warning {
   background: #fff8f1;
+}
+
+.scheduling-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .scheduling-detail-panel {
@@ -4718,6 +4726,45 @@ tr:last-child td {
 .scheduling-detail-header h3 {
   margin: 4px 0 6px;
   font-size: 24px;
+}
+
+.scheduling-stage-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.scheduling-stage-tab {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  padding: 12px 14px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scheduling-stage-tab:last-child {
+  border-right: 0;
+}
+
+.scheduling-stage-tab small {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scheduling-stage-tab.is-active {
+  background: #eef6ff;
+  color: #1d4ed8;
 }
 
 .scheduling-detail-grid {
@@ -4800,6 +4847,15 @@ tr:last-child td {
 .scheduling-ai-list {
   display: grid;
   gap: 10px;
+}
+
+.scheduling-scroll-box {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
 }
 
 .scheduling-timeline-list article,
@@ -4975,6 +5031,19 @@ tr:last-child td {
 
   .scheduling-toolbar-actions {
     justify-content: stretch;
+  }
+
+  .scheduling-stage-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .scheduling-stage-tab {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .scheduling-stage-tab:last-child {
+    border-bottom: 0;
   }
 }
 
@@ -8468,9 +8537,19 @@ tr:last-child td {
 
   .scheduling-summary-grid,
   .scheduling-toolbar-main,
+  .scheduling-stage-tabs,
   .scheduling-detail-grid,
   .scheduling-mini-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scheduling-stage-tab {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .scheduling-stage-tab:last-child {
+    border-bottom: 0;
   }
 
   .scheduling-toolbar,

@@ -2475,6 +2475,9 @@ function normalizeSchedulingCase(schedulingCase = {}) {
   return {
     id: schedulingCase.id || createId("scheduling-case"),
     caseCode: String(schedulingCase.caseCode || schedulingCase.case_code || "").trim(),
+    sourceFolderId: String(schedulingCase.sourceFolderId || schedulingCase.source_folder_id || "").trim(),
+    sourceApplicantId: String(schedulingCase.sourceApplicantId || schedulingCase.source_applicant_id || "").trim(),
+    sourceStageId: String(schedulingCase.sourceStageId || schedulingCase.source_stage_id || "").trim(),
     candidateName,
     candidateEmail,
     positionName: String(schedulingCase.positionName || schedulingCase.position_name || "").trim(),
@@ -2522,15 +2525,25 @@ function normalizeSchedulingCase(schedulingCase = {}) {
 
 function normalizeInterviewSchedulingState(value = {}) {
   const current = state?.interviewScheduling || {};
-  const cases = Array.isArray(value.cases)
-    ? value.cases.map(normalizeSchedulingCase).sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt))
-    : [];
-  const selectedCaseId = String(value.selectedCaseId || value.selectedSchedulingCaseId || "").trim();
+  const deletedCaseIds = normalizeIdList([
+    ...(current.deletedCaseIds || []),
+    ...(value.deletedCaseIds || value.deleted_case_ids || [])
+  ]);
+  const deletedCaseIdSet = new Set(deletedCaseIds);
+  const sourceCases = Array.isArray(value.cases) ? value.cases : current.cases || [];
+  const cases = sourceCases
+    .map(normalizeSchedulingCase)
+    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt))
+    .filter((item) => item.id && !deletedCaseIdSet.has(item.id));
+  const selectedCaseId = String(value.selectedCaseId || value.selectedSchedulingCaseId || current.selectedCaseId || "").trim();
   const filters = value.filters && typeof value.filters === "object" ? value.filters : {};
-  const gmailConnection = value.gmailConnection && typeof value.gmailConnection === "object" ? value.gmailConnection : {};
+  const gmailConnection = value.gmailConnection && typeof value.gmailConnection === "object"
+    ? value.gmailConnection
+    : current.gmailConnection || {};
 
   return {
     cases,
+    deletedCaseIds,
     selectedCaseId: cases.some((item) => item.id === selectedCaseId) ? selectedCaseId : cases[0]?.id || "",
     filters: {
       query: String(filters.query || current.filters?.query || "").trim(),
@@ -2538,8 +2551,8 @@ function normalizeInterviewSchedulingState(value = {}) {
       owner: String(filters.owner || current.filters?.owner || "all").trim() || "all",
       sortBy: ["createdAt", "updatedAt"].includes(filters.sortBy) ? filters.sortBy : current.filters?.sortBy || "updatedAt"
     },
-    createModalOpen: Boolean(value.createModalOpen),
-    simulationModalOpen: Boolean(value.simulationModalOpen),
+    createModalOpen: Boolean(value.createModalOpen || current.createModalOpen),
+    simulationModalOpen: Boolean(value.simulationModalOpen || current.simulationModalOpen),
     gmailConnection: {
       connected: Boolean(gmailConnection.connected),
       gmailAddress: String(gmailConnection.gmailAddress || gmailConnection.gmail_address || "").trim(),
@@ -2862,6 +2875,121 @@ function createInterviewCaseFromScreening(folder, applicant) {
   });
 }
 
+function getSchedulingDefaultWindow() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 30);
+  end.setHours(23, 59, 0, 0);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString()
+  };
+}
+
+function getSchedulingStageCaseId(folderId, applicantId, stageId) {
+  return `scheduling-${folderId}-${applicantId}-${stageId}`;
+}
+
+function buildSchedulingParticipantsFromScreening(folder, applicant, stageId = "phone") {
+  const candidate = normalizeSchedulingParticipant({
+    role: "CANDIDATE",
+    name: applicant.name,
+    email: applicant.email,
+    required: true
+  });
+  const panelMembers = stageId === "phone"
+    ? (Array.isArray(folder.interviewPanel?.members) && folder.interviewPanel.members.length
+      ? folder.interviewPanel.members
+      : normalizeEmailList(folder.interviewPanel?.emails || "").map((email, index) => ({
+        name: String(folder.interviewPanel?.names || "").split(",")[index]?.trim() || `면접위원 ${index + 1}`,
+        email
+      })))
+    : [];
+  const interviewers = panelMembers
+    .map((member, index) => normalizeSchedulingParticipant({
+      role: "INTERVIEWER",
+      name: member.name || member.role || `면접위원 ${index + 1}`,
+      email: member.email || "",
+      required: true
+    }))
+    .filter((participant) => participant.email || participant.name);
+
+  return [candidate, ...interviewers];
+}
+
+function createSchedulingCaseFromScreening(folder, applicant, stageId = "phone") {
+  const stage = getInterviewStageConfig(stageId);
+  const window = getSchedulingDefaultWindow();
+
+  return normalizeSchedulingCase({
+    id: getSchedulingStageCaseId(folder.id, applicant.id, stage.id),
+    caseCode: createSchedulingCaseCode(),
+    sourceFolderId: folder.id,
+    sourceApplicantId: applicant.id,
+    sourceStageId: stage.id,
+    candidateName: applicant.name,
+    candidateEmail: applicant.email,
+    positionName: folder.positionName || folder.title,
+    interviewStage: stage.label,
+    durationMinutes: stage.id === "phone" ? 30 : 60,
+    slotIntervalMinutes: 30,
+    timezone: "Asia/Seoul",
+    schedulingWindowStart: window.start,
+    schedulingWindowEnd: window.end,
+    meetingMethod: stage.id === "phone" ? "전화" : "",
+    meetingDetails: folder.interviewPanel?.availability || "",
+    assignedUserId: folder.createdById || getCurrentMember()?.id || "",
+    assignedUserName: folder.createdByName || getCurrentActorName(),
+    internalNote: `${folder.title || folder.positionName || "포지션"} ${stage.label} 일정 조율`,
+    participants: buildSchedulingParticipantsFromScreening(folder, applicant, stage.id),
+    status: "CREATED",
+    createdAt: getTimestampText(),
+    updatedAt: getTimestampText()
+  });
+}
+
+function updateSchedulingCaseFromScreening(existingCase, folder, applicant, stageId = "phone") {
+  const nextEmail = String(applicant.email || "").trim().toLowerCase();
+  const nextName = String(applicant.name || "").trim();
+  const nextPosition = String(folder.positionName || folder.title || "").trim();
+  let changed = false;
+
+  if (nextName && existingCase.candidateName !== nextName) {
+    existingCase.candidateName = nextName;
+    changed = true;
+  }
+  if (nextEmail && existingCase.candidateEmail !== nextEmail) {
+    existingCase.candidateEmail = nextEmail;
+    changed = true;
+  }
+  if (nextPosition && existingCase.positionName !== nextPosition) {
+    existingCase.positionName = nextPosition;
+    changed = true;
+  }
+
+  const hasWorkflowHistory = Boolean((existingCase.messages || []).length || (existingCase.availability || []).length || (existingCase.options || []).length);
+  if (!hasWorkflowHistory) {
+    const nextParticipants = buildSchedulingParticipantsFromScreening(folder, applicant, stageId);
+    if (JSON.stringify(existingCase.participants || []) !== JSON.stringify(nextParticipants)) {
+      existingCase.participants = nextParticipants;
+      changed = true;
+    }
+  } else {
+    const candidate = (existingCase.participants || []).find((participant) => participant.role === "CANDIDATE");
+    if (candidate) {
+      if (nextName && candidate.name !== nextName) candidate.name = nextName;
+      if (nextEmail && candidate.email !== nextEmail) candidate.email = nextEmail;
+    }
+  }
+
+  if (changed) {
+    existingCase.updatedAt = getTimestampText();
+  }
+
+  return changed;
+}
+
 function getDeletedInterviewCaseIdSet() {
   return new Set(normalizeIdList(state.interviewDeletedCaseIds));
 }
@@ -2958,6 +3086,53 @@ function syncInterviewCasesFromScreening() {
 
   if (changed) {
     interviewCasesLocalDirty = true;
+  }
+
+  return changed;
+}
+
+function syncSchedulingCasesFromScreening() {
+  const scheduling = getInterviewSchedulingState();
+  const deletedCaseIds = new Set(normalizeIdList(scheduling.deletedCaseIds));
+  const eligibleStages = new Set(["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]);
+  let changed = false;
+
+  state.screeningFolders.forEach((folder) => {
+    (folder.applicants || [])
+      .filter((applicant) => eligibleStages.has(applicant.stage))
+      .forEach((applicant) => {
+        INTERVIEW_STAGE_IDS.forEach((stageId) => {
+          const caseId = getSchedulingStageCaseId(folder.id, applicant.id, stageId);
+
+          if (deletedCaseIds.has(caseId)) {
+            return;
+          }
+
+          const existingCase = scheduling.cases.find((item) => item.id === caseId);
+
+          if (existingCase) {
+            if (updateSchedulingCaseFromScreening(existingCase, folder, applicant, stageId)) {
+              changed = true;
+            }
+            return;
+          }
+
+          const nextCase = createSchedulingCaseFromScreening(folder, applicant, stageId);
+          addSchedulingAuditLog(nextCase, "CASE_CREATED_FROM_SCREENING", "직무적합도 평가 합격자 정보에서 면접 조율 건을 생성했습니다.", "SYSTEM");
+          scheduling.cases.unshift(nextCase);
+          changed = true;
+        });
+      });
+  });
+
+  if (changed) {
+    scheduling.cases = scheduling.cases
+      .map(normalizeSchedulingCase)
+      .filter((item) => !deletedCaseIds.has(item.id))
+      .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+    if (!scheduling.cases.some((item) => item.id === scheduling.selectedCaseId)) {
+      scheduling.selectedCaseId = scheduling.cases[0]?.id || "";
+    }
   }
 
   return changed;
@@ -10312,6 +10487,52 @@ function findSchedulingCase(caseId) {
   return getInterviewSchedulingState().cases.find((item) => item.id === caseId) || null;
 }
 
+function getSchedulingCaseStageId(schedulingCase = {}) {
+  const sourceStageId = String(schedulingCase.sourceStageId || "").trim();
+
+  if (INTERVIEW_STAGE_IDS.includes(sourceStageId)) {
+    return sourceStageId;
+  }
+
+  const label = String(schedulingCase.interviewStage || "").trim();
+  return INTERVIEW_STAGE_CONFIG.find((stage) => label.includes(stage.label) || stage.label.includes(label))?.id || "phone";
+}
+
+function getSchedulingCaseGroupKey(schedulingCase = {}) {
+  if (schedulingCase.sourceFolderId && schedulingCase.sourceApplicantId) {
+    return `${schedulingCase.sourceFolderId}:${schedulingCase.sourceApplicantId}`;
+  }
+
+  return String(schedulingCase.candidateEmail || schedulingCase.candidateName || schedulingCase.id || "").trim().toLowerCase();
+}
+
+function getSchedulingCasesInGroup(schedulingCase = {}) {
+  const key = getSchedulingCaseGroupKey(schedulingCase);
+
+  if (!key) {
+    return [schedulingCase].filter(Boolean);
+  }
+
+  return getInterviewSchedulingState().cases
+    .filter((item) => getSchedulingCaseGroupKey(item) === key)
+    .sort((a, b) => INTERVIEW_STAGE_IDS.indexOf(getSchedulingCaseStageId(a)) - INTERVIEW_STAGE_IDS.indexOf(getSchedulingCaseStageId(b)));
+}
+
+function isSchedulingCaseDeletedId(caseId) {
+  return new Set(normalizeIdList(getInterviewSchedulingState().deletedCaseIds)).has(String(caseId || "").trim());
+}
+
+function rememberDeletedSchedulingCaseId(caseId) {
+  const scheduling = getInterviewSchedulingState();
+  const id = String(caseId || "").trim();
+
+  if (!id) {
+    return;
+  }
+
+  scheduling.deletedCaseIds = normalizeIdList([...(scheduling.deletedCaseIds || []), id]);
+}
+
 function replaceSchedulingCase(schedulingCase) {
   const scheduling = getInterviewSchedulingState();
   const normalized = normalizeSchedulingCase(schedulingCase);
@@ -10465,7 +10686,7 @@ function getFilteredSchedulingCases() {
         return true;
       }
 
-      return [item.caseCode, item.candidateName, item.candidateEmail, item.positionName, item.assignedUserName]
+      return [item.candidateName, item.candidateEmail, item.positionName, item.assignedUserName]
         .some((value) => String(value || "").toLowerCase().includes(query));
     })
     .sort((a, b) => scheduling.filters.sortBy === "createdAt"
@@ -10483,7 +10704,7 @@ function renderSchedulingToolbar(cases) {
       <div class="scheduling-toolbar-main">
         <label>
           <span class="visually-hidden">검색</span>
-          <input id="scheduling-query" class="control-input" value="${inputValue(scheduling.filters.query)}" placeholder="후보자명, 이메일, 포지션, 조율번호 검색" />
+          <input id="scheduling-query" class="control-input" value="${inputValue(scheduling.filters.query)}" placeholder="후보자명, 이메일, 포지션 검색" />
         </label>
         <select id="scheduling-status" class="control-input">
           <option value="all" ${scheduling.filters.status === "all" ? "selected" : ""}>전체 상태</option>
@@ -10535,7 +10756,6 @@ function renderSchedulingCaseList(cases) {
         <table class="scheduling-table">
           <thead>
             <tr>
-              <th>조율번호</th>
               <th>후보자명</th>
               <th>지원 포지션</th>
               <th>면접 단계</th>
@@ -10546,6 +10766,7 @@ function renderSchedulingCaseList(cases) {
               <th>제안/확정 일시</th>
               <th>최근 업데이트</th>
               <th>담당자</th>
+              <th>관리</th>
             </tr>
           </thead>
           <tbody>
@@ -10557,7 +10778,6 @@ function renderSchedulingCaseList(cases) {
                   : "-";
               return `
                 <tr class="${item.status === "MANUAL_REVIEW" ? "is-warning" : ""}">
-                  <td><button class="link-button" type="button" data-select-scheduling-case="${escapeHtml(item.id)}">${escapeHtml(item.caseCode || "-")}</button></td>
                   <td>
                     <button class="link-button strong-link" type="button" data-select-scheduling-case="${escapeHtml(item.id)}">${escapeHtml(item.candidateName || "-")}</button>
                     <small>${escapeHtml(item.candidateEmail || "-")}</small>
@@ -10571,6 +10791,12 @@ function renderSchedulingCaseList(cases) {
                   <td><span class="pre-line-text">${escapeHtml(selectedOrConfirmed)}</span></td>
                   <td>${escapeHtml(item.updatedAt || "-")}</td>
                   <td>${escapeHtml(item.assignedUserName || "-")}</td>
+                  <td>
+                    <div class="scheduling-row-actions">
+                      <button class="ghost-button compact-button" type="button" data-select-scheduling-case="${escapeHtml(item.id)}">상세</button>
+                      <button class="ghost-button danger-button compact-button" type="button" data-delete-scheduling-case="${escapeHtml(item.id)}">삭제</button>
+                    </div>
+                  </td>
                 </tr>
               `;
             }).join("")}
@@ -10620,41 +10846,71 @@ function renderSchedulingOptions(schedulingCase) {
 }
 
 function renderSchedulingMessages(schedulingCase) {
-  const messages = [...(schedulingCase.messages || [])].sort((a, b) => dateSortValue(b.createdAt) - dateSortValue(a.createdAt)).slice(0, 12);
+  const messages = [...(schedulingCase.messages || [])].sort((a, b) => dateSortValue(b.createdAt) - dateSortValue(a.createdAt));
 
   if (!messages.length) {
-    return `<span class="muted-text">아직 이메일 이력이 없습니다.</span>`;
+    return `<div class="scheduling-scroll-box"><span class="muted-text">아직 이메일 이력이 없습니다.</span></div>`;
   }
 
   return `
-    <div class="scheduling-timeline-list">
-      ${messages.map((message) => `
-        <article>
-          <strong>${escapeHtml(message.direction === "inbound" ? "수신" : "발신")} · ${escapeHtml(message.type || "-")} · ${escapeHtml(message.status || "-")}</strong>
-          <span>${escapeHtml(message.createdAt || "-")} · ${escapeHtml(message.recipient || message.fromAddress || "-")}</span>
-          <p>${escapeHtml(message.subject || "-")}</p>
-        </article>
-      `).join("")}
+    <div class="scheduling-scroll-box">
+      <div class="scheduling-timeline-list">
+        ${messages.map((message) => `
+          <article>
+            <strong>${escapeHtml(message.direction === "inbound" ? "수신" : "발신")} · ${escapeHtml(message.type || "-")} · ${escapeHtml(message.status || "-")}</strong>
+            <span>${escapeHtml(message.createdAt || "-")} · ${escapeHtml(message.recipient || message.fromAddress || "-")}</span>
+            <p>${escapeHtml(message.subject || "-")}</p>
+          </article>
+        `).join("")}
+      </div>
     </div>
   `;
 }
 
 function renderSchedulingAudit(schedulingCase) {
-  const logs = (schedulingCase.auditLogs || []).slice(0, 12);
+  const logs = schedulingCase.auditLogs || [];
 
   if (!logs.length) {
-    return `<span class="muted-text">감사 로그가 없습니다.</span>`;
+    return `<div class="scheduling-scroll-box"><span class="muted-text">감사 로그가 없습니다.</span></div>`;
   }
 
   return `
-    <div class="scheduling-timeline-list">
-      ${logs.map((log) => `
-        <article>
-          <strong>${escapeHtml(log.eventType || "-")} · ${escapeHtml(log.actorType || "-")}</strong>
-          <span>${escapeHtml(log.createdAt || "-")} · ${escapeHtml(log.actorName || "-")}</span>
-          <p>${escapeHtml(log.eventSummary || "-")}</p>
-        </article>
-      `).join("")}
+    <div class="scheduling-scroll-box">
+      <div class="scheduling-timeline-list">
+        ${logs.map((log) => `
+          <article>
+            <strong>${escapeHtml(log.eventType || "-")} · ${escapeHtml(log.actorType || "-")}</strong>
+            <span>${escapeHtml(log.createdAt || "-")} · ${escapeHtml(log.actorName || "-")}</span>
+            <p>${escapeHtml(log.eventSummary || "-")}</p>
+          </article>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderSchedulingStageTabs(schedulingCase) {
+  const groupedCases = getSchedulingCasesInGroup(schedulingCase);
+  const stageCaseMap = new Map(groupedCases.map((item) => [getSchedulingCaseStageId(item), item]));
+  const activeStageId = getSchedulingCaseStageId(schedulingCase);
+
+  return `
+    <div class="scheduling-stage-tabs" role="tablist" aria-label="면접 단계">
+      ${INTERVIEW_STAGE_CONFIG.map((stage) => {
+        const stageCase = stageCaseMap.get(stage.id);
+        const isActive = activeStageId === stage.id;
+        const statusLabel = stageCase ? getSchedulingStatusLabel(stageCase.status) : "미생성";
+        const buttonAttrs = stageCase
+          ? `data-select-scheduling-case="${escapeHtml(stageCase.id)}"`
+          : `data-create-scheduling-stage="${escapeHtml(stage.id)}" data-scheduling-case-id="${escapeHtml(schedulingCase.id)}"`;
+
+        return `
+          <button class="scheduling-stage-tab ${isActive ? "is-active" : ""}" type="button" role="tab" ${buttonAttrs}>
+            <span>${escapeHtml(stage.label)}</span>
+            <small>${escapeHtml(statusLabel)}</small>
+          </button>
+        `;
+      }).join("")}
     </div>
   `;
 }
@@ -10716,8 +10972,10 @@ function renderSchedulingDetail(schedulingCase) {
           <button class="soft-button compact-button" type="button" data-send-scheduling-options="${escapeHtml(schedulingCase.id)}" ${schedulingCase.options.length ? "" : "disabled"}>선택지 발송</button>
           <button class="ghost-button danger-button compact-button" type="button" data-scheduling-manual-review="${escapeHtml(schedulingCase.id)}">수동 검토 전환</button>
           <button class="ghost-button danger-button compact-button" type="button" data-cancel-scheduling-case="${escapeHtml(schedulingCase.id)}">취소</button>
+          <button class="ghost-button danger-button compact-button" type="button" data-delete-scheduling-case="${escapeHtml(schedulingCase.id)}">삭제</button>
         </div>
       </div>
+      ${renderSchedulingStageTabs(schedulingCase)}
       <div class="scheduling-detail-grid">
         <article class="scheduling-info-card">
           <h5>기본 정보</h5>
@@ -10725,7 +10983,6 @@ function renderSchedulingDetail(schedulingCase) {
             <dt>후보자</dt><dd>${escapeHtml(schedulingCase.candidateName || "-")} · ${escapeHtml(schedulingCase.candidateEmail || "-")}</dd>
             <dt>소요시간</dt><dd>${escapeHtml(String(schedulingCase.durationMinutes))}분</dd>
             <dt>슬롯 간격</dt><dd>${escapeHtml(String(schedulingCase.slotIntervalMinutes))}분</dd>
-            <dt>조율 기간</dt><dd>${escapeHtml(formatSchedulingRange(schedulingCase.schedulingWindowStart, schedulingCase.schedulingWindowEnd, schedulingCase.timezone))}</dd>
             <dt>진행 방식</dt><dd>${escapeHtml(schedulingCase.meetingMethod || "-")}</dd>
             <dt>장소/URL</dt><dd>${escapeHtml(schedulingCase.meetingDetails || "-")}</dd>
             <dt>담당자</dt><dd>${escapeHtml(schedulingCase.assignedUserName || "-")}</dd>
@@ -10751,14 +11008,10 @@ function renderSchedulingDetail(schedulingCase) {
           ${renderSchedulingMessages(schedulingCase)}
         </section>
         <section class="scheduling-section">
-          <div class="panel-header compact-panel-header"><h5>AI 분석 결과와 신뢰도</h5></div>
-          ${renderSchedulingAiAnalyses(schedulingCase)}
+          <div class="panel-header compact-panel-header"><h5>감사 로그</h5></div>
+          ${renderSchedulingAudit(schedulingCase)}
         </section>
       </div>
-      <section class="scheduling-section">
-        <div class="panel-header compact-panel-header"><h5>감사 로그</h5></div>
-        ${renderSchedulingAudit(schedulingCase)}
-      </section>
     </section>
   `;
 }
@@ -10785,8 +11038,6 @@ function renderSchedulingCreateModal() {
   }
 
   const member = getCurrentMember();
-  const today = getTodayDate();
-  const nextWeek = typeof addDaysToScreeningDate === "function" ? addDaysToScreeningDate(today, 7) : today;
 
   return `
     <div class="trending-modal-backdrop" data-close-scheduling-create>
@@ -10808,10 +11059,6 @@ function renderSchedulingCreateModal() {
             <label><span>일정 슬롯 간격</span><input class="control-input" name="slotIntervalMinutes" type="number" min="15" step="15" value="30" /></label>
             <label><span>기준 시간대</span><input class="control-input" name="timezone" value="Asia/Seoul" /></label>
             <label><span>면접 진행 방식</span><input class="control-input" name="meetingMethod" placeholder="화상 / 전화 / 대면" /></label>
-            <label><span>조율 대상 시작일</span><input class="control-input" name="schedulingWindowStart" type="datetime-local" value="${inputValue(`${today}T09:00`)}" /></label>
-            <label><span>조율 대상 종료일</span><input class="control-input" name="schedulingWindowEnd" type="datetime-local" value="${inputValue(`${nextWeek}T18:00`)}" /></label>
-            <label><span>후보자 회신 기한</span><input class="control-input" name="candidateReplyDeadline" type="datetime-local" /></label>
-            <label><span>면접위원 회신 기한</span><input class="control-input" name="interviewerReplyDeadline" type="datetime-local" /></label>
             <label class="form-grid-full"><span>면접 장소 또는 화상면접 URL</span><input class="control-input" name="meetingDetails" /></label>
             <label class="form-grid-full"><span>담당자 내부 메모</span><textarea class="control-textarea" name="internalNote" rows="3"></textarea></label>
           </div>
@@ -10847,7 +11094,7 @@ function renderSchedulingSimulationModal() {
   }
 
   const selectedSchedulingCase = getSelectedSchedulingCase();
-  const participants = selectedCase?.participants || [];
+  const participants = selectedSchedulingCase?.participants || [];
 
   return `
     <div class="trending-modal-backdrop" data-close-scheduling-simulation>
@@ -10864,7 +11111,7 @@ function renderSchedulingSimulationModal() {
             <label>
               <span>조율 건</span>
               <select class="control-input" name="caseId" required>
-                ${scheduling.cases.map((item) => `<option value="${escapeHtml(item.id)}" ${selectedCase?.id === item.id ? "selected" : ""}>${escapeHtml(item.caseCode || "-")} · ${escapeHtml(item.candidateName || "-")}</option>`).join("")}
+                ${scheduling.cases.map((item) => `<option value="${escapeHtml(item.id)}" ${selectedSchedulingCase?.id === item.id ? "selected" : ""}>${escapeHtml(item.caseCode || "-")} · ${escapeHtml(item.candidateName || "-")}</option>`).join("")}
               </select>
             </label>
             <label>
@@ -10873,14 +11120,14 @@ function renderSchedulingSimulationModal() {
                 ${participants.map((participant) => `<option value="${escapeHtml(participant.id)}">${escapeHtml(participant.name || participant.email || "-")} · ${escapeHtml(participant.email || "-")}</option>`).join("")}
               </select>
             </label>
-            <label class="form-grid-full"><span>메일 제목</span><input class="control-input" name="subject" value="[면접일정 조율][${escapeHtml(selectedCase?.caseCode || "INT-2026-0001")}]" /></label>
+            <label class="form-grid-full"><span>메일 제목</span><input class="control-input" name="subject" value="[면접일정 조율][${escapeHtml(selectedSchedulingCase?.caseCode || "INT-2026-0001")}]" /></label>
             <label><span>수신 시각</span><input class="control-input" type="datetime-local" name="receivedAt" value="${inputValue(new Date().toISOString().slice(0, 16))}" /></label>
-            <label><span>기준 시간대</span><input class="control-input" name="timezone" value="${inputValue(selectedCase?.timezone || "Asia/Seoul")}" /></label>
-            <label class="form-grid-full"><span>메일 본문</span><textarea class="control-textarea" name="body" rows="7" placeholder="예: 7월 1일 오후 2시부터 6시까지 가능합니다.">${escapeHtml(selectedCase ? `${selectedCase.caseCode}\n7월 1일 오후 2시부터 6시까지 가능합니다.` : "")}</textarea></label>
+            <label><span>기준 시간대</span><input class="control-input" name="timezone" value="${inputValue(selectedSchedulingCase?.timezone || "Asia/Seoul")}" /></label>
+            <label class="form-grid-full"><span>메일 본문</span><textarea class="control-textarea" name="body" rows="7" placeholder="예: 7월 1일 오후 2시부터 6시까지 가능합니다.">${escapeHtml(selectedSchedulingCase ? `${selectedSchedulingCase.caseCode}\n7월 1일 오후 2시부터 6시까지 가능합니다.` : "")}</textarea></label>
           </div>
           <div class="modal-actions">
             <button class="ghost-button" type="button" data-close-scheduling-simulation>취소</button>
-            <button class="primary-button" type="submit" ${selectedCase ? "" : "disabled"}>회신 처리</button>
+            <button class="primary-button" type="submit" ${selectedSchedulingCase ? "" : "disabled"}>회신 처리</button>
           </div>
         </form>
       </section>
@@ -10896,6 +11143,9 @@ function renderInterviewView() {
   }
 
   const scheduling = getInterviewSchedulingState();
+  if (syncSchedulingCasesFromScreening()) {
+    setInterviewSchedulingDirty("");
+  }
   const schedulingCases = getFilteredSchedulingCases();
   const selectedSchedulingCase = getSelectedSchedulingCase();
 
@@ -10910,27 +11160,6 @@ function renderInterviewView() {
     ${renderSchedulingSimulationModal()}
   `;
   return;
-
-  ensureInterviewDefaults();
-  const cases = getVisibleInterviewCases();
-  const selectedCase = getSelectedInterviewCase();
-
-  container.innerHTML = `
-    <div class="interview-layout">
-      <aside class="interview-sidebar">
-        <div class="panel-header">
-          <div>
-            <h4>인터뷰 대상자</h4>
-            <span>Screening 2차 합격 확정자 기반</span>
-          </div>
-          <span class="small-pill">${cases.length}명</span>
-        </div>
-        ${renderInterviewCaseList(cases)}
-      </aside>
-      ${renderInterviewDetail(selectedCase)}
-    </div>
-    ${renderInterviewMailPreviewModal()}
-  `;
 }
 
 function toSchedulingIso(value) {
@@ -11185,6 +11414,7 @@ function createSchedulingCaseFromForm(form) {
   const positionName = schedulingFormValue(form, "positionName");
   const interviewStage = schedulingFormValue(form, "interviewStage") || "전화면접";
   const timezone = schedulingFormValue(form, "timezone") || "Asia/Seoul";
+  const schedulingWindow = getSchedulingDefaultWindow();
 
   if (!candidateName || !candidateEmail || !positionName) {
     showToast("후보자명, 후보자 이메일, 지원 포지션을 입력해주세요.");
@@ -11228,13 +11458,14 @@ function createSchedulingCaseFromForm(form) {
     candidateEmail,
     positionName,
     interviewStage,
+    sourceStageId: getSchedulingCaseStageId({ interviewStage }),
     durationMinutes: Number(schedulingFormValue(form, "durationMinutes") || 60),
     slotIntervalMinutes: Number(schedulingFormValue(form, "slotIntervalMinutes") || 30),
     timezone,
-    schedulingWindowStart: toSchedulingIso(schedulingFormValue(form, "schedulingWindowStart")),
-    schedulingWindowEnd: toSchedulingIso(schedulingFormValue(form, "schedulingWindowEnd")),
-    candidateReplyDeadline: toSchedulingIso(schedulingFormValue(form, "candidateReplyDeadline")),
-    interviewerReplyDeadline: toSchedulingIso(schedulingFormValue(form, "interviewerReplyDeadline")),
+    schedulingWindowStart: schedulingWindow.start,
+    schedulingWindowEnd: schedulingWindow.end,
+    candidateReplyDeadline: "",
+    interviewerReplyDeadline: "",
     meetingMethod: schedulingFormValue(form, "meetingMethod"),
     meetingDetails: schedulingFormValue(form, "meetingDetails"),
     assignedUserId: schedulingFormValue(form, "assignedUserId") || getCurrentMember()?.id || "",
@@ -11300,6 +11531,97 @@ function selectSchedulingCase(caseId) {
   const scheduling = getInterviewSchedulingState();
   scheduling.selectedCaseId = caseId;
   persistState({ skipRemoteSync: true });
+  renderInterviewView();
+}
+
+function createSchedulingStageCaseFromExisting(caseId, stageId) {
+  const baseCase = findSchedulingCase(caseId);
+  const stage = getInterviewStageConfig(stageId);
+
+  if (!baseCase || !stage) {
+    showToast("생성할 면접 단계 정보를 찾을 수 없습니다.");
+    return;
+  }
+
+  const targetId = baseCase.sourceFolderId && baseCase.sourceApplicantId
+    ? getSchedulingStageCaseId(baseCase.sourceFolderId, baseCase.sourceApplicantId, stage.id)
+    : createId("scheduling-case");
+
+  if (findSchedulingCase(targetId)) {
+    selectSchedulingCase(targetId);
+    return;
+  }
+
+  const candidate = getSchedulingCandidateParticipant(baseCase);
+  const interviewers = baseCase.participants
+    .filter((participant) => participant.role === "INTERVIEWER")
+    .map((participant) => normalizeSchedulingParticipant({
+      ...participant,
+      id: createId("participant"),
+      responseStatus: "PENDING",
+      lastRespondedAt: ""
+    }));
+  const nextCase = normalizeSchedulingCase({
+    ...baseCase,
+    id: targetId,
+    caseCode: createSchedulingCaseCode(),
+    sourceStageId: stage.id,
+    interviewStage: stage.label,
+    durationMinutes: stage.id === "phone" ? 30 : 60,
+    status: "CREATED",
+    confirmedStartAt: "",
+    confirmedEndAt: "",
+    confirmedAt: "",
+    cancelledAt: "",
+    availability: [],
+    options: [],
+    messages: [],
+    aiAnalyses: [],
+    auditLogs: [],
+    participants: [
+      normalizeSchedulingParticipant({
+        role: "CANDIDATE",
+        name: candidate?.name || baseCase.candidateName,
+        email: candidate?.email || baseCase.candidateEmail,
+        required: true
+      }),
+      ...interviewers
+    ],
+    createdAt: getTimestampText(),
+    updatedAt: getTimestampText()
+  });
+
+  addSchedulingAuditLog(nextCase, "CASE_CREATED", `${stage.label} 조율 탭이 생성되었습니다.`);
+  replaceSchedulingCase(nextCase);
+  setInterviewSchedulingDirty("면접 단계 조율 건을 생성했습니다.");
+  renderInterviewView();
+}
+
+function deleteSchedulingCase(caseId) {
+  const scheduling = getInterviewSchedulingState();
+  const schedulingCase = findSchedulingCase(caseId);
+
+  if (!schedulingCase) {
+    showToast("삭제할 면접 조율 건을 찾을 수 없습니다.");
+    return;
+  }
+
+  const ok = typeof window !== "undefined" && typeof window.confirm === "function"
+    ? window.confirm(`${schedulingCase.candidateName || "선택한 후보자"}의 ${schedulingCase.interviewStage || "면접"} 조율 건을 삭제할까요?`)
+    : true;
+
+  if (!ok) {
+    return;
+  }
+
+  rememberDeletedSchedulingCaseId(caseId);
+  scheduling.cases = scheduling.cases.filter((item) => item.id !== caseId);
+
+  if (scheduling.selectedCaseId === caseId) {
+    scheduling.selectedCaseId = scheduling.cases[0]?.id || "";
+  }
+
+  setInterviewSchedulingDirty("면접 조율 건을 삭제했습니다.");
   renderInterviewView();
 }
 
@@ -28092,6 +28414,9 @@ function finalPassSecondScreening(form) {
   replaceScreeningFolder(folder);
   state.screeningResultPanelOpen = false;
   syncInterviewCasesFromScreening();
+  if (syncSchedulingCasesFromScreening()) {
+    setInterviewSchedulingDirty("");
+  }
   addAuditLog("Screening 결과 발송 정보 저장", folder.title, draftApplicants.length ? `${draftApplicants.length}명 2차 합격 확정` : "결과 발송 정보 저장");
   persistState();
   showToast(draftApplicants.length ? `${draftApplicants.length}명을 2차 합격 확정 처리했습니다.` : "결과 발송 정보를 저장했습니다.");
@@ -31462,6 +31787,21 @@ function bindEvents() {
     const selectSchedulingButton = event.target.closest("[data-select-scheduling-case]");
     if (selectSchedulingButton) {
       selectSchedulingCase(selectSchedulingButton.dataset.selectSchedulingCase);
+      return;
+    }
+
+    const createSchedulingStageButton = event.target.closest("[data-create-scheduling-stage]");
+    if (createSchedulingStageButton) {
+      createSchedulingStageCaseFromExisting(
+        createSchedulingStageButton.dataset.schedulingCaseId,
+        createSchedulingStageButton.dataset.createSchedulingStage
+      );
+      return;
+    }
+
+    const deleteSchedulingButton = event.target.closest("[data-delete-scheduling-case]");
+    if (deleteSchedulingButton) {
+      deleteSchedulingCase(deleteSchedulingButton.dataset.deleteSchedulingCase);
       return;
     }
 
