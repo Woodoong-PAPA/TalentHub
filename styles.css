@@ -4789,6 +4789,12 @@ tr:last-child td {
   line-height: 1.5;
 }
 
+.scheduling-option-card .compact-button,
+.scheduling-option-card .ghost-button {
+  justify-self: stretch;
+  max-width: 100%;
+}
+
 .scheduling-option-list,
 .scheduling-timeline-list,
 .scheduling-ai-list {
@@ -8446,5 +8452,73 @@ tr:last-child td {
   .scheduling-create-actions .ghost-button,
   .scheduling-create-actions .primary-button {
     width: 100%;
+  }
+
+  .scheduling-layout,
+  .scheduling-detail-panel,
+  .scheduling-list-panel,
+  .scheduling-info-card,
+  .scheduling-section,
+  .scheduling-option-list,
+  .scheduling-mini-grid {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .scheduling-summary-grid,
+  .scheduling-toolbar-main,
+  .scheduling-detail-grid,
+  .scheduling-mini-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scheduling-toolbar,
+  .scheduling-detail-panel,
+  .scheduling-section,
+  .scheduling-info-card {
+    padding: 14px;
+    overflow-x: hidden;
+  }
+
+  .scheduling-detail-header {
+    flex-direction: column;
+  }
+
+  .scheduling-header-actions,
+  .scheduling-toolbar-actions {
+    justify-content: stretch;
+  }
+
+  .scheduling-header-actions > *,
+  .scheduling-toolbar-actions > * {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .scheduling-mini-card,
+  .scheduling-option-card {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  .scheduling-mini-card p,
+  .scheduling-option-card span,
+  .scheduling-option-card em {
+    overflow-wrap: anywhere;
+    word-break: keep-all;
+  }
+
+  .scheduling-option-card .compact-button,
+  .scheduling-option-card .ghost-button {
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+
+  .detail-dl {
+    grid-template-columns: 1fr;
   }
 }

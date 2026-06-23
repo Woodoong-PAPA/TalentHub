@@ -10980,6 +10980,16 @@ function getSchedulingThreadIdForGmail(message = {}) {
   return threadId && !threadId.startsWith("thread-") ? threadId : "";
 }
 
+function getSchedulingParticipantThreadId(schedulingCase, participant) {
+  return [...(schedulingCase.messages || [])]
+    .filter((message) => (
+      message.participantId === participant.id &&
+      getSchedulingThreadIdForGmail(message)
+    ))
+    .sort((a, b) => dateSortValue(b.sentAt || b.createdAt) - dateSortValue(a.sentAt || a.createdAt))
+    .map(getSchedulingThreadIdForGmail)[0] || "";
+}
+
 function buildSchedulingMailForMessage(schedulingCase, participant, message) {
   const type = String(message?.type || "").trim();
   const subjectPrefix = type === "candidate_confirmed" || type === "interviewer_confirmed"
@@ -11529,17 +11539,21 @@ async function sendSchedulingOptions(caseId) {
   }
 }
 
-function confirmSchedulingOption(caseId, optionCode, actorType = "USER") {
+async function confirmSchedulingOption(caseId, optionCode, actorType = "USER") {
+  const messageIds = [];
+
   mutateSchedulingCase(caseId, (schedulingCase) => {
     const option = schedulingCase.options.find((item) => item.optionCode === optionCode);
 
     if (!option) {
-      throw new Error("선택한 option을 찾을 수 없습니다.");
+      throw new Error("선택한 시간을 찾을 수 없습니다.");
     }
 
-    if (!["OPTIONS_SENT", "MANUAL_REVIEW"].includes(schedulingCase.status)) {
+    if (!["OPTIONS_SENT", "MANUAL_REVIEW", "CONFIRMING", "CONFIRMED"].includes(schedulingCase.status)) {
       throw new Error("선택지를 확정할 수 있는 상태가 아닙니다.");
     }
+
+    const rangeText = formatSchedulingRange(option.start, option.end, schedulingCase.timezone);
 
     schedulingCase.options = schedulingCase.options.map((item) => ({
       ...item,
@@ -11553,31 +11567,90 @@ function confirmSchedulingOption(caseId, optionCode, actorType = "USER") {
     schedulingCase.participants.forEach((participant) => {
       participant.responseStatus = participant.role === "CANDIDATE" ? "SELECTED" : "CONFIRMED";
     });
+
     schedulingCase.participants.forEach((participant) => {
-      schedulingCase.messages.unshift(createSchedulingMessage(
-        participant.role === "CANDIDATE" ? "candidate_confirmed" : "interviewer_confirmed",
-        participant,
-        schedulingCase,
-        "outbound",
-        {
-          status: "PENDING",
-          body: formatSchedulingRange(option.start, option.end, schedulingCase.timezone)
-        }
+      const type = participant.role === "CANDIDATE" ? "candidate_confirmed" : "interviewer_confirmed";
+      const alreadySent = schedulingCase.messages.some((message) => (
+        message.participantId === participant.id &&
+        message.type === type &&
+        message.status === "SENT" &&
+        Boolean(message.gmailMessageId)
       ));
+
+      if (alreadySent) {
+        return;
+      }
+
+      const existingMessage = schedulingCase.messages.find((message) => (
+        message.participantId === participant.id &&
+        message.type === type &&
+        (!message.gmailMessageId || message.status !== "SENT")
+      ));
+
+      if (existingMessage) {
+        existingMessage.status = "PENDING";
+        existingMessage.errorMessage = "";
+        existingMessage.body = rangeText;
+        existingMessage.gmailThreadId = getSchedulingThreadIdForGmail(existingMessage) || getSchedulingParticipantThreadId(schedulingCase, participant);
+        messageIds.push(existingMessage.id);
+        return;
+      }
+
+      const message = createSchedulingMessage(type, participant, schedulingCase, "outbound", {
+        status: "PENDING",
+        body: rangeText,
+        gmailThreadId: getSchedulingParticipantThreadId(schedulingCase, participant)
+      });
+      schedulingCase.messages.unshift(message);
+      messageIds.push(message.id);
     });
-    transitionSchedulingCase(schedulingCase, "CONFIRMING", `${optionCode}안이 선택되어 확정 메일 outbox가 생성되었습니다.`, {
-      eventType: "OPTION_SELECTED",
-      actorType
-    });
-    transitionSchedulingCase(schedulingCase, "CONFIRMED", "Mock 모드에서 확정 메일 발송이 완료 처리되었습니다.", {
-      eventType: "CONFIRMATION_SENT",
-      actorType: "SYSTEM"
-    });
-    schedulingCase.messages = schedulingCase.messages.map((message) => message.status === "PENDING"
-      ? { ...message, status: "SENT", sentAt: message.sentAt || getTimestampText() }
-      : message);
+
+    if (schedulingCase.status !== "CONFIRMED") {
+      transitionSchedulingCase(schedulingCase, "CONFIRMING", `${optionCode}안이 선택되어 확정 안내 메일 발송을 시작했습니다.`, {
+        eventType: "OPTION_SELECTED",
+        actorType
+      });
+    } else {
+      addSchedulingAuditLog(schedulingCase, "CONFIRMATION_RESEND_REQUESTED", "담당자가 확정 안내 메일 재발송을 요청했습니다.", actorType);
+    }
+    schedulingCase.nextAction = "확정 안내 메일을 발송 중입니다.";
+  }, { message: "확정 안내 메일 발송을 시작했습니다." });
+  renderInterviewView();
+
+  if (!messageIds.length) {
+    showToast("이미 확정 안내 메일이 발송된 일정입니다.");
+    return;
+  }
+
+  const results = await sendSchedulingOutboundMessages(caseId, messageIds);
+  const failedCount = results.filter((item) => item.status === "FAILED" || item.error).length;
+  const sentCount = results.filter((item) => item.sent || item.status === "SENT").length;
+
+  mutateSchedulingCase(caseId, (schedulingCase) => {
+    if (failedCount) {
+      if (canSchedulingTransition(schedulingCase.status, "MANUAL_REVIEW")) {
+        transitionSchedulingCase(schedulingCase, "MANUAL_REVIEW", "일부 확정 안내 메일 발송에 실패했습니다.", {
+          eventType: "CONFIRMATION_SEND_FAILED",
+          actorType: "SYSTEM"
+        });
+      } else {
+        addSchedulingAuditLog(schedulingCase, "CONFIRMATION_SEND_FAILED", "일부 확정 안내 메일 발송에 실패했습니다.", "SYSTEM");
+      }
+      schedulingCase.manualReviewReason = "확정 안내 메일 발송 실패";
+      schedulingCase.nextAction = "실패한 메일을 확인한 뒤 재시도해주세요.";
+      return;
+    }
+
+    if (schedulingCase.status !== "CONFIRMED" && canSchedulingTransition(schedulingCase.status, "CONFIRMED")) {
+      transitionSchedulingCase(schedulingCase, "CONFIRMED", "후보자와 면접위원에게 확정 안내 메일을 발송했습니다.", {
+        eventType: "CONFIRMATION_SENT",
+        actorType: "SYSTEM"
+      });
+    } else {
+      addSchedulingAuditLog(schedulingCase, "CONFIRMATION_SENT", "후보자와 면접위원에게 확정 안내 메일을 발송했습니다.", "SYSTEM");
+    }
     schedulingCase.nextAction = "조율이 완료되었습니다. 확정 이후 변경 요청은 수동 검토로 전환됩니다.";
-  }, { message: "면접 일정을 확정했습니다." });
+  }, { message: `확정 안내 메일 ${sentCount}건을 발송했습니다.` });
   renderInterviewView();
 }
 
@@ -31412,7 +31485,13 @@ function bindEvents() {
 
     const confirmSchedulingOptionButton = event.target.closest("[data-confirm-scheduling-option]");
     if (confirmSchedulingOptionButton) {
-      confirmSchedulingOption(confirmSchedulingOptionButton.dataset.schedulingCaseId, confirmSchedulingOptionButton.dataset.confirmSchedulingOption);
+      confirmSchedulingOption(
+        confirmSchedulingOptionButton.dataset.schedulingCaseId,
+        confirmSchedulingOptionButton.dataset.confirmSchedulingOption
+      ).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "확정 안내 메일 발송 중 오류가 발생했습니다.");
+      });
       return;
     }
 
