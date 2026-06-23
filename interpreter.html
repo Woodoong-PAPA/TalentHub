@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talent Pool Realtime Interpreter</title>
+    <link rel="stylesheet" href="/interpreter.css?v=20260615-09" />
+    <script src="/runtime-config.js?v=20260609-07" defer></script>
+    <script src="/vendor/supabase.js?v=2.108.1" defer></script>
+    <script src="/vendor/supabase-global.js?v=20260614-01" defer></script>
+    <script src="/interpreter.js?v=20260615-09" defer></script>
+  </head>
+  <body>
+    <main class="interpreter-shell">
+      <header class="interpreter-header">
+        <a class="brand-link" href="/" aria-label="Back to Talent Pool">
+          <span class="brand-mark">S</span>
+          <span>
+            <strong>Talent Pool</strong>
+            <small>Realtime Interpreter</small>
+          </span>
+        </a>
+        <span class="header-badge">Supabase Realtime MVP</span>
+      </header>
+      <section id="interpreter-content" aria-live="polite"></section>
+    </main>
+  </body>
+</html>

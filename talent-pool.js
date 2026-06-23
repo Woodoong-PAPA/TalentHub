@@ -22,13 +22,14 @@ const MENU_CONFIG = [
   { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "서류 평가 지원", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
-  { view: "interview", label: "면접 운영 자동화", description: "면접 일정 조율, 제출자료, 결과 관리" },
+  { view: "interview", label: "면접 스케줄링", description: "Gmail 회신 기반 면접 일정 자동 조율" },
   { view: "interview-report", label: "면담록 작성", description: "면담 스크립트 기반 보고서 생성" },
   { view: "recruiting-metrics", label: "채용 지표 자동화", description: "사업부별 채용 실적 취합과 보고" },
   { view: "ai-search", label: "AI 인재검색", description: "자연어/JD 기반 후보자 검색" },
   { view: "job-fit", label: "직무적합도 분석", description: "JD와 다수 이력서 기반 적합도 평가" },
   { view: "jd-enhance", label: "채용공고 작성", description: "작성 가이드라인 기반 JD 점검과 문구 개선" },
   { view: "policy-chat", label: "채용 기준 Q&A 챗봇", description: "채용 기준 문서 기반 질의응답" },
+  { view: "interpreter", label: "통역", description: "한국어와 영어 실시간 통역 자막방" },
   { view: "trending", label: "Today's Talent", description: "전일 한국 뉴스 기반 DX 분야 화제 인물 확인" },
   { view: "members", label: "관리자 메뉴", description: "회원 승인, 등급, 메뉴 권한, Log 관리" }
 ];
@@ -39,6 +40,7 @@ const MENU_SETTING_KEY = "menu_order";
 const SCREENING_DELETED_FOLDERS_SETTING_KEY = "screening_deleted_folder_ids";
 const ROLE_PERMISSIONS_SETTING_KEY = "role_permissions";
 const INTERVIEW_CASES_SETTING_KEY = "interview_cases";
+const INTERVIEW_SCHEDULING_SETTING_KEY = "interview_scheduling_cases";
 const SCREENING_MAIL_TEMPLATES_SETTING_KEY = "screening_mail_templates";
 const RECRUITING_METRICS_SETTING_KEY = "recruiting_metrics";
 const JD_ENHANCEMENT_SETTING_KEY = "jd_enhancement";
@@ -88,12 +90,12 @@ const CANDIDATE_REGISTER_ROLES = new Set(["search_firm", "business_recruiter", "
 const MEMBER_ROLES_WITHOUT_BUSINESS_UNIT = new Set(["applicant", "search_firm", "hiring_manager"]);
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  applicant: ["screening", "interview"],
-  general: ["dashboard", "pool", "policy-chat", "trending"],
-  search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat"],
-  hiring_manager: ["dashboard", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "trending", "members"],
+  applicant: ["screening", "interview", "interpreter"],
+  general: ["dashboard", "pool", "policy-chat", "interpreter", "trending"],
+  search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "interpreter"],
+  hiring_manager: ["dashboard", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending"],
+  business_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
+  division_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -103,6 +105,51 @@ const AI_SEARCH_TABS = [
   { id: "key-talent-finder", label: "Key Talent Finder" }
 ];
 const DEFAULT_AI_SEARCH_TAB = "talent-search";
+const SCHEDULING_STATUS_LABELS = {
+  CREATED: "생성",
+  COLLECTING_AVAILABILITY: "가능시간 수집 중",
+  CLARIFICATION_REQUIRED: "추가 확인 필요",
+  NO_COMMON_SLOT: "공통 시간 없음",
+  READY_TO_PROPOSE: "선택지 준비",
+  OPTIONS_SENT: "일정 제안 발송",
+  CONFIRMING: "확정 메일 발송 중",
+  CONFIRMED: "확정",
+  MANUAL_REVIEW: "수동 검토",
+  RESCHEDULE_REQUESTED: "변경 요청",
+  EXPIRED: "기한 만료",
+  CANCELLED: "취소"
+};
+const SCHEDULING_STATUS_ORDER = [
+  "COLLECTING_AVAILABILITY",
+  "CLARIFICATION_REQUIRED",
+  "OPTIONS_SENT",
+  "CONFIRMED",
+  "MANUAL_REVIEW"
+];
+const SCHEDULING_ALLOWED_TRANSITIONS = {
+  CREATED: ["COLLECTING_AVAILABILITY", "MANUAL_REVIEW", "CANCELLED"],
+  COLLECTING_AVAILABILITY: ["CLARIFICATION_REQUIRED", "NO_COMMON_SLOT", "READY_TO_PROPOSE", "MANUAL_REVIEW", "EXPIRED", "CANCELLED"],
+  CLARIFICATION_REQUIRED: ["COLLECTING_AVAILABILITY", "MANUAL_REVIEW", "EXPIRED", "CANCELLED"],
+  NO_COMMON_SLOT: ["COLLECTING_AVAILABILITY", "MANUAL_REVIEW", "CANCELLED"],
+  READY_TO_PROPOSE: ["OPTIONS_SENT", "NO_COMMON_SLOT", "MANUAL_REVIEW", "CANCELLED"],
+  OPTIONS_SENT: ["CONFIRMING", "EXPIRED", "MANUAL_REVIEW", "CANCELLED"],
+  CONFIRMING: ["CONFIRMED", "MANUAL_REVIEW", "CANCELLED"],
+  CONFIRMED: ["RESCHEDULE_REQUESTED", "MANUAL_REVIEW", "CANCELLED"],
+  MANUAL_REVIEW: ["COLLECTING_AVAILABILITY", "READY_TO_PROPOSE", "OPTIONS_SENT", "CONFIRMING", "CONFIRMED", "CANCELLED"],
+  RESCHEDULE_REQUESTED: ["MANUAL_REVIEW", "CANCELLED"],
+  EXPIRED: ["COLLECTING_AVAILABILITY", "MANUAL_REVIEW", "CANCELLED"],
+  CANCELLED: []
+};
+const SCHEDULING_AUTOMATION_STATUSES = new Set([
+  "CREATED",
+  "COLLECTING_AVAILABILITY",
+  "CLARIFICATION_REQUIRED",
+  "NO_COMMON_SLOT",
+  "READY_TO_PROPOSE",
+  "OPTIONS_SENT",
+  "CONFIRMING"
+]);
+const SCHEDULING_OPTION_CODES = ["A", "B", "C"];
 const COMPETITOR_KEY_TALENT_THRESHOLD = 75;
 const COMPETITOR_DEPARTMENT_RULES = [
   { label: "AI/ML", pattern: /ai|machine learning|deep learning|ml|llm|computer vision|data scientist|data science|인공지능|머신러닝|딥러닝|데이터/i },
@@ -737,6 +784,29 @@ const state = {
   selectedInterviewCaseId: "",
   selectedInterviewStage: "phone",
   interviewMailPreview: null,
+  interviewScheduling: {
+    cases: [],
+    selectedCaseId: "",
+    filters: {
+      query: "",
+      status: "all",
+      owner: "all",
+      sortBy: "updatedAt"
+    },
+    createModalOpen: false,
+    simulationModalOpen: false,
+    gmailConnection: {
+      connected: false,
+      gmailAddress: "",
+      providerConfigured: false,
+      mailMode: "mock",
+      autoSendEnabled: false,
+      lastSyncedAt: "",
+      lastWatchRenewedAt: "",
+      watchExpirationAt: "",
+      lastError: ""
+    }
+  },
   screeningPositionModalOpen: false,
   screeningApplicantModalOpen: false,
   screeningBulkApplicantModalOpen: false,
@@ -2291,6 +2361,199 @@ function normalizeInterviewCase(interviewCase = {}) {
   };
 }
 
+function normalizeSchedulingStatus(status) {
+  const normalized = String(status || "").trim().toUpperCase();
+  return SCHEDULING_STATUS_LABELS[normalized] ? normalized : "CREATED";
+}
+
+function normalizeSchedulingParticipant(participant = {}) {
+  const role = String(participant.role || "").trim().toUpperCase() === "CANDIDATE" ? "CANDIDATE" : "INTERVIEWER";
+
+  return {
+    id: participant.id || createId("scheduling-participant"),
+    role,
+    name: String(participant.name || "").trim(),
+    email: String(participant.email || "").trim().toLowerCase(),
+    required: role === "CANDIDATE" ? true : participant.required !== false,
+    responseStatus: String(participant.responseStatus || participant.response_status || "PENDING").trim() || "PENDING",
+    lastRespondedAt: String(participant.lastRespondedAt || participant.last_responded_at || "").trim(),
+    createdAt: participant.createdAt || participant.created_at || getTimestampText(),
+    updatedAt: participant.updatedAt || participant.updated_at || participant.createdAt || getTimestampText()
+  };
+}
+
+function normalizeSchedulingWindow(window = {}) {
+  const start = String(window.start || window.startAt || "").trim();
+  const end = String(window.end || window.endAt || "").trim();
+
+  if (!start || !end) {
+    return null;
+  }
+
+  return {
+    id: window.id || createId("availability"),
+    participantId: String(window.participantId || window.participant_id || "").trim(),
+    start,
+    end,
+    timezone: String(window.timezone || "Asia/Seoul").trim(),
+    sourceMessageId: String(window.sourceMessageId || window.source_message_id || "").trim(),
+    active: window.active !== false,
+    version: Number(window.version || 1) || 1,
+    extractionConfidence: Number(window.extractionConfidence || window.extraction_confidence || 0) || 0,
+    createdAt: window.createdAt || window.created_at || getTimestampText(),
+    supersededAt: String(window.supersededAt || window.superseded_at || "").trim()
+  };
+}
+
+function normalizeSchedulingOption(option = {}, index = 0) {
+  return {
+    id: option.id || createId("slot-option"),
+    optionCode: String(option.optionCode || option.option_code || SCHEDULING_OPTION_CODES[index] || "").trim().toUpperCase(),
+    start: String(option.start || option.startAt || option.start_at || "").trim(),
+    end: String(option.end || option.endAt || option.end_at || "").trim(),
+    status: String(option.status || "AVAILABLE").trim().toUpperCase(),
+    expiresAt: String(option.expiresAt || option.expires_at || "").trim(),
+    sentAt: String(option.sentAt || option.sent_at || "").trim(),
+    selectedAt: String(option.selectedAt || option.selected_at || "").trim(),
+    createdAt: option.createdAt || option.created_at || getTimestampText(),
+    updatedAt: option.updatedAt || option.updated_at || getTimestampText()
+  };
+}
+
+function normalizeSchedulingMessage(message = {}) {
+  return {
+    id: message.id || createId("scheduling-message"),
+    type: String(message.type || "").trim(),
+    direction: String(message.direction || "outbound").trim(),
+    participantId: String(message.participantId || message.participant_id || "").trim(),
+    recipient: String(message.recipient || message.to || "").trim(),
+    fromAddress: String(message.fromAddress || message.from_address || "").trim(),
+    subject: String(message.subject || "").trim(),
+    body: String(message.body || message.text || "").trim().slice(0, 6000),
+    status: String(message.status || "PENDING").trim().toUpperCase(),
+    idempotencyKey: String(message.idempotencyKey || message.idempotency_key || "").trim(),
+    gmailThreadId: String(message.gmailThreadId || message.gmail_thread_id || "").trim(),
+    gmailMessageId: String(message.gmailMessageId || message.gmail_message_id || "").trim(),
+    errorMessage: String(message.errorMessage || message.error_message || "").trim(),
+    createdAt: message.createdAt || message.created_at || getTimestampText(),
+    sentAt: String(message.sentAt || message.sent_at || "").trim()
+  };
+}
+
+function normalizeSchedulingAuditLog(log = {}) {
+  return {
+    id: log.id || createId("scheduling-log"),
+    actorName: String(log.actorName || log.actor_name || "SYSTEM").trim(),
+    actorType: String(log.actorType || log.actor_type || "SYSTEM").trim(),
+    eventType: String(log.eventType || log.event_type || "").trim(),
+    eventSummary: String(log.eventSummary || log.event_summary || "").trim(),
+    metadata: log.metadata && typeof log.metadata === "object" ? log.metadata : {},
+    createdAt: log.createdAt || log.created_at || getTimestampText()
+  };
+}
+
+function normalizeSchedulingCase(schedulingCase = {}) {
+  const participants = Array.isArray(schedulingCase.participants)
+    ? schedulingCase.participants.map(normalizeSchedulingParticipant)
+    : [];
+  const candidateParticipant = participants.find((participant) => participant.role === "CANDIDATE");
+  const candidateName = String(schedulingCase.candidateName || schedulingCase.candidate_name || candidateParticipant?.name || "").trim();
+  const candidateEmail = String(schedulingCase.candidateEmail || schedulingCase.candidate_email || candidateParticipant?.email || "").trim().toLowerCase();
+  const normalizedParticipants = participants.some((participant) => participant.role === "CANDIDATE")
+    ? participants
+    : [
+      normalizeSchedulingParticipant({
+        role: "CANDIDATE",
+        name: candidateName,
+        email: candidateEmail,
+        required: true,
+        responseStatus: schedulingCase.candidateResponseStatus || "PENDING"
+      }),
+      ...participants
+    ].filter((participant) => participant.email || participant.name);
+
+  return {
+    id: schedulingCase.id || createId("scheduling-case"),
+    caseCode: String(schedulingCase.caseCode || schedulingCase.case_code || "").trim(),
+    candidateName,
+    candidateEmail,
+    positionName: String(schedulingCase.positionName || schedulingCase.position_name || "").trim(),
+    interviewStage: String(schedulingCase.interviewStage || schedulingCase.interview_stage || "").trim(),
+    durationMinutes: Math.max(15, Number(schedulingCase.durationMinutes || schedulingCase.duration_minutes || 60) || 60),
+    slotIntervalMinutes: Math.max(15, Number(schedulingCase.slotIntervalMinutes || schedulingCase.slot_interval_minutes || 30) || 30),
+    timezone: String(schedulingCase.timezone || "Asia/Seoul").trim(),
+    schedulingWindowStart: String(schedulingCase.schedulingWindowStart || schedulingCase.scheduling_window_start || "").trim(),
+    schedulingWindowEnd: String(schedulingCase.schedulingWindowEnd || schedulingCase.scheduling_window_end || "").trim(),
+    candidateReplyDeadline: String(schedulingCase.candidateReplyDeadline || schedulingCase.candidate_reply_deadline || "").trim(),
+    interviewerReplyDeadline: String(schedulingCase.interviewerReplyDeadline || schedulingCase.interviewer_reply_deadline || "").trim(),
+    meetingMethod: String(schedulingCase.meetingMethod || schedulingCase.meeting_method || "").trim(),
+    meetingDetails: String(schedulingCase.meetingDetails || schedulingCase.meeting_details || "").trim(),
+    status: normalizeSchedulingStatus(schedulingCase.status),
+    assignedUserId: String(schedulingCase.assignedUserId || schedulingCase.assigned_user_id || "").trim(),
+    assignedUserName: String(schedulingCase.assignedUserName || schedulingCase.assigned_user_name || "").trim(),
+    internalNote: String(schedulingCase.internalNote || schedulingCase.internal_note || "").trim(),
+    confirmedStartAt: String(schedulingCase.confirmedStartAt || schedulingCase.confirmed_start_at || "").trim(),
+    confirmedEndAt: String(schedulingCase.confirmedEndAt || schedulingCase.confirmed_end_at || "").trim(),
+    version: Number(schedulingCase.version || 1) || 1,
+    participants: normalizedParticipants,
+    availability: Array.isArray(schedulingCase.availability)
+      ? schedulingCase.availability.map(normalizeSchedulingWindow).filter(Boolean)
+      : [],
+    options: Array.isArray(schedulingCase.options)
+      ? schedulingCase.options.map(normalizeSchedulingOption).filter((option) => option.optionCode && option.start && option.end)
+      : [],
+    messages: Array.isArray(schedulingCase.messages)
+      ? schedulingCase.messages.map(normalizeSchedulingMessage)
+      : [],
+    aiAnalyses: Array.isArray(schedulingCase.aiAnalyses)
+      ? schedulingCase.aiAnalyses.slice(0, 30)
+      : [],
+    auditLogs: Array.isArray(schedulingCase.auditLogs)
+      ? schedulingCase.auditLogs.map(normalizeSchedulingAuditLog)
+      : [],
+    manualReviewReason: String(schedulingCase.manualReviewReason || schedulingCase.manual_review_reason || "").trim(),
+    nextAction: String(schedulingCase.nextAction || schedulingCase.next_action || "").trim(),
+    createdAt: schedulingCase.createdAt || schedulingCase.created_at || getTimestampText(),
+    updatedAt: schedulingCase.updatedAt || schedulingCase.updated_at || getTimestampText(),
+    confirmedAt: String(schedulingCase.confirmedAt || schedulingCase.confirmed_at || "").trim(),
+    cancelledAt: String(schedulingCase.cancelledAt || schedulingCase.cancelled_at || "").trim()
+  };
+}
+
+function normalizeInterviewSchedulingState(value = {}) {
+  const current = state?.interviewScheduling || {};
+  const cases = Array.isArray(value.cases)
+    ? value.cases.map(normalizeSchedulingCase).sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt))
+    : [];
+  const selectedCaseId = String(value.selectedCaseId || value.selectedSchedulingCaseId || "").trim();
+  const filters = value.filters && typeof value.filters === "object" ? value.filters : {};
+  const gmailConnection = value.gmailConnection && typeof value.gmailConnection === "object" ? value.gmailConnection : {};
+
+  return {
+    cases,
+    selectedCaseId: cases.some((item) => item.id === selectedCaseId) ? selectedCaseId : cases[0]?.id || "",
+    filters: {
+      query: String(filters.query || current.filters?.query || "").trim(),
+      status: SCHEDULING_STATUS_LABELS[String(filters.status || "").trim().toUpperCase()] ? String(filters.status).trim().toUpperCase() : "all",
+      owner: String(filters.owner || current.filters?.owner || "all").trim() || "all",
+      sortBy: ["createdAt", "updatedAt"].includes(filters.sortBy) ? filters.sortBy : current.filters?.sortBy || "updatedAt"
+    },
+    createModalOpen: Boolean(value.createModalOpen),
+    simulationModalOpen: Boolean(value.simulationModalOpen),
+    gmailConnection: {
+      connected: Boolean(gmailConnection.connected),
+      gmailAddress: String(gmailConnection.gmailAddress || gmailConnection.gmail_address || "").trim(),
+      providerConfigured: Boolean(gmailConnection.providerConfigured || gmailConnection.provider_configured),
+      mailMode: String(gmailConnection.mailMode || gmailConnection.mail_mode || "mock").trim() || "mock",
+      autoSendEnabled: Boolean(gmailConnection.autoSendEnabled || gmailConnection.auto_send_enabled),
+      lastSyncedAt: String(gmailConnection.lastSyncedAt || gmailConnection.last_synced_at || "").trim(),
+      lastWatchRenewedAt: String(gmailConnection.lastWatchRenewedAt || gmailConnection.last_watch_renewed_at || "").trim(),
+      watchExpirationAt: String(gmailConnection.watchExpirationAt || gmailConnection.watch_expiration_at || "").trim(),
+      lastError: String(gmailConnection.lastError || gmailConnection.last_error || "").trim()
+    }
+  };
+}
+
 function normalizePolicyText(value) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -2994,6 +3257,10 @@ function canAccessView(view, member = getCurrentMember()) {
     return false;
   }
 
+  if (view === "interpreter") {
+    return true;
+  }
+
   if (view === "detail") {
     return getAllowedViewsForRole(member.role).includes("pool");
   }
@@ -3364,6 +3631,7 @@ function persistState(options = {}) {
         interviewDeletedCaseIds: state.interviewDeletedCaseIds,
         selectedInterviewCaseId: state.selectedInterviewCaseId,
         selectedInterviewStage: state.selectedInterviewStage,
+        interviewScheduling: state.interviewScheduling,
         auditLogs: state.auditLogs,
         selectedCandidateId: state.selectedCandidateId,
         selectedScreeningFolderId: state.selectedScreeningFolderId,
@@ -3585,6 +3853,10 @@ function restorePersistedState() {
 
   if (INTERVIEW_STAGE_IDS.includes(persisted.selectedInterviewStage)) {
     state.selectedInterviewStage = persisted.selectedInterviewStage;
+  }
+
+  if (persisted.interviewScheduling && typeof persisted.interviewScheduling === "object") {
+    state.interviewScheduling = normalizeInterviewSchedulingState(persisted.interviewScheduling);
   }
 
   ensureAuditLogIds();
@@ -4417,6 +4689,20 @@ function buildInterviewCasesPayload() {
   };
 }
 
+function buildInterviewSchedulingPayload() {
+  const scheduling = normalizeInterviewSchedulingState(state.interviewScheduling);
+  state.interviewScheduling = scheduling;
+
+  return {
+    cases: scheduling.cases,
+    selectedSchedulingCaseId: scheduling.selectedCaseId || "",
+    filters: scheduling.filters,
+    gmailConnection: scheduling.gmailConnection,
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentActorName()
+  };
+}
+
 function buildScreeningMailTemplatesPayload() {
   const templates = normalizeScreeningMailTemplates(state.screeningMailTemplates);
   state.screeningMailTemplates = templates;
@@ -4577,6 +4863,26 @@ async function syncInterviewCasesToSupabase() {
   return true;
 }
 
+async function syncInterviewSchedulingToSupabase() {
+  if (!REMOTE_SYNC_ENABLED) {
+    return false;
+  }
+
+  if (!interviewSchedulingLocalDirty) {
+    return false;
+  }
+
+  await supabaseRequest("app_settings?on_conflict=setting_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([appSettingToSupabaseRow(INTERVIEW_SCHEDULING_SETTING_KEY, buildInterviewSchedulingPayload())])
+  });
+
+  interviewSchedulingRemoteLoaded = true;
+  interviewSchedulingLocalDirty = false;
+  return true;
+}
+
 async function syncScreeningMailTemplatesToSupabase() {
   if (!REMOTE_SYNC_ENABLED) {
     return false;
@@ -4643,6 +4949,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
   const deletedFoldersSetting = settings.find((row) => row.setting_key === SCREENING_DELETED_FOLDERS_SETTING_KEY);
   const rolePermissionsSetting = settings.find((row) => row.setting_key === ROLE_PERMISSIONS_SETTING_KEY);
   const interviewCasesSetting = settings.find((row) => row.setting_key === INTERVIEW_CASES_SETTING_KEY);
+  const interviewSchedulingSetting = settings.find((row) => row.setting_key === INTERVIEW_SCHEDULING_SETTING_KEY);
   const screeningMailTemplatesSetting = settings.find((row) => row.setting_key === SCREENING_MAIL_TEMPLATES_SETTING_KEY);
   const recruitingMetricsSetting = settings.find((row) => row.setting_key === RECRUITING_METRICS_SETTING_KEY);
   const jdEnhancementSetting = settings.find((row) => row.setting_key === JD_ENHANCEMENT_SETTING_KEY);
@@ -4698,6 +5005,26 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
 
     if (INTERVIEW_STAGE_IDS.includes(selectedStage)) {
       state.selectedInterviewStage = selectedStage;
+    }
+  }
+
+  if (interviewSchedulingSetting?.payload) {
+    interviewSchedulingRemoteLoaded = true;
+    const remoteScheduling = normalizeInterviewSchedulingState({
+      cases: interviewSchedulingSetting.payload.cases || interviewSchedulingSetting.payload.schedulingCases || [],
+      selectedCaseId: interviewSchedulingSetting.payload.selectedSchedulingCaseId || "",
+      filters: interviewSchedulingSetting.payload.filters || {},
+      gmailConnection: interviewSchedulingSetting.payload.gmailConnection || {}
+    });
+    const localScheduling = normalizeInterviewSchedulingState(state.interviewScheduling);
+    const remoteUpdatedAt = dateSortValue(interviewSchedulingSetting.payload.updatedAt || interviewSchedulingSetting.updated_at);
+    const localUpdatedAt = Math.max(...localScheduling.cases.map((item) => dateSortValue(item.updatedAt)), 0);
+
+    if (localUpdatedAt > remoteUpdatedAt) {
+      state.interviewScheduling = localScheduling;
+      interviewSchedulingLocalDirty = true;
+    } else {
+      state.interviewScheduling = remoteScheduling;
     }
   }
 
@@ -4818,6 +5145,11 @@ let rolePermissionsRemoteLoaded = false;
 let rolePermissionsLocalDirty = false;
 let interviewCasesRemoteLoaded = false;
 let interviewCasesLocalDirty = false;
+let interviewSchedulingRemoteLoaded = false;
+let interviewSchedulingLocalDirty = false;
+let interviewSchedulingAutoSyncTimer = null;
+let interviewSchedulingAutoSyncInFlight = false;
+const INTERVIEW_SCHEDULING_AUTO_SYNC_INTERVAL_MS = 60000;
 let screeningMailTemplatesRemoteLoaded = false;
 let screeningMailTemplatesLocalDirty = false;
 let screeningMailTemplatesRemoteSyncAfterLoadPending = false;
@@ -4861,6 +5193,10 @@ async function syncDirtyAppSettingsToSupabase() {
 
   if (interviewCasesLocalDirty) {
     syncJobs.push(syncInterviewCasesToSupabase());
+  }
+
+  if (interviewSchedulingLocalDirty) {
+    syncJobs.push(syncInterviewSchedulingToSupabase());
   }
 
   if (screeningMailTemplatesLocalDirty) {
@@ -4989,6 +5325,7 @@ async function loadStateFromSupabase() {
       SCREENING_DELETED_FOLDERS_SETTING_KEY,
       ROLE_PERMISSIONS_SETTING_KEY,
       INTERVIEW_CASES_SETTING_KEY,
+      INTERVIEW_SCHEDULING_SETTING_KEY,
       SCREENING_MAIL_TEMPLATES_SETTING_KEY,
       RECRUITING_METRICS_SETTING_KEY,
       JD_ENHANCEMENT_SETTING_KEY,
@@ -6037,6 +6374,7 @@ function getMenuIcon(view, label = "") {
     "job-fit": "J",
     "jd-enhance": "G",
     "policy-chat": "C",
+    interpreter: "통",
     trending: "T",
     members: "M"
   };
@@ -6103,6 +6441,11 @@ function getDisplayTrendingPeople(report) {
 function setView(view) {
   if (!isAuthenticated()) {
     renderAuth();
+    return;
+  }
+
+  if (view === "interpreter") {
+    window.location.href = "/tools/interpreter";
     return;
   }
 
@@ -6302,6 +6645,7 @@ function render() {
   renderMembers();
   renderUserMenu();
   applyAccessControls();
+  updateInterviewSchedulingAutoSync();
 }
 
 function renderSidePanel() {
@@ -7552,7 +7896,7 @@ function renderApplicantRegistrationModal(folder) {
   return `
     <div class="trending-modal-backdrop" data-screening-applicant-modal-backdrop>
       <section class="trending-modal screening-applicant-modal" role="dialog" aria-modal="true" aria-labelledby="screening-applicant-modal-title">
-        <div class="trending-modal-header">
+        <div class="trending-modal-header scheduling-create-header">
           <div>
             <strong id="screening-applicant-modal-title">${escapeHtml(modalTitle)}</strong>
             <span>${modalDescription}</span>
@@ -9876,12 +10220,696 @@ function renderInterviewDetail(interviewCase) {
   `;
 }
 
+function getInterviewSchedulingState() {
+  state.interviewScheduling = normalizeInterviewSchedulingState(state.interviewScheduling);
+  return state.interviewScheduling;
+}
+
+function setInterviewSchedulingDirty(message = "") {
+  interviewSchedulingLocalDirty = true;
+  persistState();
+  syncInterviewSchedulingToSupabase().catch((error) => {
+    console.warn("Interview scheduling remote save failed.", error);
+  });
+
+  if (message) {
+    showToast(message);
+  }
+}
+
+function getSchedulingStatusLabel(status) {
+  return SCHEDULING_STATUS_LABELS[normalizeSchedulingStatus(status)] || status || "-";
+}
+
+function schedulingStatusChip(status) {
+  const normalized = normalizeSchedulingStatus(status);
+  const chipClass = {
+    CREATED: "chip-gray",
+    COLLECTING_AVAILABILITY: "chip-blue",
+    CLARIFICATION_REQUIRED: "chip-amber",
+    NO_COMMON_SLOT: "chip-red",
+    READY_TO_PROPOSE: "chip-violet",
+    OPTIONS_SENT: "chip-blue",
+    CONFIRMING: "chip-amber",
+    CONFIRMED: "chip-green",
+    MANUAL_REVIEW: "chip-red",
+    RESCHEDULE_REQUESTED: "chip-amber",
+    EXPIRED: "chip-gray",
+    CANCELLED: "chip-gray"
+  }[normalized] || "chip-gray";
+
+  return `<span class="status-chip ${chipClass}">${escapeHtml(getSchedulingStatusLabel(normalized))}</span>`;
+}
+
+function canSchedulingTransition(fromStatus, toStatus) {
+  const from = normalizeSchedulingStatus(fromStatus);
+  const to = normalizeSchedulingStatus(toStatus);
+
+  if (SCHEDULING_AUTOMATION_STATUSES.has(from) && to === "MANUAL_REVIEW") {
+    return true;
+  }
+
+  return (SCHEDULING_ALLOWED_TRANSITIONS[from] || []).includes(to);
+}
+
+function transitionSchedulingCase(schedulingCase, toStatus, summary = "", options = {}) {
+  const fromStatus = normalizeSchedulingStatus(schedulingCase.status);
+  const normalizedTo = normalizeSchedulingStatus(toStatus);
+
+  if (!canSchedulingTransition(fromStatus, normalizedTo)) {
+    throw new Error(`허용되지 않는 상태 전이입니다. ${fromStatus} -> ${normalizedTo}`);
+  }
+
+  schedulingCase.status = normalizedTo;
+  schedulingCase.updatedAt = getTimestampText();
+  schedulingCase.version = Number(schedulingCase.version || 1) + 1;
+  addSchedulingAuditLog(schedulingCase, options.eventType || "STATUS_CHANGED", summary || `${fromStatus} -> ${normalizedTo}`, options.actorType || "SYSTEM", {
+    fromStatus,
+    toStatus: normalizedTo
+  });
+}
+
+function addSchedulingAuditLog(schedulingCase, eventType, eventSummary, actorType = "USER", metadata = {}) {
+  schedulingCase.auditLogs = [
+    normalizeSchedulingAuditLog({
+      actorName: actorType === "SYSTEM" ? "SYSTEM" : getCurrentActorName(),
+      actorType,
+      eventType,
+      eventSummary,
+      metadata,
+      createdAt: getTimestampText()
+    }),
+    ...(schedulingCase.auditLogs || [])
+  ].slice(0, 80);
+}
+
+function getSelectedSchedulingCase() {
+  const scheduling = getInterviewSchedulingState();
+  return scheduling.cases.find((item) => item.id === scheduling.selectedCaseId) || scheduling.cases[0] || null;
+}
+
+function findSchedulingCase(caseId) {
+  return getInterviewSchedulingState().cases.find((item) => item.id === caseId) || null;
+}
+
+function replaceSchedulingCase(schedulingCase) {
+  const scheduling = getInterviewSchedulingState();
+  const normalized = normalizeSchedulingCase(schedulingCase);
+  const index = scheduling.cases.findIndex((item) => item.id === normalized.id);
+
+  if (index >= 0) {
+    scheduling.cases[index] = normalized;
+  } else {
+    scheduling.cases.unshift(normalized);
+  }
+
+  scheduling.selectedCaseId = normalized.id;
+  scheduling.cases.sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+  return normalized;
+}
+
+function mutateSchedulingCase(caseId, updater, options = {}) {
+  const current = findSchedulingCase(caseId);
+
+  if (!current) {
+    showToast("면접 조율 건을 찾을 수 없습니다.");
+    return null;
+  }
+
+  const next = normalizeSchedulingCase(structuredClone(current));
+  updater(next);
+  next.updatedAt = getTimestampText();
+  const saved = replaceSchedulingCase(next);
+
+  if (options.persist !== false) {
+    setInterviewSchedulingDirty(options.message || "");
+  }
+
+  return saved;
+}
+
+function createSchedulingCaseCode() {
+  const year = new Date().getFullYear();
+  const max = getInterviewSchedulingState().cases.reduce((result, item) => {
+    const match = String(item.caseCode || "").match(new RegExp(`^INT-${year}-(\\d{4})$`));
+    return match ? Math.max(result, Number(match[1])) : result;
+  }, 0);
+
+  return `INT-${year}-${String(max + 1).padStart(4, "0")}`;
+}
+
+function isValidSchedulingEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function schedulingFormValue(form, name) {
+  return String(new FormData(form).get(name) || "").trim();
+}
+
+function getSchedulingParticipantSummary(schedulingCase, role = "INTERVIEWER") {
+  const participants = (schedulingCase.participants || []).filter((participant) => participant.role === role);
+
+  if (!participants.length) {
+    return "-";
+  }
+
+  return participants
+    .map((participant) => `${participant.name || participant.email || "-"}${participant.required ? "" : "(선택)"}`)
+    .join(", ");
+}
+
+function getSchedulingParticipantById(schedulingCase, participantId) {
+  return (schedulingCase.participants || []).find((participant) => participant.id === participantId) || null;
+}
+
+function getSchedulingCandidateParticipant(schedulingCase) {
+  return (schedulingCase.participants || []).find((participant) => participant.role === "CANDIDATE") || null;
+}
+
+function getSchedulingRequiredParticipants(schedulingCase) {
+  return (schedulingCase.participants || []).filter((participant) => participant.required !== false);
+}
+
+function getSchedulingResponseSummary(schedulingCase, role) {
+  const participants = (schedulingCase.participants || []).filter((participant) => participant.role === role);
+  const done = participants.filter((participant) => ["RECEIVED", "CONFIRMED", "SELECTED"].includes(participant.responseStatus)).length;
+
+  if (!participants.length) {
+    return "-";
+  }
+
+  return `${done}/${participants.length}`;
+}
+
+function formatSchedulingDateTime(value, timezone = "Asia/Seoul") {
+  if (!value) {
+    return "-";
+  }
+
+  try {
+    return new Intl.DateTimeFormat("ko-KR", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+function formatSchedulingRange(start, end, timezone = "Asia/Seoul") {
+  if (!start || !end) {
+    return "-";
+  }
+
+  return `${formatSchedulingDateTime(start, timezone)} ~ ${formatSchedulingDateTime(end, timezone).slice(-5)}`;
+}
+
+function renderSchedulingSummaryCards(cases) {
+  return `
+    <div class="scheduling-summary-grid">
+      ${SCHEDULING_STATUS_ORDER.map((status) => `
+        <article class="metric-card scheduling-summary-card">
+          <span>${escapeHtml(getSchedulingStatusLabel(status))}</span>
+          <strong>${cases.filter((item) => item.status === status).length}건</strong>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function getSchedulingOwners() {
+  return [...new Set(getInterviewSchedulingState().cases.map((item) => item.assignedUserName).filter(Boolean))].sort();
+}
+
+function getFilteredSchedulingCases() {
+  const scheduling = getInterviewSchedulingState();
+  const query = scheduling.filters.query.toLowerCase();
+
+  return scheduling.cases
+    .filter((item) => {
+      if (scheduling.filters.status !== "all" && item.status !== scheduling.filters.status) {
+        return false;
+      }
+
+      if (scheduling.filters.owner !== "all" && item.assignedUserName !== scheduling.filters.owner) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return [item.caseCode, item.candidateName, item.candidateEmail, item.positionName, item.assignedUserName]
+        .some((value) => String(value || "").toLowerCase().includes(query));
+    })
+    .sort((a, b) => scheduling.filters.sortBy === "createdAt"
+      ? dateSortValue(b.createdAt) - dateSortValue(a.createdAt)
+      : dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+}
+
+function renderSchedulingToolbar(cases) {
+  const scheduling = getInterviewSchedulingState();
+  const owners = getSchedulingOwners();
+  const gmail = scheduling.gmailConnection;
+
+  return `
+    <section class="content-panel scheduling-toolbar">
+      <div class="scheduling-toolbar-main">
+        <label>
+          <span class="visually-hidden">검색</span>
+          <input id="scheduling-query" class="control-input" value="${inputValue(scheduling.filters.query)}" placeholder="후보자명, 이메일, 포지션, 조율번호 검색" />
+        </label>
+        <select id="scheduling-status" class="control-input">
+          <option value="all" ${scheduling.filters.status === "all" ? "selected" : ""}>전체 상태</option>
+          ${Object.keys(SCHEDULING_STATUS_LABELS).map((status) => `<option value="${escapeHtml(status)}" ${scheduling.filters.status === status ? "selected" : ""}>${escapeHtml(getSchedulingStatusLabel(status))}</option>`).join("")}
+        </select>
+        <select id="scheduling-owner" class="control-input">
+          <option value="all" ${scheduling.filters.owner === "all" ? "selected" : ""}>전체 담당자</option>
+          ${owners.map((owner) => `<option value="${escapeHtml(owner)}" ${scheduling.filters.owner === owner ? "selected" : ""}>${escapeHtml(owner)}</option>`).join("")}
+        </select>
+        <select id="scheduling-sort" class="control-input">
+          <option value="updatedAt" ${scheduling.filters.sortBy === "updatedAt" ? "selected" : ""}>업데이트일 순</option>
+          <option value="createdAt" ${scheduling.filters.sortBy === "createdAt" ? "selected" : ""}>생성일 순</option>
+        </select>
+      </div>
+      <div class="scheduling-toolbar-actions">
+        <button class="ghost-button compact-button" type="button" data-refresh-gmail-status>Gmail 상태 확인</button>
+        <button class="ghost-button compact-button" type="button" data-gmail-sync>지금 동기화</button>
+        <button class="ghost-button compact-button" type="button" data-open-scheduling-simulation>회신 시뮬레이션</button>
+        <button class="primary-button compact-button" type="button" data-open-scheduling-create>새 면접 조율 생성</button>
+      </div>
+      <div class="scheduling-gmail-strip">
+        <span>${gmail.connected ? "Gmail 연결됨" : "Gmail 미연결"}</span>
+        <strong>${escapeHtml(gmail.gmailAddress || (gmail.providerConfigured ? "OAuth 설정 대기" : "Mock 모드"))}</strong>
+        <span>메일 모드: ${escapeHtml(gmail.mailMode || "mock")}</span>
+        <span>자동발송: ${gmail.autoSendEnabled ? "활성" : "비활성"}</span>
+        <span>마지막 동기화: ${escapeHtml(gmail.lastSyncedAt || "-")}</span>
+        <span>watch 만료: ${escapeHtml(gmail.watchExpirationAt || "-")}</span>
+        ${gmail.connected ? `<button class="ghost-button compact-button" type="button" data-gmail-disconnect>연결 해제</button>` : `<button class="soft-button compact-button" type="button" data-gmail-connect>Gmail 연결</button>`}
+      </div>
+      <small class="form-help">운영 환경에서는 Gmail readonly/send 권한만 사용합니다. Google Calendar API, 캘린더 이벤트, ICS 파일은 사용하지 않습니다.</small>
+    </section>
+  `;
+}
+
+function renderSchedulingCaseList(cases) {
+  if (!cases.length) {
+    return `<div class="empty-state compact-empty">면접 조율 건이 없습니다.</div>`;
+  }
+
+  return `
+    <section class="content-panel scheduling-list-panel">
+      <div class="panel-header">
+        <div>
+          <h4>면접 조율 목록</h4>
+          <span>${cases.length}건 표시</span>
+        </div>
+      </div>
+      <div class="scheduling-table-wrap">
+        <table class="scheduling-table">
+          <thead>
+            <tr>
+              <th>조율번호</th>
+              <th>후보자명</th>
+              <th>지원 포지션</th>
+              <th>면접 단계</th>
+              <th>면접위원</th>
+              <th>현재 상태</th>
+              <th>후보자 회신</th>
+              <th>면접위원 회신</th>
+              <th>제안/확정 일시</th>
+              <th>최근 업데이트</th>
+              <th>담당자</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cases.map((item) => {
+              const selectedOrConfirmed = item.confirmedStartAt
+                ? formatSchedulingRange(item.confirmedStartAt, item.confirmedEndAt, item.timezone)
+                : item.options.length
+                  ? item.options.map((option) => `${option.optionCode}. ${formatSchedulingRange(option.start, option.end, item.timezone)}`).join("\n")
+                  : "-";
+              return `
+                <tr class="${item.status === "MANUAL_REVIEW" ? "is-warning" : ""}">
+                  <td><button class="link-button" type="button" data-select-scheduling-case="${escapeHtml(item.id)}">${escapeHtml(item.caseCode || "-")}</button></td>
+                  <td>
+                    <button class="link-button strong-link" type="button" data-select-scheduling-case="${escapeHtml(item.id)}">${escapeHtml(item.candidateName || "-")}</button>
+                    <small>${escapeHtml(item.candidateEmail || "-")}</small>
+                  </td>
+                  <td>${escapeHtml(item.positionName || "-")}</td>
+                  <td>${escapeHtml(item.interviewStage || "-")}</td>
+                  <td>${escapeHtml(getSchedulingParticipantSummary(item))}</td>
+                  <td>${schedulingStatusChip(item.status)}</td>
+                  <td>${escapeHtml(getSchedulingResponseSummary(item, "CANDIDATE"))}</td>
+                  <td>${escapeHtml(getSchedulingResponseSummary(item, "INTERVIEWER"))}</td>
+                  <td><span class="pre-line-text">${escapeHtml(selectedOrConfirmed)}</span></td>
+                  <td>${escapeHtml(item.updatedAt || "-")}</td>
+                  <td>${escapeHtml(item.assignedUserName || "-")}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderSchedulingAvailability(schedulingCase) {
+  return `
+    <div class="scheduling-mini-grid">
+      ${getSchedulingRequiredParticipants(schedulingCase).map((participant) => {
+        const windows = schedulingCase.availability.filter((window) => window.participantId === participant.id && window.active);
+        return `
+          <article class="scheduling-mini-card">
+            <strong>${escapeHtml(participant.name || participant.email || "-")}</strong>
+            <span>${escapeHtml(participant.role === "CANDIDATE" ? "후보자" : participant.required ? "필수 면접위원" : "선택 면접위원")}</span>
+            ${windows.length
+              ? windows.map((window) => `<p>${escapeHtml(formatSchedulingRange(window.start, window.end, schedulingCase.timezone))}</p>`).join("")
+              : `<p class="muted-text">회신 없음</p>`}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderSchedulingOptions(schedulingCase) {
+  if (!schedulingCase.options.length) {
+    return `<div class="empty-state compact-empty">계산된 공통 시간이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="scheduling-option-list">
+      ${schedulingCase.options.map((option) => `
+        <article class="scheduling-option-card ${option.status === "SELECTED" ? "is-selected" : ""}">
+          <strong>${escapeHtml(option.optionCode)}안</strong>
+          <span>${escapeHtml(formatSchedulingRange(option.start, option.end, schedulingCase.timezone))}</span>
+          <em>${escapeHtml(option.status || "AVAILABLE")}</em>
+          <button class="ghost-button compact-button" type="button" data-confirm-scheduling-option="${escapeHtml(option.optionCode)}" data-scheduling-case-id="${escapeHtml(schedulingCase.id)}" ${["RELEASED", "EXPIRED"].includes(option.status) ? "disabled" : ""}>이 시간 확정</button>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderSchedulingMessages(schedulingCase) {
+  const messages = [...(schedulingCase.messages || [])].sort((a, b) => dateSortValue(b.createdAt) - dateSortValue(a.createdAt)).slice(0, 12);
+
+  if (!messages.length) {
+    return `<span class="muted-text">아직 이메일 이력이 없습니다.</span>`;
+  }
+
+  return `
+    <div class="scheduling-timeline-list">
+      ${messages.map((message) => `
+        <article>
+          <strong>${escapeHtml(message.direction === "inbound" ? "수신" : "발신")} · ${escapeHtml(message.type || "-")} · ${escapeHtml(message.status || "-")}</strong>
+          <span>${escapeHtml(message.createdAt || "-")} · ${escapeHtml(message.recipient || message.fromAddress || "-")}</span>
+          <p>${escapeHtml(message.subject || "-")}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderSchedulingAudit(schedulingCase) {
+  const logs = (schedulingCase.auditLogs || []).slice(0, 12);
+
+  if (!logs.length) {
+    return `<span class="muted-text">감사 로그가 없습니다.</span>`;
+  }
+
+  return `
+    <div class="scheduling-timeline-list">
+      ${logs.map((log) => `
+        <article>
+          <strong>${escapeHtml(log.eventType || "-")} · ${escapeHtml(log.actorType || "-")}</strong>
+          <span>${escapeHtml(log.createdAt || "-")} · ${escapeHtml(log.actorName || "-")}</span>
+          <p>${escapeHtml(log.eventSummary || "-")}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderSchedulingAiAnalyses(schedulingCase) {
+  const analyses = (schedulingCase.aiAnalyses || []).slice(0, 8);
+
+  if (!analyses.length) {
+    return `<span class="muted-text">AI 분석 결과가 없습니다.</span>`;
+  }
+
+  return `
+    <div class="scheduling-ai-list">
+      ${analyses.map((analysis) => `
+        <article>
+          <strong>${escapeHtml(analysis.intent || "-")} · 신뢰도 ${Math.round(Number(analysis.confidence || 0) * 100)}%</strong>
+          <span>${escapeHtml(analysis.createdAt || "-")}</span>
+          <pre>${escapeHtml(JSON.stringify(analysis.result || analysis, null, 2))}</pre>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderSchedulingDetail(schedulingCase) {
+  if (!schedulingCase) {
+    return `
+      <section class="content-panel scheduling-detail-panel">
+        <div class="empty-state">상세 조회할 면접 조율 건을 선택하거나 새 조율 건을 생성하세요.</div>
+      </section>
+    `;
+  }
+
+  const nextAction = schedulingCase.nextAction || {
+    CREATED: "가능 시간 요청 메일을 발송하세요.",
+    COLLECTING_AVAILABILITY: "필수 참여자의 회신을 기다리고 있습니다.",
+    CLARIFICATION_REQUIRED: "모호한 회신을 확인하고 명확화 메일을 보내세요.",
+    NO_COMMON_SLOT: "공통 시간이 없습니다. 추가 가능 시간을 요청하세요.",
+    READY_TO_PROPOSE: "후보자에게 최대 3개 선택지를 발송하세요.",
+    OPTIONS_SENT: "후보자의 선택 회신을 기다리고 있습니다.",
+    CONFIRMING: "확정 메일 발송 성공 여부를 확인하세요.",
+    CONFIRMED: "조율이 완료되었습니다.",
+    MANUAL_REVIEW: "담당자 수동 검토가 필요합니다.",
+    RESCHEDULE_REQUESTED: "확정 이후 변경 요청입니다. 자동 재조율하지 않습니다."
+  }[schedulingCase.status] || "-";
+
+  return `
+    <section class="content-panel scheduling-detail-panel">
+      <div class="panel-header scheduling-detail-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(schedulingCase.caseCode || "-")}</p>
+          <h4>${escapeHtml(schedulingCase.candidateName || "-")} · ${escapeHtml(schedulingCase.positionName || "-")}</h4>
+          <span>${escapeHtml(schedulingCase.interviewStage || "-")} · ${escapeHtml(schedulingCase.timezone || "Asia/Seoul")}</span>
+        </div>
+        <div class="scheduling-header-actions">
+          ${schedulingStatusChip(schedulingCase.status)}
+          <button class="ghost-button compact-button" type="button" data-send-scheduling-requests="${escapeHtml(schedulingCase.id)}">가능 시간 요청 발송</button>
+          <button class="ghost-button compact-button" type="button" data-recalculate-scheduling-slots="${escapeHtml(schedulingCase.id)}">공통 시간 재계산</button>
+          <button class="soft-button compact-button" type="button" data-send-scheduling-options="${escapeHtml(schedulingCase.id)}" ${schedulingCase.options.length ? "" : "disabled"}>선택지 발송</button>
+          <button class="ghost-button danger-button compact-button" type="button" data-scheduling-manual-review="${escapeHtml(schedulingCase.id)}">수동 검토 전환</button>
+          <button class="ghost-button danger-button compact-button" type="button" data-cancel-scheduling-case="${escapeHtml(schedulingCase.id)}">취소</button>
+        </div>
+      </div>
+      <div class="scheduling-detail-grid">
+        <article class="scheduling-info-card">
+          <h5>기본 정보</h5>
+          <dl class="detail-dl">
+            <dt>후보자</dt><dd>${escapeHtml(schedulingCase.candidateName || "-")} · ${escapeHtml(schedulingCase.candidateEmail || "-")}</dd>
+            <dt>소요시간</dt><dd>${escapeHtml(String(schedulingCase.durationMinutes))}분</dd>
+            <dt>슬롯 간격</dt><dd>${escapeHtml(String(schedulingCase.slotIntervalMinutes))}분</dd>
+            <dt>조율 기간</dt><dd>${escapeHtml(formatSchedulingRange(schedulingCase.schedulingWindowStart, schedulingCase.schedulingWindowEnd, schedulingCase.timezone))}</dd>
+            <dt>진행 방식</dt><dd>${escapeHtml(schedulingCase.meetingMethod || "-")}</dd>
+            <dt>장소/URL</dt><dd>${escapeHtml(schedulingCase.meetingDetails || "-")}</dd>
+            <dt>담당자</dt><dd>${escapeHtml(schedulingCase.assignedUserName || "-")}</dd>
+          </dl>
+        </article>
+        <article class="scheduling-info-card">
+          <h5>현재 상태 및 다음 작업</h5>
+          <p>${escapeHtml(nextAction)}</p>
+          ${schedulingCase.manualReviewReason ? `<p class="danger-text">${escapeHtml(schedulingCase.manualReviewReason)}</p>` : ""}
+        </article>
+      </div>
+      <section class="scheduling-section">
+        <div class="panel-header compact-panel-header"><h5>참여자별 가능 시간</h5></div>
+        ${renderSchedulingAvailability(schedulingCase)}
+      </section>
+      <section class="scheduling-section">
+        <div class="panel-header compact-panel-header"><h5>계산된 공통 가능 시간 및 선택지</h5></div>
+        ${renderSchedulingOptions(schedulingCase)}
+      </section>
+      <div class="scheduling-detail-grid">
+        <section class="scheduling-section">
+          <div class="panel-header compact-panel-header"><h5>수신·발신 이메일 타임라인</h5></div>
+          ${renderSchedulingMessages(schedulingCase)}
+        </section>
+        <section class="scheduling-section">
+          <div class="panel-header compact-panel-header"><h5>AI 분석 결과와 신뢰도</h5></div>
+          ${renderSchedulingAiAnalyses(schedulingCase)}
+        </section>
+      </div>
+      <section class="scheduling-section">
+        <div class="panel-header compact-panel-header"><h5>감사 로그</h5></div>
+        ${renderSchedulingAudit(schedulingCase)}
+      </section>
+    </section>
+  `;
+}
+
+function renderSchedulingInterviewerInputRows() {
+  return `
+    <div class="scheduling-interviewer-row" data-scheduling-interviewer-row>
+      <input class="control-input" name="interviewerName" placeholder="면접위원 이름" />
+      <input class="control-input" name="interviewerEmail" type="email" placeholder="면접위원 이메일" />
+      <label class="checkbox-line">
+        <input type="checkbox" name="interviewerRequired" checked />
+        <span>필수</span>
+      </label>
+      <button class="ghost-button compact-button" type="button" data-remove-scheduling-interviewer>삭제</button>
+    </div>
+  `;
+}
+
+function renderSchedulingCreateModal() {
+  const scheduling = getInterviewSchedulingState();
+
+  if (!scheduling.createModalOpen) {
+    return "";
+  }
+
+  const member = getCurrentMember();
+  const today = getTodayDate();
+  const nextWeek = typeof addDaysToScreeningDate === "function" ? addDaysToScreeningDate(today, 7) : today;
+
+  return `
+    <div class="trending-modal-backdrop" data-close-scheduling-create>
+      <section class="trending-modal scheduling-create-modal" role="dialog" aria-modal="true" aria-labelledby="scheduling-create-title">
+        <div class="trending-modal-header">
+          <div>
+            <p class="eyebrow">INTERVIEW SCHEDULING</p>
+            <h4 id="scheduling-create-title">새 면접 조율 생성</h4>
+          </div>
+          <button class="ghost-button compact-button scheduling-create-close" type="button" data-close-scheduling-create>닫기</button>
+        </div>
+        <form id="scheduling-case-form" class="scheduling-form scheduling-create-form">
+          <div class="scheduling-create-grid">
+            <label><span>후보자명</span><input class="control-input" name="candidateName" required /></label>
+            <label><span>후보자 이메일</span><input class="control-input" name="candidateEmail" type="email" required /></label>
+            <label><span>지원 포지션</span><input class="control-input" name="positionName" required /></label>
+            <label><span>면접 단계</span><input class="control-input" name="interviewStage" value="전화면접" /></label>
+            <label><span>면접 소요시간</span><input class="control-input" name="durationMinutes" type="number" min="15" step="15" value="60" /></label>
+            <label><span>일정 슬롯 간격</span><input class="control-input" name="slotIntervalMinutes" type="number" min="15" step="15" value="30" /></label>
+            <label><span>기준 시간대</span><input class="control-input" name="timezone" value="Asia/Seoul" /></label>
+            <label><span>면접 진행 방식</span><input class="control-input" name="meetingMethod" placeholder="화상 / 전화 / 대면" /></label>
+            <label><span>조율 대상 시작일</span><input class="control-input" name="schedulingWindowStart" type="datetime-local" value="${inputValue(`${today}T09:00`)}" /></label>
+            <label><span>조율 대상 종료일</span><input class="control-input" name="schedulingWindowEnd" type="datetime-local" value="${inputValue(`${nextWeek}T18:00`)}" /></label>
+            <label><span>후보자 회신 기한</span><input class="control-input" name="candidateReplyDeadline" type="datetime-local" /></label>
+            <label><span>면접위원 회신 기한</span><input class="control-input" name="interviewerReplyDeadline" type="datetime-local" /></label>
+            <label class="form-grid-full"><span>면접 장소 또는 화상면접 URL</span><input class="control-input" name="meetingDetails" /></label>
+            <label class="form-grid-full"><span>담당자 내부 메모</span><textarea class="control-textarea" name="internalNote" rows="3"></textarea></label>
+          </div>
+          <section class="scheduling-form-section">
+            <div class="panel-header compact-panel-header">
+              <div>
+                <h5>면접위원</h5>
+                <span>후보자와 면접위원은 서로 다른 메일 스레드로 운영됩니다.</span>
+              </div>
+              <button class="ghost-button compact-button" type="button" data-add-scheduling-interviewer>면접위원 추가</button>
+            </div>
+            <div class="scheduling-interviewer-list" data-scheduling-interviewer-list>
+              ${renderSchedulingInterviewerInputRows()}
+            </div>
+          </section>
+          <input type="hidden" name="assignedUserId" value="${inputValue(member?.id || "")}" />
+          <input type="hidden" name="assignedUserName" value="${inputValue(member?.name || getCurrentActorName())}" />
+          <div class="modal-actions scheduling-create-actions">
+            <button class="ghost-button" type="button" data-close-scheduling-create>취소</button>
+            <button class="primary-button" type="submit">생성</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function renderSchedulingSimulationModal() {
+  const scheduling = getInterviewSchedulingState();
+
+  if (!scheduling.simulationModalOpen) {
+    return "";
+  }
+
+  const selectedSchedulingCase = getSelectedSchedulingCase();
+  const participants = selectedCase?.participants || [];
+
+  return `
+    <div class="trending-modal-backdrop" data-close-scheduling-simulation>
+      <section class="trending-modal scheduling-simulation-modal" role="dialog" aria-modal="true" aria-labelledby="scheduling-simulation-title">
+        <div class="trending-modal-header">
+          <div>
+            <p class="eyebrow">MOCK GMAIL REPLY</p>
+            <h4 id="scheduling-simulation-title">회신 시뮬레이션</h4>
+          </div>
+          <button class="ghost-button compact-button" type="button" data-close-scheduling-simulation>닫기</button>
+        </div>
+        <form id="scheduling-simulation-form" class="scheduling-form">
+          <div class="form-grid two-columns">
+            <label>
+              <span>조율 건</span>
+              <select class="control-input" name="caseId" required>
+                ${scheduling.cases.map((item) => `<option value="${escapeHtml(item.id)}" ${selectedCase?.id === item.id ? "selected" : ""}>${escapeHtml(item.caseCode || "-")} · ${escapeHtml(item.candidateName || "-")}</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              <span>발신자</span>
+              <select class="control-input" name="participantId" required>
+                ${participants.map((participant) => `<option value="${escapeHtml(participant.id)}">${escapeHtml(participant.name || participant.email || "-")} · ${escapeHtml(participant.email || "-")}</option>`).join("")}
+              </select>
+            </label>
+            <label class="form-grid-full"><span>메일 제목</span><input class="control-input" name="subject" value="[면접일정 조율][${escapeHtml(selectedCase?.caseCode || "INT-2026-0001")}]" /></label>
+            <label><span>수신 시각</span><input class="control-input" type="datetime-local" name="receivedAt" value="${inputValue(new Date().toISOString().slice(0, 16))}" /></label>
+            <label><span>기준 시간대</span><input class="control-input" name="timezone" value="${inputValue(selectedCase?.timezone || "Asia/Seoul")}" /></label>
+            <label class="form-grid-full"><span>메일 본문</span><textarea class="control-textarea" name="body" rows="7" placeholder="예: 7월 1일 오후 2시부터 6시까지 가능합니다.">${escapeHtml(selectedCase ? `${selectedCase.caseCode}\n7월 1일 오후 2시부터 6시까지 가능합니다.` : "")}</textarea></label>
+          </div>
+          <div class="modal-actions">
+            <button class="ghost-button" type="button" data-close-scheduling-simulation>취소</button>
+            <button class="primary-button" type="submit" ${selectedCase ? "" : "disabled"}>회신 처리</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 function renderInterviewView() {
   const container = $("#interview-content");
 
   if (!container) {
     return;
   }
+
+  const scheduling = getInterviewSchedulingState();
+  const schedulingCases = getFilteredSchedulingCases();
+  const selectedSchedulingCase = getSelectedSchedulingCase();
+
+  container.innerHTML = `
+    <div class="scheduling-layout">
+      ${renderSchedulingSummaryCards(scheduling.cases)}
+      ${renderSchedulingToolbar(schedulingCases)}
+      ${renderSchedulingCaseList(schedulingCases)}
+      ${renderSchedulingDetail(selectedSchedulingCase)}
+    </div>
+    ${renderSchedulingCreateModal()}
+    ${renderSchedulingSimulationModal()}
+  `;
+  return;
 
   ensureInterviewDefaults();
   const cases = getVisibleInterviewCases();
@@ -9903,6 +10931,962 @@ function renderInterviewView() {
     </div>
     ${renderInterviewMailPreviewModal()}
   `;
+}
+
+function toSchedulingIso(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
+}
+
+function createSchedulingMessage(type, participant, schedulingCase, direction = "outbound", overrides = {}) {
+  const recipient = participant?.email || overrides.recipient || "";
+  const idempotencyKey = overrides.idempotencyKey || simpleHash([
+    schedulingCase.caseCode,
+    participant?.id || "",
+    type,
+    direction,
+    overrides.subject || "",
+    overrides.createdAt || getTimestampText()
+  ].join("|"));
+
+  return normalizeSchedulingMessage({
+    type,
+    direction,
+    participantId: participant?.id || "",
+    recipient,
+    fromAddress: overrides.fromAddress || "",
+    subject: overrides.subject || `[면접일정 조율][${schedulingCase.caseCode}] ${schedulingCase.positionName} ${schedulingCase.interviewStage}`,
+    body: overrides.body || "",
+    status: overrides.status || "PENDING",
+    idempotencyKey,
+    gmailThreadId: overrides.gmailThreadId || `thread-${schedulingCase.id}-${participant?.id || "unknown"}`,
+    gmailMessageId: overrides.gmailMessageId || "",
+    errorMessage: overrides.errorMessage || "",
+    createdAt: overrides.createdAt || getTimestampText(),
+    sentAt: overrides.sentAt || ""
+  });
+}
+
+function schedulingPlainTextToHtml(text) {
+  return `<div style="font-family:Arial,'Malgun Gothic',sans-serif;color:#191f28;line-height:1.65;max-width:760px;margin:0;text-align:left;white-space:pre-line">${escapeHtml(text)}</div>`;
+}
+
+function getSchedulingThreadIdForGmail(message = {}) {
+  const threadId = String(message.gmailThreadId || "").trim();
+  return threadId && !threadId.startsWith("thread-") ? threadId : "";
+}
+
+function buildSchedulingMailForMessage(schedulingCase, participant, message) {
+  const type = String(message?.type || "").trim();
+  const subjectPrefix = type === "candidate_confirmed" || type === "interviewer_confirmed"
+    ? "면접일정 확정"
+    : "면접일정 조율";
+  const subject = `[${subjectPrefix}][${schedulingCase.caseCode}] ${schedulingCase.positionName} ${schedulingCase.interviewStage}`;
+  const schedulingWindow = formatSchedulingRange(
+    schedulingCase.schedulingWindowStart,
+    schedulingCase.schedulingWindowEnd,
+    schedulingCase.timezone
+  );
+  const timezone = schedulingCase.timezone || "Asia/Seoul";
+  const replyDeadline = participant.role === "CANDIDATE"
+    ? schedulingCase.candidateReplyDeadline
+    : schedulingCase.interviewerReplyDeadline;
+  let text = "";
+
+  if (type === "candidate_availability_request") {
+    text = [
+      `안녕하세요, ${schedulingCase.candidateName || participant.name || "후보자"} 님.`,
+      "",
+      `${schedulingCase.positionName} 직무의 ${schedulingCase.interviewStage} 면접 일정을 조율하고자 합니다.`,
+      `면접은 약 ${schedulingCase.durationMinutes}분간 진행될 예정입니다.`,
+      "",
+      "아래 기간 중 가능한 날짜와 시간대를 2개 이상 회신해 주세요.",
+      "",
+      `조율 대상 기간: ${schedulingWindow}`,
+      `기준 시간대: ${timezone}`,
+      `회신 기한: ${replyDeadline ? formatSchedulingDateTime(replyDeadline, timezone) : "별도 지정 없음"}`,
+      "",
+      "회신 예시:",
+      "- 7월 1일 14:00~18:00",
+      "- 7월 2일 오전 10:00~12:00",
+      "- 7월 3일 오후 4시 이후",
+      "",
+      `조율번호: ${schedulingCase.caseCode}`,
+      "",
+      "감사합니다."
+    ].join("\n");
+  } else if (type === "interviewer_availability_request") {
+    text = [
+      `안녕하세요, ${participant.name || "면접위원"} 님.`,
+      "",
+      `${schedulingCase.candidateName} 후보자의 ${schedulingCase.positionName} 직무 ${schedulingCase.interviewStage} 면접 일정을 조율하고 있습니다.`,
+      `면접은 약 ${schedulingCase.durationMinutes}분간 진행될 예정입니다.`,
+      "",
+      "아래 기간 중 가능한 날짜와 시간대를 회신해 주세요.",
+      "",
+      `조율 대상 기간: ${schedulingWindow}`,
+      `기준 시간대: ${timezone}`,
+      `회신 기한: ${replyDeadline ? formatSchedulingDateTime(replyDeadline, timezone) : "별도 지정 없음"}`,
+      "",
+      "회신 예시:",
+      "- 7월 1일 14:00~18:00",
+      "- 7월 2일 오전 10:00~12:00",
+      "- 7월 3일 오후 4시 이후",
+      "",
+      "회신해 주신 시간은 면접 일정 조율을 위한 가능 시간으로 사용됩니다.",
+      "",
+      `조율번호: ${schedulingCase.caseCode}`,
+      "",
+      "감사합니다."
+    ].join("\n");
+  } else if (type === "candidate_options") {
+    text = [
+      `안녕하세요, ${schedulingCase.candidateName || participant.name || "후보자"} 님.`,
+      "",
+      "전달해 주신 가능 시간을 바탕으로 아래 면접 일정을 제안드립니다.",
+      "",
+      message.body || schedulingCase.options.map((option) => `${option.optionCode}. ${formatSchedulingRange(option.start, option.end, timezone)}`).join("\n"),
+      "",
+      "가능한 일정의 알파벳 또는 날짜와 시간을 회신해 주세요.",
+      "",
+      "예: B 일정으로 가능합니다.",
+      "",
+      `기준 시간대: ${timezone}`,
+      `조율번호: ${schedulingCase.caseCode}`,
+      "",
+      "감사합니다."
+    ].join("\n");
+  } else if (type === "candidate_confirmed" || type === "interviewer_confirmed") {
+    const isCandidate = participant.role === "CANDIDATE";
+    text = [
+      `안녕하세요, ${isCandidate ? schedulingCase.candidateName || participant.name || "후보자" : participant.name || "면접위원"} 님.`,
+      "",
+      isCandidate
+        ? `${schedulingCase.positionName} 직무의 ${schedulingCase.interviewStage} 면접 일정이 아래와 같이 확정되었습니다.`
+        : `${schedulingCase.candidateName} 후보자의 ${schedulingCase.positionName} 직무 ${schedulingCase.interviewStage} 면접 일정이 아래와 같이 확정되었습니다.`,
+      "",
+      `일시: ${formatSchedulingRange(schedulingCase.confirmedStartAt, schedulingCase.confirmedEndAt, timezone)}`,
+      `기준 시간대: ${timezone}`,
+      `예상 소요시간: ${schedulingCase.durationMinutes}분`,
+      `진행 방식: ${schedulingCase.meetingMethod || "-"}`,
+      `진행 장소 또는 접속 정보: ${schedulingCase.meetingDetails || "-"}`,
+      "",
+      "일정 변경이 필요한 경우 이 메일에 회신해 주세요.",
+      isCandidate ? "확정 이후 변경 요청은 채용담당자가 별도로 확인하여 안내드릴 예정입니다." : "",
+      "",
+      `조율번호: ${schedulingCase.caseCode}`,
+      "",
+      "감사합니다."
+    ].filter((line) => line !== "").join("\n");
+  } else {
+    text = message.body || `${schedulingCase.caseCode} 면접 일정 조율 메일입니다.`;
+  }
+
+  return {
+    recipient: message.recipient || participant.email,
+    subject,
+    text,
+    html: schedulingPlainTextToHtml(text)
+  };
+}
+
+async function sendSchedulingOutboundMessage(caseId, messageId) {
+  const schedulingCase = findSchedulingCase(caseId);
+  const message = schedulingCase?.messages.find((item) => item.id === messageId);
+  const participant = message ? getSchedulingParticipantById(schedulingCase, message.participantId) : null;
+
+  if (!schedulingCase || !message || !participant) {
+    throw new Error("발송할 면접 일정 메일 정보를 찾을 수 없습니다.");
+  }
+
+  const data = await callSchedulingApi({
+    action: "send-outbox",
+    userId: getCurrentMember()?.id || "",
+    gmailAddress: getCurrentMember()?.email || "",
+    recipient: message.recipient || participant.email,
+    gmailThreadId: getSchedulingThreadIdForGmail(message),
+    mail: buildSchedulingMailForMessage(schedulingCase, participant, message)
+  });
+
+  mutateSchedulingCase(caseId, (nextCase) => {
+    const nextMessage = nextCase.messages.find((item) => item.id === messageId);
+
+    if (!nextMessage) {
+      return;
+    }
+
+    nextMessage.status = data.status || (data.sent ? "SENT" : "PENDING");
+    nextMessage.gmailMessageId = data.gmailMessageId || nextMessage.gmailMessageId || "";
+    nextMessage.gmailThreadId = data.gmailThreadId || getSchedulingThreadIdForGmail(nextMessage) || "";
+    nextMessage.sentAt = data.sent ? getTimestampText() : nextMessage.sentAt;
+    nextMessage.errorMessage = "";
+    addSchedulingAuditLog(nextCase, data.sent ? "EMAIL_SENT" : "EMAIL_QUEUED", `${participant.name || participant.email}에게 ${nextMessage.type} 메일을 처리했습니다.`, "SYSTEM", {
+      messageId,
+      gmailMessageId: nextMessage.gmailMessageId,
+      gmailThreadId: nextMessage.gmailThreadId
+    });
+  }, { message: "" });
+
+  return data;
+}
+
+async function sendSchedulingOutboundMessages(caseId, messageIds) {
+  const results = [];
+
+  for (const messageId of messageIds) {
+    try {
+      results.push({ messageId, ...(await sendSchedulingOutboundMessage(caseId, messageId)) });
+    } catch (error) {
+      mutateSchedulingCase(caseId, (nextCase) => {
+        const nextMessage = nextCase.messages.find((item) => item.id === messageId);
+
+        if (nextMessage) {
+          nextMessage.status = "FAILED";
+          nextMessage.errorMessage = error.message || "메일 발송 실패";
+        }
+        addSchedulingAuditLog(nextCase, "EMAIL_FAILED", error.message || "면접 일정 메일 발송에 실패했습니다.", "SYSTEM", { messageId });
+      }, { message: "" });
+      results.push({ messageId, sent: false, status: "FAILED", error: error.message });
+    }
+  }
+
+  return results;
+}
+
+function simpleHash(value) {
+  let hash = 0;
+  const text = String(value || "");
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+
+  return `local-${Math.abs(hash).toString(36)}-${text.length}`;
+}
+
+function createSchedulingCaseFromForm(form) {
+  const candidateName = schedulingFormValue(form, "candidateName");
+  const candidateEmail = schedulingFormValue(form, "candidateEmail").toLowerCase();
+  const positionName = schedulingFormValue(form, "positionName");
+  const interviewStage = schedulingFormValue(form, "interviewStage") || "전화면접";
+  const timezone = schedulingFormValue(form, "timezone") || "Asia/Seoul";
+
+  if (!candidateName || !candidateEmail || !positionName) {
+    showToast("후보자명, 후보자 이메일, 지원 포지션을 입력해주세요.");
+    return null;
+  }
+
+  if (!isValidSchedulingEmail(candidateEmail)) {
+    showToast("후보자 이메일 형식을 확인해주세요.");
+    return null;
+  }
+
+  const interviewerRows = [...form.querySelectorAll("[data-scheduling-interviewer-row]")];
+  const interviewers = interviewerRows.map((row) => {
+    const name = row.querySelector("[name='interviewerName']")?.value || "";
+    const email = row.querySelector("[name='interviewerEmail']")?.value || "";
+    const required = row.querySelector("[name='interviewerRequired']")?.checked !== false;
+    return normalizeSchedulingParticipant({
+      role: "INTERVIEWER",
+      name,
+      email,
+      required
+    });
+  }).filter((participant) => participant.name || participant.email);
+
+  const invalidInterviewer = interviewers.find((participant) => participant.email && !isValidSchedulingEmail(participant.email));
+
+  if (invalidInterviewer) {
+    showToast("면접위원 이메일 형식을 확인해주세요.");
+    return null;
+  }
+
+  if (!interviewers.length) {
+    showToast("면접위원을 1명 이상 입력해주세요.");
+    return null;
+  }
+
+  const schedulingCase = normalizeSchedulingCase({
+    id: createId("scheduling-case"),
+    caseCode: createSchedulingCaseCode(),
+    candidateName,
+    candidateEmail,
+    positionName,
+    interviewStage,
+    durationMinutes: Number(schedulingFormValue(form, "durationMinutes") || 60),
+    slotIntervalMinutes: Number(schedulingFormValue(form, "slotIntervalMinutes") || 30),
+    timezone,
+    schedulingWindowStart: toSchedulingIso(schedulingFormValue(form, "schedulingWindowStart")),
+    schedulingWindowEnd: toSchedulingIso(schedulingFormValue(form, "schedulingWindowEnd")),
+    candidateReplyDeadline: toSchedulingIso(schedulingFormValue(form, "candidateReplyDeadline")),
+    interviewerReplyDeadline: toSchedulingIso(schedulingFormValue(form, "interviewerReplyDeadline")),
+    meetingMethod: schedulingFormValue(form, "meetingMethod"),
+    meetingDetails: schedulingFormValue(form, "meetingDetails"),
+    assignedUserId: schedulingFormValue(form, "assignedUserId") || getCurrentMember()?.id || "",
+    assignedUserName: schedulingFormValue(form, "assignedUserName") || getCurrentActorName(),
+    internalNote: schedulingFormValue(form, "internalNote"),
+    participants: [
+      normalizeSchedulingParticipant({
+        role: "CANDIDATE",
+        name: candidateName,
+        email: candidateEmail,
+        required: true
+      }),
+      ...interviewers
+    ],
+    status: "CREATED",
+    createdAt: getTimestampText(),
+    updatedAt: getTimestampText()
+  });
+
+  addSchedulingAuditLog(schedulingCase, "CASE_CREATED", "면접 조율 건이 생성되었습니다.");
+  return schedulingCase;
+}
+
+function saveSchedulingCaseForm(form) {
+  const schedulingCase = createSchedulingCaseFromForm(form);
+
+  if (!schedulingCase) {
+    return;
+  }
+
+  const scheduling = getInterviewSchedulingState();
+  replaceSchedulingCase(schedulingCase);
+  scheduling.createModalOpen = false;
+  setInterviewSchedulingDirty("면접 조율 건을 생성했습니다.");
+  renderInterviewView();
+}
+
+function openSchedulingCreateModal() {
+  const scheduling = getInterviewSchedulingState();
+  scheduling.createModalOpen = true;
+  renderInterviewView();
+}
+
+function closeSchedulingCreateModal() {
+  const scheduling = getInterviewSchedulingState();
+  scheduling.createModalOpen = false;
+  renderInterviewView();
+}
+
+function openSchedulingSimulationModal() {
+  const scheduling = getInterviewSchedulingState();
+  scheduling.simulationModalOpen = true;
+  renderInterviewView();
+}
+
+function closeSchedulingSimulationModal() {
+  const scheduling = getInterviewSchedulingState();
+  scheduling.simulationModalOpen = false;
+  renderInterviewView();
+}
+
+function selectSchedulingCase(caseId) {
+  const scheduling = getInterviewSchedulingState();
+  scheduling.selectedCaseId = caseId;
+  persistState({ skipRemoteSync: true });
+  renderInterviewView();
+}
+
+function addSchedulingInterviewerRow(button) {
+  const list = button?.closest("form")?.querySelector("[data-scheduling-interviewer-list]");
+
+  if (!list) {
+    return;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderSchedulingInterviewerInputRows().trim();
+  list.appendChild(wrapper.firstElementChild);
+}
+
+function removeSchedulingInterviewerRow(button) {
+  const row = button?.closest("[data-scheduling-interviewer-row]");
+  const list = row?.parentElement;
+
+  if (!row || !list || list.querySelectorAll("[data-scheduling-interviewer-row]").length <= 1) {
+    return;
+  }
+
+  row.remove();
+}
+
+async function sendSchedulingAvailabilityRequests(caseId) {
+  const createdMessageIds = [];
+
+  try {
+    mutateSchedulingCase(caseId, (schedulingCase) => {
+      const participants = schedulingCase.participants || [];
+      participants.forEach((participant) => {
+        participant.responseStatus = "REQUESTED";
+        participant.updatedAt = getTimestampText();
+        const message = createSchedulingMessage(
+          participant.role === "CANDIDATE" ? "candidate_availability_request" : "interviewer_availability_request",
+          participant,
+          schedulingCase,
+          "outbound",
+          { status: "PENDING" }
+        );
+        createdMessageIds.push(message.id);
+        schedulingCase.messages.unshift(message);
+      });
+      transitionSchedulingCase(schedulingCase, "COLLECTING_AVAILABILITY", "후보자와 면접위원별 가능 시간 요청 메일을 발송 대기열에 생성했습니다.", {
+        eventType: "AVAILABILITY_REQUEST_QUEUED"
+      });
+      schedulingCase.nextAction = "각 참여자의 Gmail 회신을 기다리고 있습니다.";
+    }, { message: "가능 시간 요청 메일을 발송하고 있습니다." });
+    renderInterviewView();
+
+    const results = await sendSchedulingOutboundMessages(caseId, createdMessageIds);
+    const sentCount = results.filter((result) => result.sent || result.status === "SENT").length;
+    const failedCount = results.filter((result) => result.status === "FAILED").length;
+
+    if (failedCount) {
+      showToast(`가능 시간 요청 메일 ${sentCount}건 발송, ${failedCount}건 실패`);
+    } else {
+      showToast(`가능 시간 요청 메일 ${sentCount}건을 발송했습니다.`);
+    }
+    renderInterviewView();
+  } catch (error) {
+    showToast(error.message || "가능 시간 요청 메일 발송 중 오류가 발생했습니다.");
+  }
+}
+
+function localIntervalFromIso(start, end) {
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) {
+    return null;
+  }
+
+  return { start: startMs, end: endMs };
+}
+
+function mergeSchedulingIntervals(intervals) {
+  const sorted = intervals.filter(Boolean).sort((a, b) => a.start - b.start || a.end - b.end);
+  const result = [];
+
+  sorted.forEach((interval) => {
+    const previous = result[result.length - 1];
+    if (previous && interval.start <= previous.end) {
+      previous.end = Math.max(previous.end, interval.end);
+    } else {
+      result.push({ ...interval });
+    }
+  });
+
+  return result;
+}
+
+function intersectSchedulingIntervals(left, right) {
+  const a = mergeSchedulingIntervals(left);
+  const b = mergeSchedulingIntervals(right);
+  const result = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < a.length && j < b.length) {
+    const start = Math.max(a[i].start, b[j].start);
+    const end = Math.min(a[i].end, b[j].end);
+
+    if (start < end) {
+      result.push({ start, end });
+    }
+
+    if (a[i].end < b[j].end) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+
+  return result;
+}
+
+function computeSchedulingOptions(schedulingCase) {
+  const requiredParticipants = getSchedulingRequiredParticipants(schedulingCase);
+  const participantWindows = requiredParticipants.map((participant) => schedulingCase.availability
+    .filter((window) => window.participantId === participant.id && window.active)
+    .map((window) => localIntervalFromIso(window.start, window.end))
+    .filter(Boolean));
+
+  if (!participantWindows.length || participantWindows.some((windows) => !windows.length)) {
+    return [];
+  }
+
+  let common = participantWindows.reduce((current, windows) => intersectSchedulingIntervals(current, windows));
+  const windowStart = localIntervalFromIso(schedulingCase.schedulingWindowStart, schedulingCase.schedulingWindowEnd);
+
+  if (windowStart) {
+    common = intersectSchedulingIntervals(common, [windowStart]);
+  }
+
+  const durationMs = Math.max(15, Number(schedulingCase.durationMinutes || 60)) * 60_000;
+  const intervalMs = Math.max(15, Number(schedulingCase.slotIntervalMinutes || 30)) * 60_000;
+  const slots = [];
+
+  common.forEach((interval) => {
+    let cursor = Math.ceil(interval.start / intervalMs) * intervalMs;
+
+    while (cursor + durationMs <= interval.end) {
+      if (cursor > Date.now()) {
+        slots.push({
+          optionCode: SCHEDULING_OPTION_CODES[slots.length],
+          start: new Date(cursor).toISOString(),
+          end: new Date(cursor + durationMs).toISOString(),
+          status: "AVAILABLE",
+          expiresAt: schedulingCase.candidateReplyDeadline || ""
+        });
+      }
+
+      cursor += intervalMs;
+
+      if (slots.length >= 3) {
+        break;
+      }
+    }
+  });
+
+  return slots.slice(0, 3).map(normalizeSchedulingOption);
+}
+
+function recalculateSchedulingSlots(caseId) {
+  mutateSchedulingCase(caseId, (schedulingCase) => {
+    const options = computeSchedulingOptions(schedulingCase);
+    schedulingCase.options = options;
+
+    if (options.length) {
+      const nextStatus = schedulingCase.status === "COLLECTING_AVAILABILITY" || schedulingCase.status === "NO_COMMON_SLOT"
+        ? "READY_TO_PROPOSE"
+        : schedulingCase.status;
+
+      if (nextStatus !== schedulingCase.status && canSchedulingTransition(schedulingCase.status, nextStatus)) {
+        transitionSchedulingCase(schedulingCase, nextStatus, "필수 참여자의 공통 가능 시간이 계산되었습니다.", {
+          eventType: "COMMON_SLOT_CALCULATED"
+        });
+      } else {
+        addSchedulingAuditLog(schedulingCase, "COMMON_SLOT_CALCULATED", "공통 가능 시간이 재계산되었습니다.");
+      }
+      schedulingCase.nextAction = "후보자에게 선택지를 발송하세요.";
+    } else if (canSchedulingTransition(schedulingCase.status, "NO_COMMON_SLOT")) {
+      transitionSchedulingCase(schedulingCase, "NO_COMMON_SLOT", "필수 참여자 간 공통 가능 시간이 없습니다.", {
+        eventType: "NO_COMMON_SLOT"
+      });
+      schedulingCase.nextAction = "추가 가능 시간을 요청하세요.";
+    }
+  }, { message: "공통 가능 시간을 재계산했습니다." });
+  renderInterviewView();
+}
+
+async function sendSchedulingOptions(caseId) {
+  const createdMessageIds = [];
+
+  try {
+    mutateSchedulingCase(caseId, (schedulingCase) => {
+      const candidate = getSchedulingCandidateParticipant(schedulingCase);
+
+      if (!candidate || !schedulingCase.options.length) {
+        throw new Error("후보자 또는 선택지가 없습니다.");
+      }
+
+      schedulingCase.options = schedulingCase.options.map((option) => ({
+        ...option,
+        status: option.status === "AVAILABLE" ? "HELD" : option.status,
+        sentAt: option.sentAt || getTimestampText(),
+        updatedAt: getTimestampText()
+      }));
+      const message = createSchedulingMessage("candidate_options", candidate, schedulingCase, "outbound", {
+        status: "PENDING",
+        body: schedulingCase.options.map((option) => `${option.optionCode}. ${formatSchedulingRange(option.start, option.end, schedulingCase.timezone)}`).join("\n")
+      });
+      createdMessageIds.push(message.id);
+      schedulingCase.messages.unshift(message);
+      transitionSchedulingCase(schedulingCase, "OPTIONS_SENT", "후보자에게 일정 선택지를 발송하도록 대기열에 생성했습니다.", {
+        eventType: "OPTIONS_QUEUED"
+      });
+      schedulingCase.nextAction = "후보자의 A/B/C 선택 회신을 기다리고 있습니다.";
+    }, { message: "후보자 선택지 메일을 발송하고 있습니다." });
+    renderInterviewView();
+
+    const results = await sendSchedulingOutboundMessages(caseId, createdMessageIds);
+    const sentCount = results.filter((result) => result.sent || result.status === "SENT").length;
+    const failedCount = results.filter((result) => result.status === "FAILED").length;
+
+    if (failedCount) {
+      showToast(`선택지 메일 ${sentCount}건 발송, ${failedCount}건 실패`);
+    } else {
+      showToast(`선택지 메일 ${sentCount}건을 발송했습니다.`);
+    }
+    renderInterviewView();
+  } catch (error) {
+    showToast(error.message || "선택지 메일 발송 중 오류가 발생했습니다.");
+  }
+}
+
+function confirmSchedulingOption(caseId, optionCode, actorType = "USER") {
+  mutateSchedulingCase(caseId, (schedulingCase) => {
+    const option = schedulingCase.options.find((item) => item.optionCode === optionCode);
+
+    if (!option) {
+      throw new Error("선택한 option을 찾을 수 없습니다.");
+    }
+
+    if (!["OPTIONS_SENT", "MANUAL_REVIEW"].includes(schedulingCase.status)) {
+      throw new Error("선택지를 확정할 수 있는 상태가 아닙니다.");
+    }
+
+    schedulingCase.options = schedulingCase.options.map((item) => ({
+      ...item,
+      status: item.optionCode === optionCode ? "SELECTED" : "RELEASED",
+      selectedAt: item.optionCode === optionCode ? getTimestampText() : item.selectedAt,
+      updatedAt: getTimestampText()
+    }));
+    schedulingCase.confirmedStartAt = option.start;
+    schedulingCase.confirmedEndAt = option.end;
+    schedulingCase.confirmedAt = getTimestampText();
+    schedulingCase.participants.forEach((participant) => {
+      participant.responseStatus = participant.role === "CANDIDATE" ? "SELECTED" : "CONFIRMED";
+    });
+    schedulingCase.participants.forEach((participant) => {
+      schedulingCase.messages.unshift(createSchedulingMessage(
+        participant.role === "CANDIDATE" ? "candidate_confirmed" : "interviewer_confirmed",
+        participant,
+        schedulingCase,
+        "outbound",
+        {
+          status: "PENDING",
+          body: formatSchedulingRange(option.start, option.end, schedulingCase.timezone)
+        }
+      ));
+    });
+    transitionSchedulingCase(schedulingCase, "CONFIRMING", `${optionCode}안이 선택되어 확정 메일 outbox가 생성되었습니다.`, {
+      eventType: "OPTION_SELECTED",
+      actorType
+    });
+    transitionSchedulingCase(schedulingCase, "CONFIRMED", "Mock 모드에서 확정 메일 발송이 완료 처리되었습니다.", {
+      eventType: "CONFIRMATION_SENT",
+      actorType: "SYSTEM"
+    });
+    schedulingCase.messages = schedulingCase.messages.map((message) => message.status === "PENDING"
+      ? { ...message, status: "SENT", sentAt: message.sentAt || getTimestampText() }
+      : message);
+    schedulingCase.nextAction = "조율이 완료되었습니다. 확정 이후 변경 요청은 수동 검토로 전환됩니다.";
+  }, { message: "면접 일정을 확정했습니다." });
+  renderInterviewView();
+}
+
+async function callSchedulingApi(payload) {
+  const response = await fetch("/api/interview-scheduling", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const text = await response.text();
+
+  try {
+    const data = JSON.parse(text);
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `API 오류: ${response.status}`);
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`면접 스케줄링 API 응답이 JSON이 아닙니다. (${response.status})`);
+    }
+    throw error;
+  }
+}
+
+async function processSchedulingSimulationReply(form) {
+  const formData = new FormData(form);
+  const caseId = String(formData.get("caseId") || "").trim();
+  const participantId = String(formData.get("participantId") || "").trim();
+  const schedulingCase = findSchedulingCase(caseId);
+  const participant = schedulingCase ? getSchedulingParticipantById(schedulingCase, participantId) : null;
+
+  if (!schedulingCase || !participant) {
+    showToast("시뮬레이션 대상 조율 건 또는 발신자를 확인해주세요.");
+    return;
+  }
+
+  const body = String(formData.get("body") || "").trim();
+  const subject = String(formData.get("subject") || "").trim();
+  const receivedAt = toSchedulingIso(String(formData.get("receivedAt") || "")) || new Date().toISOString();
+  const timezone = String(formData.get("timezone") || schedulingCase.timezone || "Asia/Seoul").trim();
+  let selectedOptionFromReply = "";
+  const data = await callSchedulingApi({
+    action: "simulate-reply",
+    subject,
+    body,
+    receivedAt,
+    timezone,
+    senderRole: participant.role,
+    caseCode: schedulingCase.caseCode,
+    schedulingWindowStart: schedulingCase.schedulingWindowStart,
+    schedulingWindowEnd: schedulingCase.schedulingWindowEnd
+  });
+
+  mutateSchedulingCase(caseId, (nextCase) => {
+    const nextParticipant = getSchedulingParticipantById(nextCase, participantId);
+    nextCase.messages.unshift(createSchedulingMessage("reply", nextParticipant, nextCase, "inbound", {
+      fromAddress: nextParticipant.email,
+      subject,
+      body,
+      status: data.autoProcessable ? "PROCESSED" : "MANUAL_REVIEW",
+      gmailMessageId: `mock-${Date.now()}`,
+      createdAt: getTimestampText()
+    }));
+    nextCase.aiAnalyses.unshift({
+      id: createId("scheduling-ai"),
+      participantId,
+      intent: data.parsed.intent,
+      confidence: data.parsed.confidence,
+      result: data.parsed,
+      validationErrors: data.validationErrors || [],
+      createdAt: getTimestampText()
+    });
+
+    if (!data.autoProcessable) {
+      if (canSchedulingTransition(nextCase.status, "CLARIFICATION_REQUIRED")) {
+        transitionSchedulingCase(nextCase, "CLARIFICATION_REQUIRED", data.validationErrors?.join(", ") || "AI 분석 신뢰도가 낮거나 시간이 모호합니다.", {
+          eventType: "CLARIFICATION_REQUIRED",
+          actorType: "SYSTEM"
+        });
+      } else {
+        transitionSchedulingCase(nextCase, "MANUAL_REVIEW", "자동 처리할 수 없는 회신입니다.", {
+          eventType: "MANUAL_REVIEW",
+          actorType: "SYSTEM"
+        });
+      }
+      nextCase.manualReviewReason = data.validationErrors?.join(", ") || data.parsed.clarificationReason || "자동 처리 기준 미충족";
+      return;
+    }
+
+    if (data.parsed.intent === "SELECT_OPTION") {
+      const optionCode = data.parsed.selectedOptionCodes[0];
+      nextParticipant.responseStatus = "SELECTED";
+      nextParticipant.lastRespondedAt = getTimestampText();
+      addSchedulingAuditLog(nextCase, "OPTION_REPLY_RECEIVED", `${nextParticipant.name || nextParticipant.email} 회신에서 ${optionCode}안 선택을 확인했습니다.`, "SYSTEM");
+      selectedOptionFromReply = optionCode;
+      return;
+    }
+
+    if (["PROVIDE_AVAILABILITY", "CHANGE_AVAILABILITY"].includes(data.parsed.intent)) {
+      if (data.parsed.intent === "CHANGE_AVAILABILITY") {
+        nextCase.availability = nextCase.availability.map((window) => window.participantId === participantId
+          ? { ...window, active: false, supersededAt: getTimestampText() }
+          : window);
+      }
+
+      data.parsed.availability.forEach((window) => {
+        nextCase.availability.push(normalizeSchedulingWindow({
+          participantId,
+          start: window.start,
+          end: window.end,
+          timezone: data.parsed.timezone || timezone,
+          extractionConfidence: data.parsed.confidence,
+          sourceMessageId: `mock-${Date.now()}`
+        }));
+      });
+      nextParticipant.responseStatus = "RECEIVED";
+      nextParticipant.lastRespondedAt = getTimestampText();
+      addSchedulingAuditLog(nextCase, "AVAILABILITY_RECEIVED", `${nextParticipant.name || nextParticipant.email} 가능 시간이 등록되었습니다.`, "SYSTEM");
+    } else if (["CANCEL", "DECLINE", "OTHER"].includes(data.parsed.intent)) {
+      transitionSchedulingCase(nextCase, "MANUAL_REVIEW", "일정 조율 외 의도 또는 취소/거절 의도가 감지되었습니다.", {
+        eventType: "MANUAL_REVIEW",
+        actorType: "SYSTEM"
+      });
+      nextCase.manualReviewReason = data.parsed.clarificationReason || "자동 처리 대상이 아닌 회신";
+    }
+  }, { message: "회신 시뮬레이션을 처리했습니다." });
+
+  const updated = findSchedulingCase(caseId);
+
+  if (updated && selectedOptionFromReply) {
+    confirmSchedulingOption(caseId, selectedOptionFromReply, "SYSTEM");
+  } else if (updated && getSchedulingRequiredParticipants(updated).every((required) => updated.availability.some((window) => window.participantId === required.id && window.active))) {
+    recalculateSchedulingSlots(caseId);
+  }
+
+  getInterviewSchedulingState().simulationModalOpen = false;
+  setInterviewSchedulingDirty();
+  renderInterviewView();
+}
+
+async function refreshSchedulingGmailStatus() {
+  try {
+    const data = await callSchedulingApi({
+      action: "status",
+      userId: getCurrentMember()?.id || "",
+      gmailAddress: getCurrentMember()?.email || ""
+    });
+    const scheduling = getInterviewSchedulingState();
+    scheduling.gmailConnection = {
+      ...scheduling.gmailConnection,
+      connected: Boolean(data.connected),
+      status: data.status || scheduling.gmailConnection.status || "",
+      providerConfigured: Boolean(data.providerConfigured),
+      mailMode: data.mailMode || "mock",
+      autoSendEnabled: Boolean(data.autoSendEnabled),
+      gmailAddress: data.gmailAddress || scheduling.gmailConnection.gmailAddress || "",
+      lastSyncedAt: data.lastSyncedAt || scheduling.gmailConnection.lastSyncedAt || "",
+      lastWatchRenewedAt: data.lastWatchRenewedAt || scheduling.gmailConnection.lastWatchRenewedAt || "",
+      watchExpirationAt: data.watchExpirationAt || scheduling.gmailConnection.watchExpirationAt || "",
+      lastError: data.lastError || ""
+    };
+    setInterviewSchedulingDirty("Gmail 연결 상태를 확인했습니다.");
+    renderInterviewView();
+  } catch (error) {
+    showToast(error.message || "Gmail 상태 확인 중 오류가 발생했습니다.");
+  }
+}
+
+async function startSchedulingGmailConnect() {
+  try {
+    const data = await callSchedulingApi({
+      action: "oauth-start",
+      userId: getCurrentMember()?.id || getCurrentMember()?.email || ""
+    });
+
+    if (data.authUrl) {
+      window.open(data.authUrl, "_blank", "noopener");
+    }
+  } catch (error) {
+    showToast(error.message || "Gmail 연결 설정을 확인해주세요.");
+  }
+}
+
+function disconnectSchedulingGmail() {
+  callSchedulingApi({
+    action: "disconnect",
+    userId: getCurrentMember()?.id || "",
+    gmailAddress: getCurrentMember()?.email || ""
+  }).catch((error) => {
+    console.warn("Gmail disconnect failed.", error);
+  }).finally(() => {
+    const scheduling = getInterviewSchedulingState();
+    scheduling.gmailConnection = {
+      ...scheduling.gmailConnection,
+      connected: false,
+      gmailAddress: "",
+      lastError: ""
+    };
+    setInterviewSchedulingDirty("Gmail 연결을 해제했습니다.");
+    renderInterviewView();
+  });
+}
+
+async function syncSchedulingGmailNow(options = {}) {
+  const silent = Boolean(options.silent);
+
+  if (interviewSchedulingAutoSyncInFlight) {
+    return null;
+  }
+
+  interviewSchedulingAutoSyncInFlight = true;
+
+  try {
+    const data = await callSchedulingApi({
+      action: "sync",
+      userId: getCurrentMember()?.id || "",
+      gmailAddress: getCurrentMember()?.email || ""
+    });
+    if (data.schedulingState && typeof data.schedulingState === "object") {
+      state.interviewScheduling = normalizeInterviewSchedulingState(data.schedulingState);
+    }
+    const scheduling = getInterviewSchedulingState();
+    scheduling.gmailConnection = {
+      ...scheduling.gmailConnection,
+      ...(data.connection || {}),
+      lastSyncedAt: data.connection?.lastSyncedAt || getTimestampText()
+    };
+    persistState({ skipRemoteSync: true });
+
+    if (!silent) {
+      showToast("Gmail 동기화를 완료했습니다.");
+    }
+
+    if (state.view === "interview") {
+      renderInterviewView();
+    }
+
+    return data;
+  } catch (error) {
+    if (!silent) {
+      showToast(error.message || "Gmail 동기화 중 오류가 발생했습니다.");
+    } else {
+      console.warn("Interview scheduling auto sync failed.", error);
+    }
+
+    return null;
+  } finally {
+    interviewSchedulingAutoSyncInFlight = false;
+  }
+}
+
+function shouldRunInterviewSchedulingAutoSync() {
+  if (!isAuthenticated() || state.view !== "interview" || document.hidden) {
+    return false;
+  }
+
+  const gmail = getInterviewSchedulingState().gmailConnection || {};
+  return Boolean(gmail.connected || gmail.status === "CONNECTED" || gmail.gmailAddress);
+}
+
+function updateInterviewSchedulingAutoSync() {
+  const shouldRun = shouldRunInterviewSchedulingAutoSync();
+
+  if (!shouldRun) {
+    if (interviewSchedulingAutoSyncTimer) {
+      window.clearInterval(interviewSchedulingAutoSyncTimer);
+      interviewSchedulingAutoSyncTimer = null;
+    }
+
+    return;
+  }
+
+  if (interviewSchedulingAutoSyncTimer) {
+    return;
+  }
+
+  syncSchedulingGmailNow({ silent: true });
+  interviewSchedulingAutoSyncTimer = window.setInterval(() => {
+    if (shouldRunInterviewSchedulingAutoSync()) {
+      syncSchedulingGmailNow({ silent: true });
+    }
+  }, INTERVIEW_SCHEDULING_AUTO_SYNC_INTERVAL_MS);
+}
+
+function updateSchedulingFilters() {
+  const scheduling = getInterviewSchedulingState();
+  scheduling.filters.query = $("#scheduling-query")?.value || "";
+  scheduling.filters.status = $("#scheduling-status")?.value || "all";
+  scheduling.filters.owner = $("#scheduling-owner")?.value || "all";
+  scheduling.filters.sortBy = $("#scheduling-sort")?.value || "updatedAt";
+  persistState({ skipRemoteSync: true });
+  renderInterviewView();
+}
+
+function manualReviewSchedulingCase(caseId) {
+  mutateSchedulingCase(caseId, (schedulingCase) => {
+    transitionSchedulingCase(schedulingCase, "MANUAL_REVIEW", "담당자가 수동 검토로 전환했습니다.");
+    schedulingCase.manualReviewReason = "담당자 수동 전환";
+  }, { message: "수동 검토로 전환했습니다." });
+  renderInterviewView();
+}
+
+function cancelSchedulingCase(caseId) {
+  mutateSchedulingCase(caseId, (schedulingCase) => {
+    transitionSchedulingCase(schedulingCase, "CANCELLED", "담당자가 조율 건을 취소했습니다.");
+    schedulingCase.cancelledAt = getTimestampText();
+  }, { message: "조율 건을 취소했습니다." });
+  renderInterviewView();
 }
 
 function getInterviewReportState() {
@@ -29381,6 +31365,99 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-open-scheduling-create]")) {
+      openSchedulingCreateModal();
+      return;
+    }
+
+    if (event.target.matches("[data-close-scheduling-create]") || event.target.closest("button[data-close-scheduling-create]")) {
+      closeSchedulingCreateModal();
+      return;
+    }
+
+    if (event.target.closest("[data-add-scheduling-interviewer]")) {
+      addSchedulingInterviewerRow(event.target.closest("[data-add-scheduling-interviewer]"));
+      return;
+    }
+
+    const removeSchedulingInterviewerButton = event.target.closest("[data-remove-scheduling-interviewer]");
+    if (removeSchedulingInterviewerButton) {
+      removeSchedulingInterviewerRow(removeSchedulingInterviewerButton);
+      return;
+    }
+
+    const selectSchedulingButton = event.target.closest("[data-select-scheduling-case]");
+    if (selectSchedulingButton) {
+      selectSchedulingCase(selectSchedulingButton.dataset.selectSchedulingCase);
+      return;
+    }
+
+    const sendSchedulingRequestsButton = event.target.closest("[data-send-scheduling-requests]");
+    if (sendSchedulingRequestsButton) {
+      sendSchedulingAvailabilityRequests(sendSchedulingRequestsButton.dataset.sendSchedulingRequests);
+      return;
+    }
+
+    const recalculateSchedulingButton = event.target.closest("[data-recalculate-scheduling-slots]");
+    if (recalculateSchedulingButton) {
+      recalculateSchedulingSlots(recalculateSchedulingButton.dataset.recalculateSchedulingSlots);
+      return;
+    }
+
+    const sendSchedulingOptionsButton = event.target.closest("[data-send-scheduling-options]");
+    if (sendSchedulingOptionsButton) {
+      sendSchedulingOptions(sendSchedulingOptionsButton.dataset.sendSchedulingOptions);
+      return;
+    }
+
+    const confirmSchedulingOptionButton = event.target.closest("[data-confirm-scheduling-option]");
+    if (confirmSchedulingOptionButton) {
+      confirmSchedulingOption(confirmSchedulingOptionButton.dataset.schedulingCaseId, confirmSchedulingOptionButton.dataset.confirmSchedulingOption);
+      return;
+    }
+
+    const manualReviewSchedulingButton = event.target.closest("[data-scheduling-manual-review]");
+    if (manualReviewSchedulingButton) {
+      manualReviewSchedulingCase(manualReviewSchedulingButton.dataset.schedulingManualReview);
+      return;
+    }
+
+    const cancelSchedulingButton = event.target.closest("[data-cancel-scheduling-case]");
+    if (cancelSchedulingButton) {
+      cancelSchedulingCase(cancelSchedulingButton.dataset.cancelSchedulingCase);
+      return;
+    }
+
+    if (event.target.closest("[data-open-scheduling-simulation]")) {
+      openSchedulingSimulationModal();
+      return;
+    }
+
+    if (event.target.matches("[data-close-scheduling-simulation]") || event.target.closest("button[data-close-scheduling-simulation]")) {
+      closeSchedulingSimulationModal();
+      return;
+    }
+
+    if (event.target.closest("[data-refresh-gmail-status]")) {
+      refreshSchedulingGmailStatus();
+      return;
+    }
+
+    if (event.target.closest("[data-gmail-connect]")) {
+      startSchedulingGmailConnect();
+      return;
+    }
+
+    if (event.target.closest("[data-gmail-disconnect]")) {
+      disconnectSchedulingGmail();
+      return;
+    }
+
+    if (event.target.closest("[data-gmail-sync]")) {
+      syncSchedulingGmailNow();
+      return;
+    }
+
     const deleteInterviewCaseButton = event.target.closest("[data-delete-interview-case]");
     if (deleteInterviewCaseButton) {
       deleteInterviewCase(deleteInterviewCaseButton.dataset.deleteInterviewCase);
@@ -30321,6 +32398,21 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.matches("#scheduling-case-form")) {
+      event.preventDefault();
+      saveSchedulingCaseForm(event.target);
+      return;
+    }
+
+    if (event.target.matches("#scheduling-simulation-form")) {
+      event.preventDefault();
+      processSchedulingSimulationReply(event.target).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "회신 처리 중 오류가 발생했습니다.");
+      });
+      return;
+    }
+
     if (event.target.matches("#policy-source-form")) {
       event.preventDefault();
       savePolicySourceFromForm(event.target).catch((error) => {
@@ -30399,6 +32491,10 @@ function bindEvents() {
 
     if (["member-query", "member-role-filter", "member-status-filter"].includes(event.target.id)) {
       updateMemberFilters();
+    }
+
+    if (["scheduling-query", "scheduling-status", "scheduling-owner", "scheduling-sort"].includes(event.target.id)) {
+      updateSchedulingFilters();
     }
 
     if (event.target.id === "candidate-birth-year") {
@@ -30903,6 +32999,33 @@ function bindEvents() {
       await executeAiSearch();
     }
   });
+
+  document.addEventListener("visibilitychange", () => {
+    updateInterviewSchedulingAutoSync();
+  });
+
+  window.addEventListener("focus", () => {
+    updateInterviewSchedulingAutoSync();
+  });
+}
+
+function applyInitialUrlIntent() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    const requestedView = String(params.get("view") || "").trim();
+    const gmailStatus = String(params.get("gmail") || "").trim();
+
+    if (requestedView && MENU_CONFIG.some((item) => item.view === requestedView) && canAccessView(requestedView)) {
+      state.view = requestedView;
+    }
+
+    if (gmailStatus === "connected" || gmailStatus === "needs-reconnect") {
+      state.pendingGmailStatusRefresh = true;
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  } catch (error) {
+    console.warn("Initial URL intent could not be applied.", error);
+  }
 }
 
 async function initializeApp() {
@@ -30912,6 +33035,7 @@ async function initializeApp() {
     recordPageVisit(getCurrentMember());
   }
   bindEvents();
+  applyInitialUrlIntent();
 
   try {
     if (await ensureMemberPasswordHashes()) {
@@ -30928,6 +33052,14 @@ async function initializeApp() {
   }
 
   render();
+
+  if (state.pendingGmailStatusRefresh) {
+    state.pendingGmailStatusRefresh = false;
+    window.setTimeout(() => {
+      refreshSchedulingGmailStatus();
+    }, 0);
+  }
+
   loadStateFromSupabase();
 }
 

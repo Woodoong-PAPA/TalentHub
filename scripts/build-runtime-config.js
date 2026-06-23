@@ -28,8 +28,18 @@ function readEnvFile(filePath) {
 }
 
 const fileEnv = readEnvFile(path.join(rootDir, ".env"));
-const supabaseUrl = process.env.SUPABASE_URL || fileEnv.SUPABASE_URL || "";
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || fileEnv.SUPABASE_ANON_KEY || "";
+const supabaseUrl =
+  process.env.SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  fileEnv.SUPABASE_URL ||
+  fileEnv.NEXT_PUBLIC_SUPABASE_URL ||
+  "";
+const supabaseAnonKey =
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  fileEnv.SUPABASE_ANON_KEY ||
+  fileEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "";
 const requestedDataSource = process.env.APP_DATA_SOURCE || fileEnv.APP_DATA_SOURCE || "local";
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
@@ -44,9 +54,19 @@ const contents = `window.__APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`
 fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(distDir, { recursive: true });
 
-["index.html", "styles.css", "talent-pool.js"].forEach((fileName) => {
+["index.html", "styles.css", "talent-pool.js", "interpreter.html", "interpreter.css", "interpreter.js"].forEach((fileName) => {
   fs.copyFileSync(path.join(rootDir, fileName), path.join(distDir, fileName));
 });
+
+fs.mkdirSync(path.join(distDir, "vendor"), { recursive: true });
+fs.copyFileSync(path.join(rootDir, "vendor", "supabase.js"), path.join(distDir, "vendor", "supabase.js"));
+fs.copyFileSync(
+  path.join(rootDir, "vendor", "supabase-global.js"),
+  path.join(distDir, "vendor", "supabase-global.js")
+);
+
+fs.mkdirSync(path.join(distDir, "tools"), { recursive: true });
+fs.copyFileSync(path.join(rootDir, "interpreter.html"), path.join(distDir, "tools", "interpreter.html"));
 
 fs.writeFileSync(outputPath, contents, "utf8");
 fs.writeFileSync(distOutputPath, contents, "utf8");

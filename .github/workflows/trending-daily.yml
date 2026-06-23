@@ -94,3 +94,14 @@ jobs:
             fi
           done
           exit 1
+
+      - name: Sync interview scheduling Gmail replies
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          for origin in "$PRIMARY_APP_ORIGIN" "$FALLBACK_APP_ORIGIN"; do
+            if curl --fail --silent --show-error --retry 2 --retry-delay 20 \
+              "$origin/api/interview-scheduling-sync-cron"; then
+              exit 0
+            fi
+          done
+          exit 1

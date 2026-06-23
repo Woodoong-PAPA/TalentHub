@@ -4,11 +4,21 @@
   "private": true,
   "scripts": {
     "build": "node scripts/build-runtime-config.js",
-    "check": "node --check talent-pool.js && node --check server.js && node --check scripts/build-runtime-config.js && node --check api/extract-text.js && node --check api/parse-resume.js && node --check api/search-candidates.js && node --check api/policy-chat.js && node --check api/job-fit-analysis.js && node --check api/jd-enhance.js && node --check api/trending-people.js && node --check api/trending-people-cron.js && node --check api/trending-mail.js && node --check api/screening-mail.js && node --check api/signup-alert.js && node --check api/recruiting-metrics-mail.js",
+    "check": "node --check talent-pool.js && node --check interpreter.js && node --check server.js && node --check lib/realtime-interpreter-room.js && node --check lib/interview-scheduling-core.js && node --check scripts/build-runtime-config.js && node --check scripts/verify-interpreter-realtime.js && node --check api/router.js && node --check api/client-config.js && node --check api/realtime-token.js && node --check api/translate-caption.js && node --check api/interpreter-rooms.js && node --check api/interpreter-qr.js && node --check api/extract-text.js && node --check api/parse-resume.js && node --check api/search-candidates.js && node --check api/policy-chat.js && node --check api/job-fit-analysis.js && node --check api/jd-enhance.js && node --check api/trending-people.js && node --check api/trending-people-cron.js && node --check api/trending-mail.js && node --check api/screening-mail.js && node --check api/signup-alert.js && node --check api/recruiting-metrics-mail.js && node --check api/interview-scheduling.js",
+    "test:interview-scheduling": "node scripts/test-interview-scheduling.js",
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "verify:interpreter": "node scripts/verify-interpreter-realtime.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.21.0"
   }
 }

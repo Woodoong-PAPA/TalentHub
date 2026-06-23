@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/**/*.js",
+      "src": "api/router.js",
       "use": "@vercel/node"
     },
     {
@@ -37,64 +37,20 @@
     {
       "path": "/api/trending-mail-cron",
       "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/interview-scheduling-watch-cron",
+      "schedule": "0 18 * * *"
     }
   ],
   "routes": [
     {
-      "src": "/api/parse-resume",
-      "dest": "/api/parse-resume.js"
+      "src": "/api/(.*)",
+      "dest": "/api/router.js?route=$1"
     },
     {
-      "src": "/api/extract-text",
-      "dest": "/api/extract-text.js"
-    },
-    {
-      "src": "/api/search-candidates",
-      "dest": "/api/search-candidates.js"
-    },
-    {
-      "src": "/api/policy-chat",
-      "dest": "/api/policy-chat.js"
-    },
-    {
-      "src": "/api/job-fit-analysis",
-      "dest": "/api/job-fit-analysis.js"
-    },
-    {
-      "src": "/api/jd-enhance",
-      "dest": "/api/jd-enhance.js"
-    },
-    {
-      "src": "/api/trending-people-cron",
-      "dest": "/api/trending-people-cron.js"
-    },
-    {
-      "src": "/api/trending-people",
-      "dest": "/api/trending-people.js"
-    },
-    {
-      "src": "/api/trending-mail",
-      "dest": "/api/trending-mail.js"
-    },
-    {
-      "src": "/api/trending-mail-cron",
-      "dest": "/api/trending-mail.js"
-    },
-    {
-      "src": "/api/screening-mail",
-      "dest": "/api/screening-mail.js"
-    },
-    {
-      "src": "/api/signup-alert",
-      "dest": "/api/signup-alert.js"
-    },
-    {
-      "src": "/api/recruiting-metrics-mail",
-      "dest": "/api/recruiting-metrics-mail.js"
-    },
-    {
-      "src": "/api/recruiting-metrics-request-cron",
-      "dest": "/api/recruiting-metrics-mail.js"
+      "src": "/runtime-config.js",
+      "dest": "/api/router.js?route=runtime-config"
     },
     {
       "handle": "filesystem"
