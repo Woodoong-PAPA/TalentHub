@@ -13,6 +13,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       APP_DATA_SOURCE: supabase
+      HAS_VERCEL_DEPLOY_SECRETS: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,19 +29,27 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Skip Vercel deployment when secrets are missing
+        if: ${{ env.HAS_VERCEL_DEPLOY_SECRETS != 'true' }}
+        run: |
+          echo "VERCEL_TOKEN, VERCEL_ORG_ID, or VERCEL_PROJECT_ID is not configured. Skipping GitHub Actions Vercel deployment."
+
       - name: Pull Vercel environment
+        if: ${{ env.HAS_VERCEL_DEPLOY_SECRETS == 'true' }}
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Build
+        if: ${{ env.HAS_VERCEL_DEPLOY_SECRETS == 'true' }}
         run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Deploy
+        if: ${{ env.HAS_VERCEL_DEPLOY_SECRETS == 'true' }}
         run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
