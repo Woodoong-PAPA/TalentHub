@@ -1011,7 +1011,16 @@ async function loadInterviewSchedulingPayload() {
 
   return {
     cases: Array.isArray(payload.cases) ? payload.cases : [],
-    deletedCaseIds: Array.isArray(payload.deletedCaseIds) ? payload.deletedCaseIds : [],
+    deletedCaseIds: Array.isArray(payload.deletedCaseIds)
+      ? payload.deletedCaseIds
+      : Array.isArray(payload.deleted_case_ids)
+        ? payload.deleted_case_ids
+        : [],
+    deletedCases: payload.deletedCases && typeof payload.deletedCases === "object"
+      ? payload.deletedCases
+      : payload.deleted_cases && typeof payload.deleted_cases === "object"
+        ? payload.deleted_cases
+        : {},
     selectedSchedulingCaseId: payload.selectedSchedulingCaseId || payload.selectedCaseId || "",
     filters: payload.filters || { query: "", status: "all", owner: "all", sortBy: "updatedAt" },
     gmailConnection: payload.gmailConnection || {},
@@ -1024,7 +1033,10 @@ async function saveInterviewSchedulingPayload(payload, updatedBy = "gmail-pubsub
   if (!Array.isArray(payload?.cases) || !payload.cases.length) {
     const existing = await loadInterviewSchedulingPayload().catch(() => null);
 
-    if (Array.isArray(existing?.cases) && existing.cases.length && !(Array.isArray(payload?.deletedCaseIds) && payload.deletedCaseIds.length)) {
+    const hasDeletedCases = Array.isArray(payload?.deletedCaseIds) && payload.deletedCaseIds.length
+      || Boolean(payload?.deletedCases && typeof payload.deletedCases === "object" && Object.keys(payload.deletedCases).length);
+
+    if (Array.isArray(existing?.cases) && existing.cases.length && !hasDeletedCases) {
       return existing;
     }
   }

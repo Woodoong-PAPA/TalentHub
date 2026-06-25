@@ -2182,6 +2182,55 @@ function normalizeIdList(value, limit = 1000) {
   return unique.slice(-Math.max(1, limit));
 }
 
+function normalizeDeletedCaseMap(value, limit = 1000) {
+  const entries = [];
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (item && typeof item === "object") {
+        const id = String(item.id || item.caseId || item.case_id || "").trim();
+        const deletedAt = String(item.deletedAt || item.deleted_at || item.updatedAt || item.updated_at || "").trim() || getTimestampText();
+
+        if (id) {
+          entries.push([id, deletedAt]);
+        }
+        return;
+      }
+
+      const id = String(item || "").trim();
+      if (id) {
+        entries.push([id, getTimestampText()]);
+      }
+    });
+  } else if (value && typeof value === "object") {
+    Object.entries(value).forEach(([id, deletedAt]) => {
+      const normalizedId = String(id || "").trim();
+      const normalizedDeletedAt = String(deletedAt || "").trim() || getTimestampText();
+
+      if (normalizedId) {
+        entries.push([normalizedId, normalizedDeletedAt]);
+      }
+    });
+  }
+
+  const latest = new Map();
+  entries.forEach(([id, deletedAt]) => {
+    const existing = latest.get(id);
+
+    if (!existing || dateSortValue(deletedAt) >= dateSortValue(existing)) {
+      latest.set(id, deletedAt);
+    }
+  });
+
+  return Object.fromEntries([...latest.entries()].slice(-Math.max(1, limit)));
+}
+
+function mergeDeletedCaseMaps(...maps) {
+  return normalizeDeletedCaseMap(
+    maps.flatMap((map) => Object.entries(normalizeDeletedCaseMap(map)).map(([id, deletedAt]) => ({ id, deletedAt })))
+  );
+}
+
 function inferMemberIdsByRole(ids, roles) {
   try {
     return ids.filter((id) => roles.includes(state.members.find((member) => member.id === id)?.role));
@@ -2543,10 +2592,13 @@ function normalizeSchedulingCase(schedulingCase = {}) {
 
 function normalizeInterviewSchedulingState(value = {}) {
   const current = state?.interviewScheduling || {};
-  const deletedCaseIds = normalizeIdList([
-    ...(current.deletedCaseIds || []),
-    ...(value.deletedCaseIds || value.deleted_case_ids || [])
-  ]);
+  const deletedCases = mergeDeletedCaseMaps(
+    current.deletedCases || current.deleted_cases || current.deletedCaseMap || {},
+    value.deletedCases || value.deleted_cases || value.deletedCaseMap || {},
+    normalizeIdList(current.deletedCaseIds || current.deleted_case_ids || []).map((id) => ({ id, deletedAt: current.updatedAt || getTimestampText() })),
+    normalizeIdList(value.deletedCaseIds || value.deleted_case_ids || []).map((id) => ({ id, deletedAt: value.updatedAt || getTimestampText() }))
+  );
+  const deletedCaseIds = normalizeIdList(Object.keys(deletedCases));
   const deletedCaseIdSet = new Set(deletedCaseIds);
   const sourceCases = Array.isArray(value.cases) ? value.cases : current.cases || [];
   const cases = sourceCases
@@ -2562,6 +2614,7 @@ function normalizeInterviewSchedulingState(value = {}) {
   return {
     cases,
     deletedCaseIds,
+    deletedCases,
     selectedCaseId: cases.some((item) => item.id === selectedCaseId) ? selectedCaseId : cases[0]?.id || "",
     filters: {
       query: String(filters.query || current.filters?.query || "").trim(),
@@ -2588,10 +2641,8 @@ function normalizeInterviewSchedulingState(value = {}) {
 function mergeInterviewSchedulingStates(baseValue = {}, incomingValue = {}) {
   const base = normalizeInterviewSchedulingState(baseValue);
   const incoming = normalizeInterviewSchedulingState(incomingValue);
-  const deletedCaseIds = normalizeIdList([
-    ...(base.deletedCaseIds || []),
-    ...(incoming.deletedCaseIds || [])
-  ]);
+  const deletedCases = mergeDeletedCaseMaps(base.deletedCases || {}, incoming.deletedCases || {});
+  const deletedCaseIds = normalizeIdList(Object.keys(deletedCases));
   const deletedCaseIdSet = new Set(deletedCaseIds);
   const cases = mergeByLatest(base.cases, incoming.cases, normalizeSchedulingCase)
     .filter((item) => item.id && !deletedCaseIdSet.has(item.id))
@@ -2604,6 +2655,7 @@ function mergeInterviewSchedulingStates(baseValue = {}, incomingValue = {}) {
     ...incoming,
     cases,
     deletedCaseIds,
+    deletedCases,
     selectedCaseId,
     filters: {
       ...base.filters,
@@ -3055,6 +3107,9 @@ function upsertSchedulingCaseFromScreening(folder, applicant, stageId = "phone",
 
   if (options.force) {
     scheduling.deletedCaseIds = normalizeIdList(scheduling.deletedCaseIds).filter((id) => id !== caseId);
+    scheduling.deletedCases = normalizeDeletedCaseMap(Object.fromEntries(
+      Object.entries(normalizeDeletedCaseMap(scheduling.deletedCases)).filter(([id]) => id !== caseId)
+    ));
   } else if (new Set(normalizeIdList(scheduling.deletedCaseIds)).has(caseId)) {
     return { changed: false, created: false, updated: false };
   }
@@ -3250,6 +3305,9 @@ function syncSchedulingCasesFromScreening(options = {}) {
 
             deletedCaseIds.delete(caseId);
             scheduling.deletedCaseIds = normalizeIdList(scheduling.deletedCaseIds).filter((id) => id !== caseId);
+            scheduling.deletedCases = normalizeDeletedCaseMap(Object.fromEntries(
+              Object.entries(normalizeDeletedCaseMap(scheduling.deletedCases)).filter(([id]) => id !== caseId)
+            ));
             changed = true;
           }
 
@@ -5039,6 +5097,7 @@ function buildInterviewSchedulingPayload() {
   return {
     cases: scheduling.cases,
     deletedCaseIds: normalizeIdList(scheduling.deletedCaseIds),
+    deletedCases: normalizeDeletedCaseMap(scheduling.deletedCases),
     selectedSchedulingCaseId: scheduling.selectedCaseId || "",
     filters: scheduling.filters,
     gmailConnection: scheduling.gmailConnection,
@@ -5371,6 +5430,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
     const remoteScheduling = normalizeInterviewSchedulingState({
       cases: interviewSchedulingSetting.payload.cases || interviewSchedulingSetting.payload.schedulingCases || [],
       deletedCaseIds: interviewSchedulingSetting.payload.deletedCaseIds || interviewSchedulingSetting.payload.deleted_case_ids || [],
+      deletedCases: interviewSchedulingSetting.payload.deletedCases || interviewSchedulingSetting.payload.deleted_cases || {},
       selectedCaseId: interviewSchedulingSetting.payload.selectedSchedulingCaseId || "",
       filters: interviewSchedulingSetting.payload.filters || {},
       gmailConnection: interviewSchedulingSetting.payload.gmailConnection || {}
@@ -10719,6 +10779,10 @@ function rememberDeletedSchedulingCaseId(caseId) {
   }
 
   scheduling.deletedCaseIds = normalizeIdList([...(scheduling.deletedCaseIds || []), id]);
+  scheduling.deletedCases = normalizeDeletedCaseMap({
+    ...(scheduling.deletedCases || {}),
+    [id]: getTimestampText()
+  });
 }
 
 function replaceSchedulingCase(schedulingCase) {
@@ -11790,7 +11854,7 @@ function createSchedulingStageCaseFromExisting(caseId, stageId) {
   renderInterviewView();
 }
 
-function deleteSchedulingCase(caseId) {
+async function deleteSchedulingCase(caseId) {
   const scheduling = getInterviewSchedulingState();
   const schedulingCase = findSchedulingCase(caseId);
 
@@ -11814,8 +11878,18 @@ function deleteSchedulingCase(caseId) {
     scheduling.selectedCaseId = scheduling.cases[0]?.id || "";
   }
 
-  setInterviewSchedulingDirty("면접 조율 건을 삭제했습니다.");
+  interviewSchedulingLocalDirty = true;
+  persistState();
   renderInterviewView();
+
+  try {
+    await syncInterviewSchedulingToSupabase();
+    showToast("면접 조율 건을 삭제했습니다.");
+  } catch (error) {
+    interviewSchedulingLocalDirty = true;
+    console.warn("Interview scheduling delete could not be synced.", error);
+    showToast("삭제 저장에 실패했습니다. 네트워크를 확인한 뒤 다시 시도해주세요.");
+  }
 }
 
 function addSchedulingInterviewerRow(button) {
@@ -32072,7 +32146,10 @@ function bindEvents() {
 
     const deleteSchedulingButton = event.target.closest("[data-delete-scheduling-case]");
     if (deleteSchedulingButton) {
-      deleteSchedulingCase(deleteSchedulingButton.dataset.deleteSchedulingCase);
+      deleteSchedulingCase(deleteSchedulingButton.dataset.deleteSchedulingCase).catch((error) => {
+        console.warn("Interview scheduling delete failed.", error);
+        showToast("삭제 처리 중 오류가 발생했습니다.");
+      });
       return;
     }
 
