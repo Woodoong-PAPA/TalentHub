@@ -3195,7 +3195,9 @@ function syncSchedulingCasesFromScreening() {
           const caseId = getSchedulingStageCaseId(folder.id, applicant.id, stageId);
 
           if (deletedCaseIds.has(caseId)) {
-            return;
+            deletedCaseIds.delete(caseId);
+            scheduling.deletedCaseIds = normalizeIdList(scheduling.deletedCaseIds).filter((id) => id !== caseId);
+            changed = true;
           }
 
           const existingCase = scheduling.cases.find((item) => item.id === caseId);
@@ -3208,7 +3210,7 @@ function syncSchedulingCasesFromScreening() {
           }
 
           const nextCase = createSchedulingCaseFromScreening(folder, applicant, stageId);
-          addSchedulingAuditLog(nextCase, "CASE_CREATED_FROM_SCREENING", "직무적합도 평가 합격자 정보에서 면접 조율 건을 생성했습니다.", "SYSTEM");
+          addSchedulingAuditLog(nextCase, "CASE_CREATED_FROM_SCREENING", "서류 평가 지원 합격자 정보에서 전화면접 조율 건을 생성했습니다.", "SYSTEM");
           scheduling.cases.unshift(nextCase);
           changed = true;
         });
