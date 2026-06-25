@@ -2480,6 +2480,7 @@ function normalizeSchedulingCase(schedulingCase = {}) {
     sourceStageId: String(schedulingCase.sourceStageId || schedulingCase.source_stage_id || "").trim(),
     candidateName,
     candidateEmail,
+    candidatePhone: String(schedulingCase.candidatePhone || schedulingCase.candidate_phone || "").trim(),
     positionName: String(schedulingCase.positionName || schedulingCase.position_name || "").trim(),
     interviewStage: String(schedulingCase.interviewStage || schedulingCase.interview_stage || "").trim(),
     durationMinutes: Math.max(15, Number(schedulingCase.durationMinutes || schedulingCase.duration_minutes || 60) || 60),
@@ -2930,6 +2931,7 @@ function createSchedulingCaseFromScreening(folder, applicant, stageId = "phone")
     sourceStageId: stage.id,
     candidateName: applicant.name,
     candidateEmail: applicant.email,
+    candidatePhone: applicant.phone,
     positionName: folder.positionName || folder.title,
     interviewStage: stage.label,
     durationMinutes: stage.id === "phone" ? 30 : 60,
@@ -2952,6 +2954,7 @@ function createSchedulingCaseFromScreening(folder, applicant, stageId = "phone")
 function updateSchedulingCaseFromScreening(existingCase, folder, applicant, stageId = "phone") {
   const nextEmail = String(applicant.email || "").trim().toLowerCase();
   const nextName = String(applicant.name || "").trim();
+  const nextPhone = String(applicant.phone || "").trim();
   const nextPosition = String(folder.positionName || folder.title || "").trim();
   let changed = false;
 
@@ -2961,6 +2964,10 @@ function updateSchedulingCaseFromScreening(existingCase, folder, applicant, stag
   }
   if (nextEmail && existingCase.candidateEmail !== nextEmail) {
     existingCase.candidateEmail = nextEmail;
+    changed = true;
+  }
+  if (nextPhone && existingCase.candidatePhone !== nextPhone) {
+    existingCase.candidatePhone = nextPhone;
     changed = true;
   }
   if (nextPosition && existingCase.positionName !== nextPosition) {
@@ -2988,6 +2995,89 @@ function updateSchedulingCaseFromScreening(existingCase, folder, applicant, stag
   }
 
   return changed;
+}
+
+function isSchedulingTransferEligibleApplicant(applicant) {
+  return ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant?.stage);
+}
+
+function upsertSchedulingCaseFromScreening(folder, applicant, stageId = "phone", options = {}) {
+  const scheduling = getInterviewSchedulingState();
+  const caseId = getSchedulingStageCaseId(folder.id, applicant.id, stageId);
+
+  if (options.force) {
+    scheduling.deletedCaseIds = normalizeIdList(scheduling.deletedCaseIds).filter((id) => id !== caseId);
+  } else if (new Set(normalizeIdList(scheduling.deletedCaseIds)).has(caseId)) {
+    return { changed: false, created: false, updated: false };
+  }
+
+  const existingCase = scheduling.cases.find((item) => item.id === caseId);
+
+  if (existingCase) {
+    const updated = updateSchedulingCaseFromScreening(existingCase, folder, applicant, stageId);
+
+    if (updated) {
+      addSchedulingAuditLog(existingCase, "CASE_UPDATED_FROM_SCREENING", "서류 평가 지원 정보 변경사항을 면접 조율 건에 반영했습니다.", "SYSTEM");
+    }
+
+    return { changed: updated, created: false, updated };
+  }
+
+  const nextCase = createSchedulingCaseFromScreening(folder, applicant, stageId);
+  addSchedulingAuditLog(nextCase, "CASE_CREATED_FROM_SCREENING", "전화면접 안내 대상자를 면접 스케줄링으로 이관했습니다.", "SYSTEM");
+  scheduling.cases.unshift(nextCase);
+
+  return { changed: true, created: true, updated: false, caseId };
+}
+
+function transferScreeningApplicantsToScheduling(folder, applicants, options = {}) {
+  if (!folder) {
+    return { changed: false, created: 0, updated: 0, eligibleCount: 0 };
+  }
+
+  const stageIds = Array.isArray(options.stageIds) && options.stageIds.length ? options.stageIds : ["phone"];
+  const scheduling = getInterviewSchedulingState();
+  const eligibleApplicants = (Array.isArray(applicants) ? applicants : [])
+    .filter(isSchedulingTransferEligibleApplicant);
+  let created = 0;
+  let updated = 0;
+  let firstTouchedCaseId = "";
+
+  eligibleApplicants.forEach((applicant) => {
+    stageIds.forEach((stageId) => {
+      const result = upsertSchedulingCaseFromScreening(folder, applicant, stageId, options);
+
+      if (result.created) {
+        created += 1;
+      } else if (result.updated) {
+        updated += 1;
+      }
+
+      if (!firstTouchedCaseId && result.changed) {
+        firstTouchedCaseId = result.caseId || getSchedulingStageCaseId(folder.id, applicant.id, stageId);
+      }
+    });
+  });
+
+  if (created || updated) {
+    const deletedCaseIds = new Set(normalizeIdList(scheduling.deletedCaseIds));
+    scheduling.cases = scheduling.cases
+      .map(normalizeSchedulingCase)
+      .filter((item) => !deletedCaseIds.has(item.id))
+      .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+    scheduling.selectedCaseId = firstTouchedCaseId || scheduling.selectedCaseId || scheduling.cases[0]?.id || "";
+
+    if (options.persist !== false) {
+      setInterviewSchedulingDirty(options.message || "");
+    }
+  }
+
+  return {
+    changed: Boolean(created || updated),
+    created,
+    updated,
+    eligibleCount: eligibleApplicants.length
+  };
 }
 
 function getDeletedInterviewCaseIdSet() {
@@ -3094,14 +3184,14 @@ function syncInterviewCasesFromScreening() {
 function syncSchedulingCasesFromScreening() {
   const scheduling = getInterviewSchedulingState();
   const deletedCaseIds = new Set(normalizeIdList(scheduling.deletedCaseIds));
-  const eligibleStages = new Set(["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]);
+  const eligibleStages = new Set(["interview_mail_sent"]);
   let changed = false;
 
   state.screeningFolders.forEach((folder) => {
     (folder.applicants || [])
       .filter((applicant) => eligibleStages.has(applicant.stage))
       .forEach((applicant) => {
-        INTERVIEW_STAGE_IDS.forEach((stageId) => {
+        ["phone"].forEach((stageId) => {
           const caseId = getSchedulingStageCaseId(folder.id, applicant.id, stageId);
 
           if (deletedCaseIds.has(caseId)) {
@@ -9746,13 +9836,17 @@ function renderScreeningStepContent(folder) {
 
   if (step === "mail") {
     const applicants = getScreeningStepApplicants(folder, "mail");
+    const canTransferToScheduling = canRunSecondScreening(folder) && applicants.length;
 
     return `
       ${renderScreeningInterviewPanelSummary(folder)}
       <section class="profile-panel">
         <div class="panel-header">
           <h4>전화면접 안내 대상</h4>
-          <span class="small-pill">대상 ${applicants.length}명</span>
+          <div class="panel-actions">
+            <button class="primary-button compact-button" type="button" data-transfer-screening-scheduling ${canTransferToScheduling ? "" : "disabled"}>결과 발송</button>
+            <span class="small-pill">대상 ${applicants.length}명</span>
+          </div>
         </div>
         ${renderApplicantList(folder, applicants, "2차 최종 통과 지원자가 없습니다.", "mail")}
       </section>
@@ -10956,6 +11050,11 @@ function renderSchedulingDetail(schedulingCase) {
     MANUAL_REVIEW: "담당자 수동 검토가 필요합니다.",
     RESCHEDULE_REQUESTED: "확정 이후 변경 요청입니다. 자동 재조율하지 않습니다."
   }[schedulingCase.status] || "-";
+  const candidateInfo = [
+    schedulingCase.candidateName,
+    schedulingCase.candidateEmail,
+    schedulingCase.candidatePhone
+  ].filter(Boolean).join(" · ") || "-";
 
   return `
     <section class="content-panel scheduling-detail-panel">
@@ -10980,7 +11079,7 @@ function renderSchedulingDetail(schedulingCase) {
         <article class="scheduling-info-card">
           <h5>기본 정보</h5>
           <dl class="detail-dl">
-            <dt>후보자</dt><dd>${escapeHtml(schedulingCase.candidateName || "-")} · ${escapeHtml(schedulingCase.candidateEmail || "-")}</dd>
+            <dt>후보자</dt><dd>${escapeHtml(candidateInfo)}</dd>
             <dt>소요시간</dt><dd>${escapeHtml(String(schedulingCase.durationMinutes))}분</dd>
             <dt>슬롯 간격</dt><dd>${escapeHtml(String(schedulingCase.slotIntervalMinutes))}분</dd>
             <dt>진행 방식</dt><dd>${escapeHtml(schedulingCase.meetingMethod || "-")}</dd>
@@ -28423,6 +28522,38 @@ function finalPassSecondScreening(form) {
   renderScreening();
 }
 
+function transferCurrentPhoneInterviewTargetsToScheduling() {
+  const folder = getSelectedScreeningFolder();
+
+  if (!folder || !canRunSecondScreening(folder)) {
+    showToast("면접 스케줄링 이관 권한이 없습니다.");
+    return;
+  }
+
+  const applicants = getScreeningStepApplicants(folder, "mail");
+  const result = transferScreeningApplicantsToScheduling(folder, applicants, {
+    force: true,
+    stageIds: ["phone"],
+    persist: false
+  });
+
+  if (!result.eligibleCount) {
+    showToast("면접 스케줄링으로 이관할 전화면접 안내 대상자가 없습니다.");
+    return;
+  }
+
+  if (result.changed) {
+    setInterviewSchedulingDirty("");
+  }
+
+  addAuditLog("Screening 면접 스케줄링 이관", folder.title, `${result.created}건 생성 · ${result.updated}건 갱신`);
+  persistState();
+  showToast(result.created
+    ? `${result.created}명의 전화면접 조율 건을 면접 스케줄링에 생성했습니다.`
+    : "전화면접 조율 건 정보를 면접 스케줄링에 갱신했습니다.");
+  renderScreening();
+}
+
 function saveScreeningContact(form) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, form.dataset.screeningContactForm);
@@ -29263,6 +29394,14 @@ async function sendPhoneInterviewMail(applicantId, mailOverride = null) {
   applicant.updatedAt = getTodayDate();
   folder.updatedAt = getTodayDate();
   replaceScreeningFolder(folder);
+  const transferResult = transferScreeningApplicantsToScheduling(folder, [applicant], {
+    force: true,
+    stageIds: ["phone"],
+    persist: false
+  });
+  if (transferResult.changed) {
+    setInterviewSchedulingDirty("");
+  }
   addAuditLog("Screening 전화면접 안내 메일", applicant.name, folder.title);
   persistState();
   showToast("전화면접 안내 메일을 발송했습니다.");
@@ -31676,6 +31815,11 @@ function bindEvents() {
     if (event.target.closest("[data-open-screening-result-panel]")) {
       state.screeningResultPanelOpen = true;
       renderScreening();
+      return;
+    }
+
+    if (event.target.closest("[data-transfer-screening-scheduling]")) {
+      transferCurrentPhoneInterviewTargetsToScheduling();
       return;
     }
 
