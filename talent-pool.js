@@ -743,6 +743,7 @@ const SUPABASE_URL = (APP_CONFIG.supabaseUrl || "").replace(/\/$/, "");
 const SUPABASE_ANON_KEY = APP_CONFIG.supabaseAnonKey || "";
 const DATA_SOURCE = APP_CONFIG.dataSource || "local";
 const REMOTE_SYNC_ENABLED = DATA_SOURCE === "supabase" && SUPABASE_URL && SUPABASE_ANON_KEY;
+const SUPABASE_REQUEST_TIMEOUT_MS = 12000;
 
 const state = {
   view: "dashboard",
@@ -2159,10 +2160,26 @@ function buildScreeningSpecialNotesFromParsedResume(parsed = {}) {
   return candidates.slice(0, 3).join("\n");
 }
 
-function normalizeIdList(value) {
-  return Array.isArray(value)
-    ? value.map((id) => String(id || "").trim()).filter(Boolean)
-    : [];
+function normalizeIdList(value, limit = 1000) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const unique = [];
+  const seen = new Set();
+
+  value.forEach((id) => {
+    const normalized = String(id || "").trim();
+
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    unique.push(normalized);
+  });
+
+  return unique.slice(-Math.max(1, limit));
 }
 
 function inferMemberIdsByRole(ids, roles) {
@@ -3212,10 +3229,11 @@ function syncInterviewCasesFromScreening() {
   return changed;
 }
 
-function syncSchedulingCasesFromScreening() {
+function syncSchedulingCasesFromScreening(options = {}) {
   const scheduling = getInterviewSchedulingState();
   const deletedCaseIds = new Set(normalizeIdList(scheduling.deletedCaseIds));
   const eligibleStages = new Set(["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]);
+  const restoreDeleted = Boolean(options.restoreDeleted);
   let changed = false;
 
   state.screeningFolders.forEach((folder) => {
@@ -3226,6 +3244,10 @@ function syncSchedulingCasesFromScreening() {
           const caseId = getSchedulingStageCaseId(folder.id, applicant.id, stageId);
 
           if (deletedCaseIds.has(caseId)) {
+            if (!restoreDeleted) {
+              return;
+            }
+
             deletedCaseIds.delete(caseId);
             scheduling.deletedCaseIds = normalizeIdList(scheduling.deletedCaseIds).filter((id) => id !== caseId);
             changed = true;
@@ -4180,10 +4202,30 @@ async function supabaseRequest(path, options = {}) {
     return null;
   }
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    ...options,
-    headers: getSupabaseHeaders(options.headers)
-  });
+  const { timeoutMs = SUPABASE_REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+  const supportsAbort = typeof AbortController !== "undefined" && timeoutMs > 0;
+  const controller = supportsAbort ? new AbortController() : null;
+  const timer = controller
+    ? globalThis.setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  let response;
+
+  try {
+    response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      ...fetchOptions,
+      headers: getSupabaseHeaders(fetchOptions.headers),
+      signal: fetchOptions.signal || controller?.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Supabase request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timer) {
+      globalThis.clearTimeout(timer);
+    }
+  }
 
   if (!response.ok) {
     const detail = await response.text();
@@ -4991,7 +5033,6 @@ function buildInterviewCasesPayload() {
 }
 
 function buildInterviewSchedulingPayload() {
-  syncSchedulingCasesFromScreening();
   const scheduling = normalizeInterviewSchedulingState(state.interviewScheduling);
   state.interviewScheduling = scheduling;
 
