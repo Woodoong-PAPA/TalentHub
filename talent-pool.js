@@ -3269,6 +3269,7 @@ function ensureInterviewDefaults() {
   state.interviewDeletedCaseIds = normalizeIdList(state.interviewDeletedCaseIds);
   state.interviewCases = filterDeletedInterviewCases(state.interviewCases.map(normalizeInterviewCase));
   const changed = syncInterviewCasesFromScreening();
+  const schedulingChanged = syncSchedulingCasesFromScreening();
   const visibleCases = getVisibleInterviewCases();
 
   if (!visibleCases.some((item) => item.id === state.selectedInterviewCaseId)) {
@@ -3279,7 +3280,9 @@ function ensureInterviewDefaults() {
     state.selectedInterviewStage = "phone";
   }
 
-  if (changed) {
+  if (schedulingChanged) {
+    setInterviewSchedulingDirty("");
+  } else if (changed) {
     persistState();
   }
 }
@@ -4962,6 +4965,7 @@ function buildInterviewSchedulingPayload() {
 
   return {
     cases: scheduling.cases,
+    deletedCaseIds: normalizeIdList(scheduling.deletedCaseIds),
     selectedSchedulingCaseId: scheduling.selectedCaseId || "",
     filters: scheduling.filters,
     gmailConnection: scheduling.gmailConnection,
@@ -5279,6 +5283,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
     interviewSchedulingRemoteLoaded = true;
     const remoteScheduling = normalizeInterviewSchedulingState({
       cases: interviewSchedulingSetting.payload.cases || interviewSchedulingSetting.payload.schedulingCases || [],
+      deletedCaseIds: interviewSchedulingSetting.payload.deletedCaseIds || interviewSchedulingSetting.payload.deleted_case_ids || [],
       selectedCaseId: interviewSchedulingSetting.payload.selectedSchedulingCaseId || "",
       filters: interviewSchedulingSetting.payload.filters || {},
       gmailConnection: interviewSchedulingSetting.payload.gmailConnection || {}
