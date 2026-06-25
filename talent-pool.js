@@ -2568,6 +2568,37 @@ function normalizeInterviewSchedulingState(value = {}) {
   };
 }
 
+function mergeInterviewSchedulingStates(baseValue = {}, incomingValue = {}) {
+  const base = normalizeInterviewSchedulingState(baseValue);
+  const incoming = normalizeInterviewSchedulingState(incomingValue);
+  const deletedCaseIds = normalizeIdList([
+    ...(base.deletedCaseIds || []),
+    ...(incoming.deletedCaseIds || [])
+  ]);
+  const deletedCaseIdSet = new Set(deletedCaseIds);
+  const cases = mergeByLatest(base.cases, incoming.cases, normalizeSchedulingCase)
+    .filter((item) => item.id && !deletedCaseIdSet.has(item.id))
+    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+  const selectedCaseId = [incoming.selectedCaseId, base.selectedCaseId]
+    .find((id) => cases.some((item) => item.id === id)) || cases[0]?.id || "";
+
+  return normalizeInterviewSchedulingState({
+    ...base,
+    ...incoming,
+    cases,
+    deletedCaseIds,
+    selectedCaseId,
+    filters: {
+      ...base.filters,
+      ...incoming.filters
+    },
+    gmailConnection: {
+      ...base.gmailConnection,
+      ...incoming.gmailConnection
+    }
+  });
+}
+
 function normalizePolicyText(value) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -4960,6 +4991,7 @@ function buildInterviewCasesPayload() {
 }
 
 function buildInterviewSchedulingPayload() {
+  syncSchedulingCasesFromScreening();
   const scheduling = normalizeInterviewSchedulingState(state.interviewScheduling);
   state.interviewScheduling = scheduling;
 
@@ -5143,10 +5175,24 @@ async function syncInterviewSchedulingToSupabase() {
     return false;
   }
 
+  const payload = buildInterviewSchedulingPayload();
+
+  if (!payload.cases.length && !payload.deletedCaseIds.length) {
+    const remoteRows = await supabaseRequest(`app_settings?select=payload&setting_key=eq.${INTERVIEW_SCHEDULING_SETTING_KEY}&limit=1`).catch(() => []);
+    const remotePayload = Array.isArray(remoteRows) ? remoteRows[0]?.payload : null;
+
+    if (Array.isArray(remotePayload?.cases) && remotePayload.cases.length) {
+      state.interviewScheduling = mergeInterviewSchedulingStates(state.interviewScheduling, remotePayload);
+      interviewSchedulingLocalDirty = false;
+      persistState({ skipRemoteSync: true });
+      return false;
+    }
+  }
+
   await supabaseRequest("app_settings?on_conflict=setting_key", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify([appSettingToSupabaseRow(INTERVIEW_SCHEDULING_SETTING_KEY, buildInterviewSchedulingPayload())])
+    body: JSON.stringify([appSettingToSupabaseRow(INTERVIEW_SCHEDULING_SETTING_KEY, payload)])
   });
 
   interviewSchedulingRemoteLoaded = true;
@@ -5296,7 +5342,7 @@ function applyAppSettingsFromSupabaseRows(rows = []) {
       state.interviewScheduling = localScheduling;
       interviewSchedulingLocalDirty = true;
     } else {
-      state.interviewScheduling = remoteScheduling;
+      state.interviewScheduling = mergeInterviewSchedulingStates(localScheduling, remoteScheduling);
     }
   }
 
@@ -12299,7 +12345,7 @@ async function syncSchedulingGmailNow(options = {}) {
       gmailAddress: getCurrentMember()?.email || ""
     });
     if (data.schedulingState && typeof data.schedulingState === "object") {
-      state.interviewScheduling = normalizeInterviewSchedulingState(data.schedulingState);
+      state.interviewScheduling = mergeInterviewSchedulingStates(state.interviewScheduling, data.schedulingState);
     }
     const scheduling = getInterviewSchedulingState();
     scheduling.gmailConnection = {

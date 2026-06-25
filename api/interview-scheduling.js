@@ -1011,6 +1011,7 @@ async function loadInterviewSchedulingPayload() {
 
   return {
     cases: Array.isArray(payload.cases) ? payload.cases : [],
+    deletedCaseIds: Array.isArray(payload.deletedCaseIds) ? payload.deletedCaseIds : [],
     selectedSchedulingCaseId: payload.selectedSchedulingCaseId || payload.selectedCaseId || "",
     filters: payload.filters || { query: "", status: "all", owner: "all", sortBy: "updatedAt" },
     gmailConnection: payload.gmailConnection || {},
@@ -1020,6 +1021,14 @@ async function loadInterviewSchedulingPayload() {
 }
 
 async function saveInterviewSchedulingPayload(payload, updatedBy = "gmail-pubsub") {
+  if (!Array.isArray(payload?.cases) || !payload.cases.length) {
+    const existing = await loadInterviewSchedulingPayload().catch(() => null);
+
+    if (Array.isArray(existing?.cases) && existing.cases.length && !(Array.isArray(payload?.deletedCaseIds) && payload.deletedCaseIds.length)) {
+      return existing;
+    }
+  }
+
   const next = {
     ...payload,
     updatedAt: new Date().toISOString(),
