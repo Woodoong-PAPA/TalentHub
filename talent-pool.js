@@ -21,7 +21,7 @@ const STATUS_ORDER = [
 const MENU_CONFIG = [
   { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
-  { view: "screening", label: "서류 평가 지원", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
+  { view: "screening", label: "직무적합도 평가", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
   { view: "interview", label: "면접 스케줄링", description: "Gmail 회신 기반 면접 일정 자동 조율" },
   { view: "interview-report", label: "면담록 작성", description: "면담 스크립트 기반 보고서 생성" },
   { view: "recruiting-metrics", label: "채용 지표 자동화", description: "사업부별 채용 실적 취합과 보고" },
@@ -974,7 +974,7 @@ const interviewReportFileStore = new Map();
 const viewTitles = {
   dashboard: "대시보드",
   pool: "Talent Pool",
-  screening: "서류 평가 지원",
+  screening: "직무적합도 평가",
   interview: "면접 운영 자동화",
   "interview-report": "면담록 작성",
   "recruiting-metrics": "채용 지표 자동화",
@@ -3017,7 +3017,7 @@ function upsertSchedulingCaseFromScreening(folder, applicant, stageId = "phone",
     const updated = updateSchedulingCaseFromScreening(existingCase, folder, applicant, stageId);
 
     if (updated) {
-      addSchedulingAuditLog(existingCase, "CASE_UPDATED_FROM_SCREENING", "서류 평가 지원 정보 변경사항을 면접 조율 건에 반영했습니다.", "SYSTEM");
+      addSchedulingAuditLog(existingCase, "CASE_UPDATED_FROM_SCREENING", "직무적합도 평가 정보 변경사항을 면접 조율 건에 반영했습니다.", "SYSTEM");
     }
 
     return { changed: updated, created: false, updated };
@@ -3210,7 +3210,7 @@ function syncSchedulingCasesFromScreening() {
           }
 
           const nextCase = createSchedulingCaseFromScreening(folder, applicant, stageId);
-          addSchedulingAuditLog(nextCase, "CASE_CREATED_FROM_SCREENING", "서류 평가 지원 합격자 정보에서 전화면접 조율 건을 생성했습니다.", "SYSTEM");
+          addSchedulingAuditLog(nextCase, "CASE_CREATED_FROM_SCREENING", "직무적합도 평가 합격자 정보에서 전화면접 조율 건을 생성했습니다.", "SYSTEM");
           scheduling.cases.unshift(nextCase);
           changed = true;
         });
