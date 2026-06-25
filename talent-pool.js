@@ -3184,7 +3184,7 @@ function syncInterviewCasesFromScreening() {
 function syncSchedulingCasesFromScreening() {
   const scheduling = getInterviewSchedulingState();
   const deletedCaseIds = new Set(normalizeIdList(scheduling.deletedCaseIds));
-  const eligibleStages = new Set(["interview_mail_sent"]);
+  const eligibleStages = new Set(["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"]);
   let changed = false;
 
   state.screeningFolders.forEach((folder) => {
@@ -28513,12 +28513,24 @@ function finalPassSecondScreening(form) {
   replaceScreeningFolder(folder);
   state.screeningResultPanelOpen = false;
   syncInterviewCasesFromScreening();
-  if (syncSchedulingCasesFromScreening()) {
+  const transferApplicants = draftApplicants.length
+    ? draftApplicants
+    : folder.applicants.filter((applicant) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage));
+  const transferResult = transferScreeningApplicantsToScheduling(folder, transferApplicants, {
+    force: true,
+    stageIds: ["phone"],
+    persist: false
+  });
+  if (transferResult.changed || syncSchedulingCasesFromScreening()) {
     setInterviewSchedulingDirty("");
   }
-  addAuditLog("Screening 결과 발송 정보 저장", folder.title, draftApplicants.length ? `${draftApplicants.length}명 2차 합격 확정` : "결과 발송 정보 저장");
+  addAuditLog("Screening 결과 발송 정보 저장", folder.title, draftApplicants.length ? `${draftApplicants.length}명 2차 합격 확정 · 면접 스케줄링 ${transferResult.created}건 생성` : `결과 발송 정보 저장 · 면접 스케줄링 ${transferResult.created}건 생성`);
   persistState();
-  showToast(draftApplicants.length ? `${draftApplicants.length}명을 2차 합격 확정 처리했습니다.` : "결과 발송 정보를 저장했습니다.");
+  showToast(transferResult.created
+    ? `${transferResult.created}명의 전화면접 조율 건을 면접 스케줄링에 생성했습니다.`
+    : draftApplicants.length
+      ? `${draftApplicants.length}명을 2차 합격 확정 처리했습니다.`
+      : "결과 발송 정보를 저장했습니다.");
   renderScreening();
 }
 
