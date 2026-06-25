@@ -1127,6 +1127,45 @@ function computePayloadSchedulingOptions(schedulingCase) {
   }));
 }
 
+function appendParsedAvailabilityToPayloadCase(schedulingCase, participant, value, message, options = {}) {
+  const windows = Array.isArray(value?.availability) ? value.availability : [];
+
+  if (!windows.length) {
+    return false;
+  }
+
+  if (value.intent === "CHANGE_AVAILABILITY" || options.replaceExisting) {
+    schedulingCase.availability = (schedulingCase.availability || []).map((window) => (
+      window.participantId === participant.id && window.active !== false
+        ? { ...window, active: false, supersededAt: toIso() }
+        : window
+    ));
+  }
+
+  schedulingCase.availability = [
+    ...(Array.isArray(schedulingCase.availability) ? schedulingCase.availability : []),
+    ...windows.map((window) => ({
+      id: createApiId("scheduling-window"),
+      participantId: participant.id,
+      start: window.start,
+      end: window.end,
+      timezone: value.timezone || schedulingCase.timezone || "Asia/Seoul",
+      sourceMessageId: message.gmailMessageId,
+      version: 1,
+      active: true,
+      extractionConfidence: value.confidence,
+      createdAt: toIso(),
+      supersededAt: ""
+    }))
+  ];
+  participant.responseStatus = options.reviewOnly ? "REVIEW_REQUIRED" : "RECEIVED";
+  participant.lastRespondedAt = message.receivedAt || toIso();
+  participant.updatedAt = toIso();
+  schedulingCase.updatedAt = toIso();
+
+  return true;
+}
+
 async function applyParsedMessageToSchedulingPayload(payload, message, parsed, validation) {
   const { schedulingCase, participant } = findPayloadCaseForMessage(payload, message);
 
@@ -1190,6 +1229,11 @@ async function applyParsedMessageToSchedulingPayload(payload, message, parsed, v
   });
 
   if (!validation.ok) {
+    const invalidValue = validation.value;
+    if (["PROVIDE_AVAILABILITY", "CHANGE_AVAILABILITY"].includes(invalidValue.intent)) {
+      appendParsedAvailabilityToPayloadCase(schedulingCase, participant, invalidValue, message, { reviewOnly: true });
+    }
+
     schedulingCase.manualReviewReason = validation.errors.join("; ");
     setPayloadCaseStatus(schedulingCase, "MANUAL_REVIEW", "Gmail 회신 분석 결과 수동 검토가 필요합니다.", "MANUAL_REVIEW");
     return { applied: true, status: "MANUAL_REVIEW", reason: "VALIDATION_FAILED" };

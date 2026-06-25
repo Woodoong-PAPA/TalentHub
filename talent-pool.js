@@ -12241,6 +12241,27 @@ async function processSchedulingSimulationReply(form) {
     });
 
     if (!data.autoProcessable) {
+      if (["PROVIDE_AVAILABILITY", "CHANGE_AVAILABILITY"].includes(data.parsed.intent)) {
+        if (data.parsed.intent === "CHANGE_AVAILABILITY") {
+          nextCase.availability = nextCase.availability.map((window) => window.participantId === participantId
+            ? { ...window, active: false, supersededAt: getTimestampText() }
+            : window);
+        }
+
+        data.parsed.availability.forEach((window) => {
+          nextCase.availability.push(normalizeSchedulingWindow({
+            participantId,
+            start: window.start,
+            end: window.end,
+            timezone: data.parsed.timezone || timezone,
+            extractionConfidence: data.parsed.confidence,
+            sourceMessageId: `mock-${Date.now()}`
+          }));
+        });
+        nextParticipant.responseStatus = "REVIEW_REQUIRED";
+        nextParticipant.lastRespondedAt = getTimestampText();
+      }
+
       if (canSchedulingTransition(nextCase.status, "CLARIFICATION_REQUIRED")) {
         transitionSchedulingCase(nextCase, "CLARIFICATION_REQUIRED", data.validationErrors?.join(", ") || "AI 분석 신뢰도가 낮거나 시간이 모호합니다.", {
           eventType: "CLARIFICATION_REQUIRED",
