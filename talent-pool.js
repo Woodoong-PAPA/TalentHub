@@ -3380,7 +3380,6 @@ function ensureInterviewDefaults() {
   state.interviewDeletedCaseIds = normalizeIdList(state.interviewDeletedCaseIds);
   state.interviewCases = filterDeletedInterviewCases(state.interviewCases.map(normalizeInterviewCase));
   const changed = syncInterviewCasesFromScreening();
-  const schedulingChanged = syncSchedulingCasesFromScreening();
   const visibleCases = getVisibleInterviewCases();
 
   if (!visibleCases.some((item) => item.id === state.selectedInterviewCaseId)) {
@@ -3391,9 +3390,7 @@ function ensureInterviewDefaults() {
     state.selectedInterviewStage = "phone";
   }
 
-  if (schedulingChanged) {
-    setInterviewSchedulingDirty("");
-  } else if (changed) {
+  if (changed) {
     persistState();
   }
 }
@@ -7617,6 +7614,45 @@ function replaceScreeningFolder(folder, options = {}) {
   return nextFolder;
 }
 
+async function persistScreeningFolderAndScheduling(folder, schedulingChanged = false) {
+  if (schedulingChanged) {
+    interviewSchedulingLocalDirty = true;
+  }
+
+  persistState({ skipRemoteSync: true });
+
+  if (!REMOTE_SYNC_ENABLED) {
+    return;
+  }
+
+  const jobs = [];
+
+  if (folder?.id) {
+    jobs.push(upsertScreeningFolderToSupabase(folder));
+  }
+
+  if (interviewCasesLocalDirty) {
+    jobs.push(syncInterviewCasesToSupabase());
+  }
+
+  if (schedulingChanged) {
+    jobs.push(syncInterviewSchedulingToSupabase());
+  }
+
+  if (!jobs.length) {
+    return;
+  }
+
+  const results = await Promise.allSettled(jobs);
+  const failed = results.find((result) => result.status === "rejected");
+
+  if (failed) {
+    state.remoteSyncStatus = "Supabase 동기화 실패";
+    scheduleRemoteSync();
+    throw failed.reason;
+  }
+}
+
 async function deleteScreeningFolder(folderId) {
   const folder = getScreeningFolder(folderId);
 
@@ -10650,7 +10686,7 @@ function getInterviewSchedulingState() {
 
 function setInterviewSchedulingDirty(message = "") {
   interviewSchedulingLocalDirty = true;
-  persistState();
+  persistState({ skipRemoteSync: true });
   syncInterviewSchedulingToSupabase().catch((error) => {
     console.warn("Interview scheduling remote save failed.", error);
   });
@@ -11400,9 +11436,6 @@ function renderInterviewView() {
   }
 
   const scheduling = getInterviewSchedulingState();
-  if (syncSchedulingCasesFromScreening()) {
-    setInterviewSchedulingDirty("");
-  }
   const schedulingCases = getFilteredSchedulingCases();
   const selectedSchedulingCase = getSelectedSchedulingCase();
 
@@ -11879,7 +11912,7 @@ async function deleteSchedulingCase(caseId) {
   }
 
   interviewSchedulingLocalDirty = true;
-  persistState();
+  persistState({ skipRemoteSync: true });
   renderInterviewView();
 
   try {
@@ -28422,7 +28455,8 @@ async function deleteScreeningApplicant(applicantId) {
 
   folder.applicants = folder.applicants.filter((item) => item.id !== applicant.id);
   folder.updatedAt = getTodayDate();
-  replaceScreeningFolder(folder);
+  const savedFolder = replaceScreeningFolder(folder, { skipRemoteSave: true }) || folder;
+  await persistScreeningFolderAndScheduling(savedFolder, false);
 
   if (state.screeningApplicantDetailId === applicant.id) {
     state.screeningApplicantDetailId = "";
@@ -28472,7 +28506,7 @@ async function saveScreeningPositionJd(form) {
   renderScreening();
 }
 
-function updateScreeningApplicantStage(applicantId, stage, options = {}) {
+async function updateScreeningApplicantStage(applicantId, stage, options = {}) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
 
@@ -28505,14 +28539,15 @@ function updateScreeningApplicantStage(applicantId, stage, options = {}) {
   }
 
   folder.updatedAt = getTodayDate();
-  replaceScreeningFolder(folder);
+  const savedFolder = replaceScreeningFolder(folder, { skipRemoteSave: true }) || folder;
+  await persistScreeningFolderAndScheduling(savedFolder, false);
 
   addAuditLog("Screening 단계 변경", applicant.name, `${folder.title} · ${SCREENING_STAGE_LABELS[stage]}`);
   persistState();
   renderScreening();
 }
 
-function revertScreeningApplicantStage(applicantId) {
+async function revertScreeningApplicantStage(applicantId) {
   const folder = getSelectedScreeningFolder();
   const applicant = getScreeningApplicant(folder, applicantId);
 
@@ -28641,7 +28676,7 @@ function saveScreeningAccess(form) {
   renderScreening();
 }
 
-function finalPassSecondScreening(form) {
+async function finalPassSecondScreening(form) {
   const folder = getScreeningFolder(getFormText(form, "folderId"));
 
   if (!folder || !canRunSecondScreening(folder)) {
@@ -28699,22 +28734,20 @@ function finalPassSecondScreening(form) {
   });
 
   folder.updatedAt = getTodayDate();
-  replaceScreeningFolder(folder);
+  const savedFolder = replaceScreeningFolder(folder, { skipRemoteSave: true }) || folder;
   state.screeningResultPanelOpen = false;
   syncInterviewCasesFromScreening();
   const transferApplicants = draftApplicants.length
     ? draftApplicants
-    : folder.applicants.filter((applicant) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage));
-  const transferResult = transferScreeningApplicantsToScheduling(folder, transferApplicants, {
+    : savedFolder.applicants.filter((applicant) => ["second_pass", "contact_requested", "contact_ready", "interview_mail_sent"].includes(applicant.stage));
+  const transferResult = transferScreeningApplicantsToScheduling(savedFolder, transferApplicants, {
     force: true,
     stageIds: ["phone"],
     persist: false
   });
-  if (transferResult.changed || syncSchedulingCasesFromScreening()) {
-    setInterviewSchedulingDirty("");
-  }
+  await persistScreeningFolderAndScheduling(savedFolder, transferResult.changed);
   addAuditLog("Screening 결과 발송 정보 저장", folder.title, draftApplicants.length ? `${draftApplicants.length}명 2차 합격 확정 · 면접 스케줄링 ${transferResult.created}건 생성` : `결과 발송 정보 저장 · 면접 스케줄링 ${transferResult.created}건 생성`);
-  persistState();
+  persistState({ skipRemoteSync: true });
   showToast(transferResult.created
     ? `${transferResult.created}명의 전화면접 조율 건을 면접 스케줄링에 생성했습니다.`
     : draftApplicants.length
@@ -28723,7 +28756,7 @@ function finalPassSecondScreening(form) {
   renderScreening();
 }
 
-function transferCurrentPhoneInterviewTargetsToScheduling() {
+async function transferCurrentPhoneInterviewTargetsToScheduling() {
   const folder = getSelectedScreeningFolder();
 
   if (!folder || !canRunSecondScreening(folder)) {
@@ -28744,11 +28777,13 @@ function transferCurrentPhoneInterviewTargetsToScheduling() {
   }
 
   if (result.changed) {
-    setInterviewSchedulingDirty("");
+    await persistScreeningFolderAndScheduling(folder, true);
+  } else {
+    persistState({ skipRemoteSync: true });
   }
 
   addAuditLog("Screening 면접 스케줄링 이관", folder.title, `${result.created}건 생성 · ${result.updated}건 갱신`);
-  persistState();
+  persistState({ skipRemoteSync: true });
   showToast(result.created
     ? `${result.created}명의 전화면접 조율 건을 면접 스케줄링에 생성했습니다.`
     : "전화면접 조율 건 정보를 면접 스케줄링에 갱신했습니다.");
@@ -29594,17 +29629,15 @@ async function sendPhoneInterviewMail(applicantId, mailOverride = null) {
   };
   applicant.updatedAt = getTodayDate();
   folder.updatedAt = getTodayDate();
-  replaceScreeningFolder(folder);
-  const transferResult = transferScreeningApplicantsToScheduling(folder, [applicant], {
+  const savedFolder = replaceScreeningFolder(folder, { skipRemoteSave: true }) || folder;
+  const transferResult = transferScreeningApplicantsToScheduling(savedFolder, [applicant], {
     force: true,
     stageIds: ["phone"],
     persist: false
   });
-  if (transferResult.changed) {
-    setInterviewSchedulingDirty("");
-  }
+  await persistScreeningFolderAndScheduling(savedFolder, transferResult.changed);
   addAuditLog("Screening 전화면접 안내 메일", applicant.name, folder.title);
-  persistState();
+  persistState({ skipRemoteSync: true });
   showToast("전화면접 안내 메일을 발송했습니다.");
   renderScreening();
 }
@@ -31980,25 +32013,37 @@ function bindEvents() {
 
     const firstPassButton = event.target.closest("[data-screening-first-pass]");
     if (firstPassButton) {
-      updateScreeningApplicantStage(firstPassButton.dataset.screeningFirstPass, "first_draft");
+      updateScreeningApplicantStage(firstPassButton.dataset.screeningFirstPass, "first_draft").catch((error) => {
+        console.warn(error);
+        showToast(error.message || "지원자 상태 저장 중 오류가 발생했습니다.");
+      });
       return;
     }
 
     const firstRejectButton = event.target.closest("[data-screening-first-reject]");
     if (firstRejectButton) {
-      updateScreeningApplicantStage(firstRejectButton.dataset.screeningFirstReject, "first_reject");
+      updateScreeningApplicantStage(firstRejectButton.dataset.screeningFirstReject, "first_reject").catch((error) => {
+        console.warn(error);
+        showToast(error.message || "지원자 상태 저장 중 오류가 발생했습니다.");
+      });
       return;
     }
 
     const secondDraftButton = event.target.closest("[data-screening-second-draft]");
     if (secondDraftButton) {
-      updateScreeningApplicantStage(secondDraftButton.dataset.screeningSecondDraft, "second_draft");
+      updateScreeningApplicantStage(secondDraftButton.dataset.screeningSecondDraft, "second_draft").catch((error) => {
+        console.warn(error);
+        showToast(error.message || "지원자 상태 저장 중 오류가 발생했습니다.");
+      });
       return;
     }
 
     const secondRejectButton = event.target.closest("[data-screening-second-reject]");
     if (secondRejectButton) {
-      updateScreeningApplicantStage(secondRejectButton.dataset.screeningSecondReject, "second_reject");
+      updateScreeningApplicantStage(secondRejectButton.dataset.screeningSecondReject, "second_reject").catch((error) => {
+        console.warn(error);
+        showToast(error.message || "지원자 상태 저장 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -32020,7 +32065,10 @@ function bindEvents() {
     }
 
     if (event.target.closest("[data-transfer-screening-scheduling]")) {
-      transferCurrentPhoneInterviewTargetsToScheduling();
+      transferCurrentPhoneInterviewTargetsToScheduling().catch((error) => {
+        console.warn(error);
+        showToast(error.message || "면접 스케줄링 이관 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -32074,7 +32122,10 @@ function bindEvents() {
 
     const revertScreeningButton = event.target.closest("[data-screening-revert]");
     if (revertScreeningButton) {
-      revertScreeningApplicantStage(revertScreeningButton.dataset.screeningRevert);
+      revertScreeningApplicantStage(revertScreeningButton.dataset.screeningRevert).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "지원자 상태 되돌리기 중 오류가 발생했습니다.");
+      });
       return;
     }
 
@@ -33143,7 +33194,10 @@ function bindEvents() {
 
     if (event.target.matches("#screening-final-pass-form")) {
       event.preventDefault();
-      finalPassSecondScreening(event.target);
+      finalPassSecondScreening(event.target).catch((error) => {
+        console.warn(error);
+        showToast(error.message || "2차 합격자 확정 정보를 저장하는 중 오류가 발생했습니다.");
+      });
       return;
     }
 
