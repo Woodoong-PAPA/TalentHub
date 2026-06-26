@@ -2231,6 +2231,29 @@ function mergeDeletedCaseMaps(...maps) {
   );
 }
 
+function pruneDeletedCaseMapForCases(deletedCases = {}, cases = []) {
+  const casesById = new Map(
+    (Array.isArray(cases) ? cases : [])
+      .filter((item) => item?.id)
+      .map((item) => [item.id, item])
+  );
+
+  return normalizeDeletedCaseMap(Object.fromEntries(
+    Object.entries(normalizeDeletedCaseMap(deletedCases)).filter(([id, deletedAt]) => {
+      const matchingCase = casesById.get(id);
+
+      if (!matchingCase) {
+        return true;
+      }
+
+      const caseUpdatedAt = dateSortValue(matchingCase.updatedAt || matchingCase.createdAt);
+      const deletedAtValue = dateSortValue(deletedAt);
+
+      return deletedAtValue >= caseUpdatedAt;
+    })
+  ));
+}
+
 function inferMemberIdsByRole(ids, roles) {
   try {
     return ids.filter((id) => roles.includes(state.members.find((member) => member.id === id)?.role));
@@ -2592,19 +2615,20 @@ function normalizeSchedulingCase(schedulingCase = {}) {
 
 function normalizeInterviewSchedulingState(value = {}) {
   const current = state?.interviewScheduling || {};
-  const deletedCases = mergeDeletedCaseMaps(
+  const mergedDeletedCases = mergeDeletedCaseMaps(
     current.deletedCases || current.deleted_cases || current.deletedCaseMap || {},
     value.deletedCases || value.deleted_cases || value.deletedCaseMap || {},
     normalizeIdList(current.deletedCaseIds || current.deleted_case_ids || []).map((id) => ({ id, deletedAt: current.updatedAt || getTimestampText() })),
     normalizeIdList(value.deletedCaseIds || value.deleted_case_ids || []).map((id) => ({ id, deletedAt: value.updatedAt || getTimestampText() }))
   );
+  const sourceCases = Array.isArray(value.cases) ? value.cases : current.cases || [];
+  const normalizedCases = sourceCases
+    .map(normalizeSchedulingCase)
+    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+  const deletedCases = pruneDeletedCaseMapForCases(mergedDeletedCases, normalizedCases);
   const deletedCaseIds = normalizeIdList(Object.keys(deletedCases));
   const deletedCaseIdSet = new Set(deletedCaseIds);
-  const sourceCases = Array.isArray(value.cases) ? value.cases : current.cases || [];
-  const cases = sourceCases
-    .map(normalizeSchedulingCase)
-    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt))
-    .filter((item) => item.id && !deletedCaseIdSet.has(item.id));
+  const cases = normalizedCases.filter((item) => item.id && !deletedCaseIdSet.has(item.id));
   const selectedCaseId = String(value.selectedCaseId || value.selectedSchedulingCaseId || current.selectedCaseId || "").trim();
   const filters = value.filters && typeof value.filters === "object" ? value.filters : {};
   const gmailConnection = value.gmailConnection && typeof value.gmailConnection === "object"
@@ -2641,12 +2665,13 @@ function normalizeInterviewSchedulingState(value = {}) {
 function mergeInterviewSchedulingStates(baseValue = {}, incomingValue = {}) {
   const base = normalizeInterviewSchedulingState(baseValue);
   const incoming = normalizeInterviewSchedulingState(incomingValue);
-  const deletedCases = mergeDeletedCaseMaps(base.deletedCases || {}, incoming.deletedCases || {});
+  const mergedDeletedCases = mergeDeletedCaseMaps(base.deletedCases || {}, incoming.deletedCases || {});
+  const mergedCases = mergeByLatest(base.cases, incoming.cases, normalizeSchedulingCase)
+    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+  const deletedCases = pruneDeletedCaseMapForCases(mergedDeletedCases, mergedCases);
   const deletedCaseIds = normalizeIdList(Object.keys(deletedCases));
   const deletedCaseIdSet = new Set(deletedCaseIds);
-  const cases = mergeByLatest(base.cases, incoming.cases, normalizeSchedulingCase)
-    .filter((item) => item.id && !deletedCaseIdSet.has(item.id))
-    .sort((a, b) => dateSortValue(b.updatedAt) - dateSortValue(a.updatedAt));
+  const cases = mergedCases.filter((item) => item.id && !deletedCaseIdSet.has(item.id));
   const selectedCaseId = [incoming.selectedCaseId, base.selectedCaseId]
     .find((id) => cases.some((item) => item.id === id)) || cases[0]?.id || "";
 
