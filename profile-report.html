@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>후보자 프로필 보고서 생성기</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --line: #e2e5ea; --ink: #1c2330;
+    --muted: #6b7280; --accent: #1d4ed8; --accent-weak: #eef2ff; --ok: #157347; --danger: #b02a37;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Malgun Gothic", -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 14px; line-height: 1.5; }
+  header { background: #0f172a; color: #fff; padding: 16px 20px; }
+  header h1 { margin: 0; font-size: 17px; }
+  header p { margin: 4px 0 0; color: #cbd5e1; font-size: 12.5px; }
+  main { max-width: 900px; margin: 0 auto; padding: 20px 16px 80px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 12px; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
+  .step { display: inline-flex; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+    color: #fff; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  label { display: block; font-weight: 600; margin: 12px 0 5px; font-size: 12.5px; }
+  input[type=text], input[type=url], textarea, select {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; color: var(--ink); }
+  textarea { resize: vertical; }
+  .fmt { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+  .fmt label { display: block; margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 10px; cursor: pointer; font-weight: 600; }
+  .fmt label.sel { border-color: var(--accent); background: var(--accent-weak); }
+  .fmt small { display: block; color: var(--muted); font-weight: 400; margin-top: 3px; font-size: 11.5px; }
+  .fmt input { position: absolute; opacity: 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 160px; }
+  button { border: 0; border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  .primary { background: var(--accent); color: #fff; }
+  .primary:disabled { background: #9db4e8; cursor: not-allowed; }
+  .ghost { background: #eef0f3; color: var(--ink); }
+  .success { background: var(--ok); color: #fff; }
+  .btnbar { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .status { margin-top: 10px; font-size: 12.5px; min-height: 18px; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--ok); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hide { display: none; }
+  .li-summary { background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; font-size: 12.5px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+  #draftJson { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; min-height: 320px; }
+  .table-list { margin-top: 10px; }
+  .table-list .item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: #f8fafc; }
+  .table-list .item button { padding: 4px 10px; background: #fde2e4; color: var(--danger); font-size: 12px; }
+  .badge { display: inline-block; background: var(--accent-weak); color: var(--accent); border-radius: 6px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>후보자 프로필 보고서 생성기</h1>
+  <p>LinkedIn·뉴스 자료를 사내 표준 양식(A/B/C)의 Word 초안으로 만듭니다. 생성 결과는 반드시 검토·수정 후 사용하세요.</p>
+</header>
+<main>
+
+  <!-- Step 0: format -->
+  <div class="card">
+    <h2>양식 선택</h2>
+    <div class="fmt" id="fmt">
+      <label data-fmt="interview" class="sel"><input type="radio" name="format" value="interview" checked />A. 면접용 상세<small>인적사항 표 · 전문역량 · Talking Point</small></label>
+      <label data-fmt="basic"><input type="radio" name="format" value="basic" />B. 기본 프로필<small>연령/학력 · 주요경력 · 참고사항</small></label>
+      <label data-fmt="summary"><input type="radio" name="format" value="summary" />C. 다수 요약표<small>3~5명 표 1행=1명</small></label>
+    </div>
+    <div id="summaryOpts" class="hide">
+      <label>표 제목 (예: CFO Table, AI Table)</label>
+      <input type="text" id="groupLabel" placeholder="CFO Table" value="Candidate Table" />
+    </div>
+  </div>
+
+  <!-- Step 1: sources -->
+  <div class="card">
+    <h2><span class="step">1</span> 대상 입력 &amp; 자료 수집</h2>
+    <div class="row">
+      <div><label>이름</label><input type="text" id="name" placeholder="예: 홍길동 교수 / Ethan Choi" /></div>
+      <div><label>소속 힌트 (선택)</label><input type="text" id="orgHint" placeholder="예: MIT, Atomus" /></div>
+    </div>
+    <div id="categoryWrap" class="hide">
+      <label>분류 태그 (요약표용, 예: M&amp;A, 로봇(전략))</label>
+      <input type="text" id="category" placeholder="M&A" />
+    </div>
+    <label>LinkedIn 프로필 URL (선택)</label>
+    <div class="row">
+      <input type="url" id="linkedinUrl" placeholder="https://www.linkedin.com/in/..." style="flex:3" />
+      <button type="button" class="ghost" id="btnFetch" style="flex:0 0 auto">LinkedIn 가져오기</button>
+    </div>
+    <div id="liStatus" class="status"></div>
+    <div id="liSummary" class="li-summary hide"></div>
+    <label>추가 자료 (뉴스 기사·메모 붙여넣기, 선택)</label>
+    <textarea id="sources" rows="6" placeholder="관련 뉴스 기사 본문, 경력/성과 메모 등을 자유롭게 붙여넣으세요. (LinkedIn 없이 이 자료만으로도 생성 가능)"></textarea>
+  </div>
+
+  <!-- Step 2: generate -->
+  <div class="card">
+    <h2><span class="step">2</span> 초안 생성 &amp; 검토</h2>
+    <p class="muted">AI가 위 자료를 사내 양식 구조로 정리합니다. 아래 JSON을 직접 수정해 문구를 다듬을 수 있습니다.</p>
+    <div class="btnbar">
+      <button type="button" class="primary" id="btnGenerate">초안 생성</button>
+    </div>
+    <div id="genStatus" class="status"></div>
+    <label class="hide" id="draftLabel" for="draftJson">생성 결과 (편집 가능)</label>
+    <textarea id="draftJson" class="hide" spellcheck="false"></textarea>
+  </div>
+
+  <!-- Step 2b: table builder (summary only) -->
+  <div class="card hide" id="tableCard">
+    <h2>요약표 구성</h2>
+    <p class="muted">각 후보자를 생성한 뒤 <b>표에 추가</b>하세요. 3~5명을 모아 표로 내보냅니다.</p>
+    <div class="btnbar">
+      <button type="button" class="ghost" id="btnAddRow">현재 초안을 표에 추가</button>
+    </div>
+    <div class="table-list" id="tableList"></div>
+  </div>
+
+  <!-- Step 3: download -->
+  <div class="card">
+    <h2><span class="step">3</span> Word 다운로드</h2>
+    <div class="btnbar">
+      <button type="button" class="success" id="btnDownload">Word(.docx) 다운로드</button>
+    </div>
+    <div id="dlStatus" class="status"></div>
+  </div>
+
+</main>
+
+<script>
+(function () {
+  var state = { format: "interview", linkedinProfile: null, tableCandidates: [] };
+
+  function $(id) { return document.getElementById(id); }
+  function setStatus(el, msg, kind) { el.textContent = msg || ""; el.className = "status" + (kind ? " " + kind : ""); }
+
+  // ---- format switching ----
+  Array.prototype.forEach.call(document.querySelectorAll('#fmt label'), function (lab) {
+    lab.addEventListener("click", function () {
+      Array.prototype.forEach.call(document.querySelectorAll('#fmt label'), function (l) { l.classList.remove("sel"); });
+      lab.classList.add("sel");
+      lab.querySelector("input").checked = true;
+      state.format = lab.getAttribute("data-fmt");
+      var isSummary = state.format === "summary";
+      $("summaryOpts").classList.toggle("hide", !isSummary);
+      $("categoryWrap").classList.toggle("hide", !isSummary);
+      $("tableCard").classList.toggle("hide", !isSummary);
+    });
+  });
+
+  // ---- Step 1: fetch LinkedIn ----
+  $("btnFetch").addEventListener("click", function () {
+    var url = $("linkedinUrl").value.trim();
+    if (!url) { setStatus($("liStatus"), "LinkedIn URL을 입력하세요.", "err"); return; }
+    setStatus($("liStatus"), "가져오는 중… (최대 2~3분 소요)", "");
+    $("btnFetch").disabled = true;
+    fetch("/api/linkedin-profile", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: url })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.ok) throw new Error(data.error || "실패");
+      state.linkedinProfile = data.profiles[0];
+      var p = state.linkedinProfile;
+      var lines = [
+        "이름: " + (p.fullName || "-"),
+        "헤드라인: " + (p.headline || "-"),
+        "위치: " + (p.location || "-"),
+        "경력 " + p.experience.length + "건, 학력 " + p.education.length + "건"
+      ];
+      p.experience.slice(0, 5).forEach(function (e) { lines.push("· " + [e.title, e.company, e.duration].filter(Boolean).join(" / ")); });
+      $("liSummary").textContent = lines.join("\n");
+      $("liSummary").classList.remove("hide");
+      setStatus($("liStatus"), "LinkedIn 프로필을 가져왔습니다.", "ok");
+    }).catch(function (e) {
+      setStatus($("liStatus"), "가져오기 실패: " + e.message, "err");
+    }).finally(function () { $("btnFetch").disabled = false; });
+  });
+
+  // ---- Step 2: generate draft ----
+  $("btnGenerate").addEventListener("click", function () {
+    var payload = {
+      format: state.format,
+      name: $("name").value.trim(),
+      orgHint: $("orgHint").value.trim(),
+      category: $("category").value.trim(),
+      linkedinProfile: state.linkedinProfile,
+      sourcesText: $("sources").value.trim()
+    };
+    if (!payload.name && !payload.linkedinProfile && !payload.sourcesText) {
+      setStatus($("genStatus"), "이름, LinkedIn, 또는 추가 자료 중 하나는 있어야 합니다.", "err"); return;
+    }
+    setStatus($("genStatus"), "AI가 초안을 작성 중…", "");
+    $("btnGenerate").disabled = true;
+    fetch("/api/profile-report", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.ok) throw new Error(data.error || "실패");
+      $("draftJson").value = JSON.stringify(data.candidate, null, 2);
+      $("draftJson").classList.remove("hide");
+      $("draftLabel").classList.remove("hide");
+      setStatus($("genStatus"), "초안 생성 완료. 내용을 검토·수정하세요.", "ok");
+    }).catch(function (e) {
+      setStatus($("genStatus"), "생성 실패: " + e.message, "err");
+    }).finally(function () { $("btnGenerate").disabled = false; });
+  });
+
+  // ---- current candidate from editor ----
+  function currentCandidate() {
+    var raw = $("draftJson").value.trim();
+    if (!raw) return null;
+    return JSON.parse(raw); // throws on invalid JSON
+  }
+
+  // ---- Step 2b: table builder ----
+  function renderTableList() {
+    var box = $("tableList"); box.innerHTML = "";
+    state.tableCandidates.forEach(function (c, i) {
+      var div = document.createElement("div"); div.className = "item";
+      var span = document.createElement("span");
+      span.innerHTML = '<span class="badge">' + (c.category || "-") + '</span> ' + (c.name || "(이름없음)");
+      var del = document.createElement("button"); del.textContent = "삭제";
+      del.addEventListener("click", function () { state.tableCandidates.splice(i, 1); renderTableList(); });
+      div.appendChild(span); div.appendChild(del); box.appendChild(div);
+    });
+  }
+  $("btnAddRow").addEventListener("click", function () {
+    try {
+      var c = currentCandidate();
+      if (!c) { setStatus($("genStatus"), "먼저 초안을 생성하세요.", "err"); return; }
+      state.tableCandidates.push(c); renderTableList();
+      setStatus($("genStatus"), "표에 추가되었습니다. (현재 " + state.tableCandidates.length + "명)", "ok");
+    } catch (e) { setStatus($("genStatus"), "JSON 형식 오류: " + e.message, "err"); }
+  });
+
+  // ---- Step 3: download docx ----
+  $("btnDownload").addEventListener("click", function () {
+    var format = state.format, data;
+    try {
+      if (format === "summary") {
+        if (!state.tableCandidates.length) { setStatus($("dlStatus"), "표에 후보자를 1명 이상 추가하세요.", "err"); return; }
+        data = { groupLabel: $("groupLabel").value.trim() || "Candidate Table", candidates: state.tableCandidates };
+      } else {
+        data = currentCandidate();
+        if (!data) { setStatus($("dlStatus"), "먼저 초안을 생성하세요.", "err"); return; }
+      }
+    } catch (e) { setStatus($("dlStatus"), "JSON 형식 오류: " + e.message, "err"); return; }
+
+    setStatus($("dlStatus"), "Word 생성 중…", "");
+    $("btnDownload").disabled = true;
+    fetch("/api/profile-report-docx", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, data: data })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); });
+      var name = r.headers.get("Content-Disposition") || "";
+      var m = /filename\*=UTF-8''([^;]+)/.exec(name);
+      var fileName = m ? decodeURIComponent(m[1]) : "profile.docx";
+      return r.blob().then(function (blob) { return { blob: blob, fileName: fileName }; });
+    }).then(function (out) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(out.blob); a.download = out.fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+      setStatus($("dlStatus"), "다운로드 완료: " + out.fileName, "ok");
+    }).catch(function (e) {
+      setStatus($("dlStatus"), "다운로드 실패: " + e.message, "err");
+    }).finally(function () { $("btnDownload").disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>
