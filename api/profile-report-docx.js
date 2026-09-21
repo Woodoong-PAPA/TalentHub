@@ -31,8 +31,22 @@ function safeFileName(name) {
   return (base || "profile").slice(0, 60);
 }
 
-// Convert an uploaded photo (data URL or raw base64) into the { buffer, ... }
-// shape the renderer expects. Returns the object unchanged if there's no image.
+// Detect the image format from magic bytes. docx's ImageRun REQUIRES a valid
+// type; embedding an image without one (or an unsupported format like HEIC)
+// produces a broken media reference that Word refuses to open.
+function detectImageType(buf) {
+  if (!buf || buf.length < 4) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "png";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return "gif";
+  if (buf[0] === 0x42 && buf[1] === 0x4d) return "bmp";
+  return null; // HEIC, WEBP, etc. are unsupported by docx — drop them.
+}
+
+// Convert an uploaded photo (data URL or raw base64) into the { buffer, type }
+// shape the renderer expects. Returns undefined when there is no usable image
+// (missing, corrupt, or an unsupported format) so the report renders without
+// a photo instead of producing a file Word cannot open.
 function decodePhoto(photo) {
   if (!photo) return undefined;
   const raw = typeof photo === "string" ? photo : photo.base64 || photo.dataUrl || "";
@@ -40,8 +54,9 @@ function decodePhoto(photo) {
   if (!b64) return undefined;
   try {
     const buffer = Buffer.from(b64, "base64");
-    if (!buffer.length) return undefined;
-    return { buffer, width: photo.width, height: photo.height };
+    const type = detectImageType(buffer);
+    if (!buffer.length || !type) return undefined;
+    return { buffer, type, width: photo.width, height: photo.height };
   } catch (error) {
     return undefined;
   }
