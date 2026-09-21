@@ -63,6 +63,14 @@ function normalizeLocation(value) {
   return text(value.parsed?.text || value.linkedinText || value.text || value.name);
 }
 
+function getApifyConfig() {
+  return {
+    token: process.env.APIFY_API_TOKEN || process.env.APIFY_TOKEN || "",
+    actorId: process.env.APIFY_LINKEDIN_ACTOR_ID || process.env.APIFY_LINKEDIN_ACTOR || "",
+    mode: process.env.APIFY_LINKEDIN_MODE || "Profile details no email ($4 per 1k)"
+  };
+}
+
 function normalizeApifyProfile(raw, input) {
   const profile = raw && typeof raw === "object" ? raw : {};
   const fullName = text(profile.fullName || profile.name || [profile.firstName, profile.lastName].filter(Boolean).join(" "));
@@ -104,8 +112,7 @@ function normalizeApifyProfile(raw, input) {
 }
 
 async function fetchApifyProfile(input) {
-  const token = process.env.APIFY_API_TOKEN;
-  const actorId = process.env.APIFY_LINKEDIN_ACTOR_ID;
+  const { token, actorId, mode } = getApifyConfig();
 
   if (!token || !actorId) {
     return null;
@@ -119,7 +126,7 @@ async function fetchApifyProfile(input) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      profileScraperMode: "Profile details no email ($4 per 1k)",
+      profileScraperMode: mode,
       queries: [input.linkedinUrl],
       urls: [input.linkedinUrl]
     })
@@ -135,10 +142,11 @@ async function fetchApifyProfile(input) {
 
 module.exports = async function candidateProfileResearch(request, response) {
   if (request.method === "GET") {
+    const apify = getApifyConfig();
     sendJson(response, 200, {
       ok: true,
       providers: {
-        apifyConfigured: Boolean(process.env.APIFY_API_TOKEN && process.env.APIFY_LINKEDIN_ACTOR_ID),
+        apifyConfigured: Boolean(apify.token && apify.actorId),
         openAiConfigured: Boolean(process.env.OPENAI_API_KEY),
         webSearchConfigured: Boolean(process.env.CANDIDATE_WEB_SEARCH_PROVIDER)
       }
@@ -185,12 +193,13 @@ module.exports = async function candidateProfileResearch(request, response) {
     }
 
     candidate = candidate || core.createMockCandidate(safeInput);
+    const apify = getApifyConfig();
     sendJson(response, 200, {
       ok: true,
       candidate,
       provider,
       providers: {
-        apifyConfigured: Boolean(process.env.APIFY_API_TOKEN && process.env.APIFY_LINKEDIN_ACTOR_ID),
+        apifyConfigured: Boolean(apify.token && apify.actorId),
         openAiConfigured: Boolean(process.env.OPENAI_API_KEY),
         webSearchConfigured: Boolean(process.env.CANDIDATE_WEB_SEARCH_PROVIDER)
       }

@@ -87,6 +87,8 @@ APP_DATA_SOURCE=supabase
 - `OPENAI_API_KEY`: 향후 구조화된 사실 추출과 보고서 초안 보조에 사용한다.
 - Supabase 설정이 없으면 브라우저 로컬 저장으로 동작한다.
 
+기존 배포에서 사용 중인 `APIFY_TOKEN`, `APIFY_LINKEDIN_ACTOR`도 각각 같은 의미의 별칭으로 인식한다.
+
 현재 검증한 Actor는 HarvestAPI의 `LinkedIn Profile Scraper + Email - No Cookies`이며 Actor ID는 `LpVuK3Zozwuipa5bp`다. 서버는 개인정보 수집 범위를 줄이고 비용을 낮추기 위해 `Profile details no email` 모드만 요청한다. 토큰은 `.env` 또는 배포 환경변수에만 저장하고 브라우저 번들에는 포함하지 않는다.
 
 ## 데이터 저장
