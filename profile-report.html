@@ -116,6 +116,7 @@
 
 <script>
 (function () {
+  var IS_MOBILE = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(navigator.userAgent || "");
   var state = { format: "interview", tableCandidates: [], photoDataUrl: "" };
   function $(id) { return document.getElementById(id); }
   function setStatus(msg, kind) { var el = $("status"); el.textContent = msg || ""; el.className = "status" + (kind ? " " + kind : ""); }
@@ -190,7 +191,7 @@
   function downloadDocx(format, data) {
     setStatus("Word 생성 중…", "work");
     return fetch("/api/profile-report-docx", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, data: data })
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, data: data, variant: IS_MOBILE ? "inline" : "textbox" })
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); });
       var disp = r.headers.get("Content-Disposition") || "";

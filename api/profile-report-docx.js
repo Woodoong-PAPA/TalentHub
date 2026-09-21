@@ -83,6 +83,8 @@ module.exports = async function profileReportDocx(request, response) {
     const body = JSON.parse((await readRequestBody(request)) || "{}");
     const format = ["interview", "basic", "summary"].includes(body.format) ? body.format : "interview";
     const data = body.data || {};
+    // Annotation style: "inline" (mobile-safe) or "textbox" (PC, default).
+    if (["inline", "textbox"].includes(body.variant)) data.variant = body.variant;
 
     if (format === "summary" && !(Array.isArray(data.candidates) && data.candidates.length)) {
       sendJson(response, 400, { ok: false, error: "summary format requires data.candidates[]" });
