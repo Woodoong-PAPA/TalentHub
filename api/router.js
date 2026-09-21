@@ -8,6 +8,7 @@ const routes = {
   "interview-scheduling-watch-cron": () => require("./interview-scheduling.js"),
   "jd-enhance": () => require("./jd-enhance.js"),
   "job-fit-analysis": () => require("./job-fit-analysis.js"),
+  "linkedin-profile": () => require("./linkedin-profile.js"),
   "parse-resume": () => require("./parse-resume.js"),
   "policy-chat": () => require("./policy-chat.js"),
   "realtime-token": () => require("./realtime-token.js"),
