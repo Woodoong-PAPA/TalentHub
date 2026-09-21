@@ -157,20 +157,35 @@ function buildPrompt(format, input) {
   const guide = FORMAT_GUIDES[format] || FORMAT_GUIDES.interview;
   return [
     "너는 삼성전자 DX부문 채용담당자를 위한 외부 인재 프로필 분석가다.",
-    "제공된 자료(LinkedIn 프로필, 뉴스/메모)만 근거로 사내 표준 양식의 후보자 프로필 초안을 작성한다.",
+    "웹 검색으로 해당 인물을 조사하고, 제공된 자료(LinkedIn 프로필, 뉴스/메모)와 종합해 사내 표준 양식의 후보자 프로필을 작성한다.",
     "",
-    "[작성 원칙]",
+    "[조사]",
+    "- LinkedIn URL 유무와 무관하게, 먼저 웹 검색(web_search)으로 인물의 학력·경력·성과·근황을 조사해 데이터를 최대한 풍성하게 보완한다.",
+    "- 이름과 소속/직급 힌트로 동일 인물을 특정하고, 신뢰 가능한 출처(기사, 공식 프로필, 회사 페이지)를 우선한다. 확신이 없으면 추측하지 않는다.",
+    "",
+    "[분량 — 가장 중요]",
+    "- 결과 보고서는 반드시 A4 '1장'을 넘지 않아야 한다. 모든 항목을 최대한 압축·축약한다.",
+    "- 학교/기관명은 약어로: Massachusetts Institute of Technology→MIT, Stanford University→Stanford, 서울대학교→서울대.",
+    "- 직급/직책은 약어로: Chief Executive Officer→CEO, Vice President→VP, Senior→Sr., Director→Director.",
+    "- 전공은 상황에 맞게 축약하거나 한글로: Computer Science→CS 또는 컴퓨터과학, Mechanical Engineering→ME 또는 기계공학. (한 줄에 무리없이 들어가면 원문 유지 가능)",
+    "- 위 예시 외에도 통용되는 약어가 있으면 스스로 판단해 적극 축약한다.",
+    "",
+    "[문장 작성]",
     "- 한국어 개조식(명사형 종결): '~ 전문가', '~ 보유', '~ 다수', '~ 中' 등으로 끝맺는다.",
-    "- 자료에 없는 사실은 절대 만들지 않는다. 불확실하거나 모르는 값은 빈 문자열/빈 배열로 둔다.",
-    "- 사내 표기 관례를 따른다: 국가 약어 美(미국)/韓(한국)/英(영국)/中(중국)/日(일본)을 경력 org 앞 country에, 학위는 博(박사)/碩(석사)/學(학사)로, 회사는 '社', 현재는 '現', 등은 '等', 내부는 '內'.",
+    "- 각 headline(-)과 bullet(·) 문구는 반드시 '한 줄'을 넘기지 않되, 너무 짧으면 안 된다. 추가 정보·수식어로 한 줄을 빼곡히 채워 밀도 있게 작성한다(경영진 보고용).",
+    "- 절대 밑줄기호나 마크다운 강조(_,*)를 문구 앞뒤나 중간에 넣지 않는다. 순수 텍스트만.",
+    "- 자료·검색으로 확인되지 않는 사실은 만들지 않는다. 모르는 값은 빈 문자열/빈 배열.",
+    "",
+    "[표기 관례]",
+    "- 국가 약어 美/韓/英/中/日 을 경력 org 앞 country에, 학위는 博/碩/學, 회사는 '社', 현재는 '現', 등은 '等', 내부는 '內'.",
     "- career.period 예: \"'20~ 現\", \"'18~'24\". education.year는 졸업연도 2자리(예: '15').",
-    "- 각주(note/notes)는 회색 부연설명으로, 영문 약어 풀이/기업 성격/맥락 보충에 쓴다(예: 'BofA = Bank of America', 'Open AI 초기 투자로 유명한 Tech VC社').",
+    "- 각주(note/notes)는 회색 부연설명으로, 영문 약어 풀이/기업 성격/맥락 보충에 쓴다(예: 'BofA = Bank of America').",
     "",
     "[형식 지침]",
     ...guide.map((g) => "- " + g),
     "",
     "[입력 자료]",
-    "요청 이름/소속 힌트: " + JSON.stringify({ name: input.name || "", orgHint: input.orgHint || "", category: input.category || "" }),
+    "요청 힌트: " + JSON.stringify({ name: input.name || "", org: input.org || "", rank: input.rank || "", category: input.category || "" }),
     "LinkedIn 정규화 프로필: " + JSON.stringify(input.linkedinProfile || null),
     "추가 자료(뉴스/메모):",
     (input.sourcesText || "(없음)").slice(0, MAX_SOURCES_CHARS)
@@ -185,11 +200,14 @@ async function callOpenAI(format, input) {
   const requestBody = {
     model,
     input: [
-      { role: "system", content: "You are a precise HR profile analyst. Return only schema-valid JSON. Never invent facts." },
+      { role: "system", content: "You are a precise HR profile analyst. Research the person on the web, then return only schema-valid JSON. Never invent facts, and keep the whole report to a single page." },
       { role: "user", content: buildPrompt(format, input) }
     ],
     text: { format: { type: "json_schema", name: "candidate_profile", schema: CANDIDATE_SCHEMA, strict: true } }
   };
+  if (String(process.env.PROFILE_WEB_SEARCH || "on").toLowerCase() !== "off") {
+    requestBody.tools = [{ type: "web_search" }];
+  }
   if (modelSupportsTemperature(model)) requestBody.temperature = 0.2;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -222,7 +240,8 @@ module.exports = async function profileReport(request, response) {
 
     const candidate = await callOpenAI(format, {
       name: body.name,
-      orgHint: body.orgHint,
+      org: body.org || body.orgHint,
+      rank: body.rank,
       category: body.category,
       linkedinProfile: body.linkedinProfile,
       sourcesText: body.sourcesText
