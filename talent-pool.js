@@ -3664,6 +3664,10 @@ function canAccessView(view, member = getCurrentMember()) {
     return true;
   }
 
+  if (view === "profile-report") {
+    return true;
+  }
+
   if (view === "detail") {
     return getAllowedViewsForRole(member.role).includes("pool");
   }
@@ -6887,6 +6891,11 @@ function setView(view) {
 
   if (view === "interpreter") {
     window.location.href = "/tools/interpreter";
+    return;
+  }
+
+  if (view === "profile-report") {
+    window.location.href = "/tools/profile-report";
     return;
   }
 

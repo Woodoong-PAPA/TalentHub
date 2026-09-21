@@ -19,6 +19,10 @@ function resolveRequestPath(url) {
     return path.join(ROOT, "interpreter.html");
   }
 
+  if (["/profile-report", "/profile-report/", "/tools/profile-report", "/tools/profile-report/"].includes(requestPath)) {
+    return path.join(ROOT, "profile-report.html");
+  }
+
   const relativePath = requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
   return path.normalize(path.join(ROOT, relativePath));
 }
@@ -81,6 +85,24 @@ const server = http.createServer((request, response) => {
   if (request.url.split("?")[0] === "/api/job-fit-analysis") {
     const jobFitAnalysis = require("./api/job-fit-analysis.js");
     jobFitAnalysis(request, response);
+    return;
+  }
+
+  if (request.url.split("?")[0] === "/api/linkedin-profile") {
+    const linkedinProfile = require("./api/linkedin-profile.js");
+    linkedinProfile(request, response);
+    return;
+  }
+
+  if (request.url.split("?")[0] === "/api/profile-report") {
+    const profileReport = require("./api/profile-report.js");
+    profileReport(request, response);
+    return;
+  }
+
+  if (request.url.split("?")[0] === "/api/profile-report-docx") {
+    const profileReportDocx = require("./api/profile-report-docx.js");
+    profileReportDocx(request, response);
     return;
   }
 
