@@ -54,7 +54,7 @@ const contents = `window.__APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`
 fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(distDir, { recursive: true });
 
-["index.html", "styles.css", "talent-pool.js", "interpreter.html", "interpreter.css", "interpreter.js"].forEach((fileName) => {
+["index.html", "styles.css", "talent-pool.js", "interpreter.html", "interpreter.css", "interpreter.js", "profile-report.html"].forEach((fileName) => {
   fs.copyFileSync(path.join(rootDir, fileName), path.join(distDir, fileName));
 });
 
@@ -67,6 +67,7 @@ fs.copyFileSync(
 
 fs.mkdirSync(path.join(distDir, "tools"), { recursive: true });
 fs.copyFileSync(path.join(rootDir, "interpreter.html"), path.join(distDir, "tools", "interpreter.html"));
+fs.copyFileSync(path.join(rootDir, "profile-report.html"), path.join(distDir, "tools", "profile-report.html"));
 
 fs.writeFileSync(outputPath, contents, "utf8");
 fs.writeFileSync(distOutputPath, contents, "utf8");
