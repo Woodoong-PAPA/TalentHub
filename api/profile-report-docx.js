@@ -47,14 +47,27 @@ function decodePhoto(photo) {
   }
 }
 
-// Decode photos in-place for a candidate (or every candidate in a table).
+// Build "(yy년생, NN세)" from a 4-digit birth year; age = current year - birth.
+function applyBirthLine(candidate) {
+  if (!candidate || candidate.birthLine) return;
+  const m = String(candidate.birthYear || "").match(/(\d{4})/);
+  if (!m) return;
+  const year = Number(m[1]);
+  if (year < 1900 || year > new Date().getFullYear()) return;
+  const age = new Date().getFullYear() - year;
+  candidate.birthLine = String(year).slice(2) + "년생, " + age + "세";
+}
+
+// Decode photos and derive birth lines in-place for a candidate (or table).
 function preparePhotos(format, data) {
   if (format === "summary") {
     (data.candidates || []).forEach((c) => {
+      applyBirthLine(c);
       const p = decodePhoto(c.photo);
       if (p) c.photo = p; else delete c.photo;
     });
   } else {
+    applyBirthLine(data);
     const p = decodePhoto(data.photo);
     if (p) data.photo = p; else delete data.photo;
   }
