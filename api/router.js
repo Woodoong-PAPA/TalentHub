@@ -1,4 +1,6 @@
 const routes = {
+  "candidate-profile-report": () => require("./candidate-profile-report.js"),
+  "candidate-profile-research": () => require("./candidate-profile-research.js"),
   "extract-text": () => require("./extract-text.js"),
   "interpreter-rooms": () => require("./interpreter-rooms.js"),
   "interpreter-qr": () => require("./interpreter-qr.js"),

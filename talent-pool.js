@@ -20,6 +20,7 @@ const STATUS_ORDER = [
 
 const MENU_CONFIG = [
   { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
+  { view: "profile-generator", label: "Candidate Profile", description: "외부 핵심인재 리서치와 검증 보고서 생성" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "직무적합도 평가", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
   { view: "interview", label: "면접 스케줄링", description: "Gmail 회신 기반 면접 일정 자동 조율" },
@@ -91,11 +92,11 @@ const MEMBER_ROLES_WITHOUT_BUSINESS_UNIT = new Set(["applicant", "search_firm", 
 
 const DEFAULT_ROLE_PERMISSIONS = {
   applicant: ["screening", "interview", "interpreter"],
-  general: ["dashboard", "pool", "policy-chat", "interpreter", "trending"],
-  search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "interpreter"],
-  hiring_manager: ["dashboard", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
+  general: ["dashboard", "profile-generator", "pool", "policy-chat", "interpreter", "trending"],
+  search_firm: ["dashboard", "profile-generator", "pool", "screening", "ai-search", "policy-chat", "interpreter"],
+  hiring_manager: ["dashboard", "profile-generator", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending"],
+  business_recruiter: ["dashboard", "profile-generator", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
+  division_recruiter: ["dashboard", "profile-generator", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -974,6 +975,7 @@ const interviewReportFileStore = new Map();
 
 const viewTitles = {
   dashboard: "대시보드",
+  "profile-generator": "Candidate Profile Generator",
   pool: "Talent Pool",
   screening: "직무적합도 평가",
   interview: "면접 운영 자동화",
@@ -6810,6 +6812,7 @@ function createSidebarMenuItem(menu) {
 function getMenuIcon(view, label = "") {
   const explicitIcons = {
     dashboard: "D",
+    "profile-generator": "CP",
     pool: "P",
     screening: "S",
     interview: "I",
@@ -6834,6 +6837,8 @@ function ensureActiveViewAllowed() {
 }
 
 function syncActiveViewState() {
+  document.body.classList.toggle("is-profile-generator-view", state.view === "profile-generator");
+
   document.querySelectorAll(".view").forEach((section) => {
     section.classList.toggle("is-active", section.id === `${state.view}-view`);
   });
@@ -7079,6 +7084,7 @@ function render() {
   syncActiveViewState();
   renderSidePanel();
   renderDashboard();
+  window.CandidateProfileGenerator?.render({ member: getCurrentMember() });
   renderPool();
   renderScreening();
   renderInterviewView();
@@ -20969,6 +20975,10 @@ function findPolicySource(sourceId) {
 }
 
 function renderHighlightedPolicyQuote(citation) {
+  if (!citation) {
+    return "";
+  }
+
   const keySentences = Array.isArray(citation.keySentences)
     ? citation.keySentences.map((sentence) => String(sentence || "").trim()).filter(Boolean)
     : [];

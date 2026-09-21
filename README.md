@@ -1,5 +1,7 @@
 # Talent Pool Realtime Interpreter
 
+Candidate Profile Generator의 리서치, Fact 검토, 보고서 생성 및 모바일 흐름은 [Candidate Profile Generator 문서](docs/candidate-profile-generator.md)를 참고하세요.
+
 Talent Pool 본 앱은 `/`에서 그대로 동작하고, 통역 MVP는 독립 경로인 `/tools/interpreter`에서 실행됩니다.
 
 ## Local Development

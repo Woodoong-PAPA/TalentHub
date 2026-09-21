@@ -6,5 +6,6 @@ node_modules
 dist
 runtime-config.js
 *.log
+.codex-artifacts/
 
 .vercel
