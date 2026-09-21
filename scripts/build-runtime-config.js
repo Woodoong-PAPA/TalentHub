@@ -54,12 +54,9 @@ const contents = `window.__APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`
 fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(distDir, { recursive: true });
 
-["index.html", "styles.css", "talent-pool.js", "candidate-profile-generator.css", "candidate-profile-generator.js", "interpreter.html", "interpreter.css", "interpreter.js", "profile-report.html"].forEach((fileName) => {
+["index.html", "styles.css", "talent-pool.js", "interpreter.html", "interpreter.css", "interpreter.js", "profile-report.html"].forEach((fileName) => {
   fs.copyFileSync(path.join(rootDir, fileName), path.join(distDir, fileName));
 });
-
-fs.mkdirSync(path.join(distDir, "lib"), { recursive: true });
-fs.copyFileSync(path.join(rootDir, "lib", "candidate-profile-core.js"), path.join(distDir, "lib", "candidate-profile-core.js"));
 
 fs.mkdirSync(path.join(distDir, "vendor"), { recursive: true });
 fs.copyFileSync(path.join(rootDir, "vendor", "supabase.js"), path.join(distDir, "vendor", "supabase.js"));

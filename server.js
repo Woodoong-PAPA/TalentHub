@@ -70,18 +70,6 @@ const server = http.createServer((request, response) => {
     return;
   }
 
-  if (request.url.split("?")[0] === "/api/candidate-profile-research") {
-    const candidateProfileResearch = require("./api/candidate-profile-research.js");
-    candidateProfileResearch(request, response);
-    return;
-  }
-
-  if (request.url.split("?")[0] === "/api/candidate-profile-report") {
-    const candidateProfileReport = require("./api/candidate-profile-report.js");
-    candidateProfileReport(request, response);
-    return;
-  }
-
   if (request.url.split("?")[0] === "/api/search-candidates") {
     const searchCandidates = require("./api/search-candidates.js");
     searchCandidates(request, response);
