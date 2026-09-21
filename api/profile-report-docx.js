@@ -31,6 +31,35 @@ function safeFileName(name) {
   return (base || "profile").slice(0, 60);
 }
 
+// Convert an uploaded photo (data URL or raw base64) into the { buffer, ... }
+// shape the renderer expects. Returns the object unchanged if there's no image.
+function decodePhoto(photo) {
+  if (!photo) return undefined;
+  const raw = typeof photo === "string" ? photo : photo.base64 || photo.dataUrl || "";
+  const b64 = String(raw).replace(/^data:[^;]+;base64,/, "").trim();
+  if (!b64) return undefined;
+  try {
+    const buffer = Buffer.from(b64, "base64");
+    if (!buffer.length) return undefined;
+    return { buffer, width: photo.width, height: photo.height };
+  } catch (error) {
+    return undefined;
+  }
+}
+
+// Decode photos in-place for a candidate (or every candidate in a table).
+function preparePhotos(format, data) {
+  if (format === "summary") {
+    (data.candidates || []).forEach((c) => {
+      const p = decodePhoto(c.photo);
+      if (p) c.photo = p; else delete c.photo;
+    });
+  } else {
+    const p = decodePhoto(data.photo);
+    if (p) data.photo = p; else delete data.photo;
+  }
+}
+
 module.exports = async function profileReportDocx(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { ok: false, error: "Method not allowed" });
@@ -47,6 +76,7 @@ module.exports = async function profileReportDocx(request, response) {
       return;
     }
 
+    preparePhotos(format, data);
     const buffer = await buildProfileReportDocx(format, data);
 
     const nameForFile =
