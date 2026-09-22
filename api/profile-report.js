@@ -107,11 +107,11 @@ const FORMAT_GUIDES = {
     "competencyNotes(※)에는 특이사항이 있으면 1개 이내로 작성한다. summaryBullets, category, reviewNote는 빈 값으로 둔다."
   ],
   basic: [
-    "형식 B(기본 프로필): orgShort(소속 약칭), orgFull(정식명칭+국문), basicTitle('소속, 이름 프로필')을 채운다.",
-    "age(나이, 숫자 문자열), birthMark(예: \"'85年生\")을 채운다. birthLine은 빈 값으로 둔다.",
-    "career는 각 항목에 period(재직기간)를 포함한다.",
-    "competencies는 '참고사항' 섹션으로, 밑줄 헤드라인 + 근거 불릿으로 구성한다.",
-    "competencyNotes(※)에 산학협력/입사예정 등 핵심 특이사항을 작성한다. talkingPoints, summaryBullets, category, reviewNote는 빈 값으로 둔다."
+    "형식 B(기본 프로필): 인적 사항 / 주요 사항(경력) / 참고 사항 3개 섹션으로 구성한다. orgShort(소속 약칭), orgFull(정식명칭+국문), basicTitle('소속, 이름 프로필'), role(직급)을 채운다.",
+    "age(나이, 숫자 문자열), birthMark(예: \"'85年生\")을 채운다(연령은 \"41세 ('85年生)\" 형태로 표시됨). birthLine은 빈 값으로 둔다.",
+    "education은 학위 1개당 1개 항목(博)/碩)/學)). career(주요 사항)는 각 항목에 period(재직기간)를 포함하고 최신순으로 정렬한다.",
+    "competencies(참고 사항)는 '- 개조식 헤드라인'(32~40자, 밑줄 아님) + 그 아래 '· 두 줄 근거 불릿'(46~64자)으로 구성한다. 각 bullet에는 뒷받침 태그(bullets.notes: 기술명·기관·약어)를 0~2개 붙인다.",
+    "competencyNotes(※)에 산학협력/입사예정 등 핵심 특이사항을 1개 이내로 작성한다(예: \"'휴머노이드 전신제어 AI 개발' 주제로 삼성과 산학협력 진행 中\"). talkingPoints, summaryBullets, category, reviewNote는 빈 값으로 둔다."
   ],
   summary: [
     "형식 C(요약표 1인 행): category(분류 태그, 예: 'M&A','로봇(전략)')를 채운다.",
