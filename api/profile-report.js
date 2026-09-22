@@ -98,10 +98,10 @@ const CANDIDATE_SCHEMA = {
 
 const FORMAT_GUIDES = {
   interview: [
-    "형식 A(면접용 상세): 제목은 【 이름(소속) Profile 】.",
+    "형식 A(면접용 상세): 제목은 【 이름(소속) Profile 】. 결과는 반드시 A4 1장 이내여야 하므로 분량을 아래로 엄격히 제한한다.",
     "competencyTitle에 '전문 역량' 한 줄 요약을 쓴다(예: 'AI/Tech 분야 투자 전문가').",
-    "competencies는 2~3개의 밑줄 헤드라인(headline)과 각 1~2개 근거 불릿(bullets)으로 구성한다.",
-    "talkingPoints는 면접에서 다룰 논의 주제 3개를 명사형으로 작성한다.",
+    "competencies는 '정확히 2개'의 밑줄 헤드라인(headline)으로 구성하고, 각 헤드라인의 bullets는 정확히 2개로 작성한다(3개 이상 금지).",
+    "talkingPoints는 면접에서 다룰 논의 주제 정확히 3개를 명사형 완결 문장으로 작성한다.",
     "competencyNotes(※)에는 특이사항이 있으면 1개 이내로 작성한다. summaryBullets, category, reviewNote는 빈 값으로 둔다."
   ],
   basic: [
@@ -166,9 +166,9 @@ function buildPrompt(format, input) {
     "",
     "[분량 — 가장 중요]",
     "- 결과 보고서는 반드시 A4 '1장'을 넘지 않는다. 모든 문구는 반드시 '한 줄' 안에 들어가야 한다(2줄 절대 금지).",
-    "- 동시에, 각 문구는 '한 줄을 거의 꽉 채워야' 한다. 길이 규칙(엄격): 최소 공백포함 한글 30자 이상, 목표 34~40자(영문 위주면 62~74자). 30자 미만의 짧은 문구는 반려 사유이며 반드시 더 길게 보강한다.",
-    "- 이 밀도 규칙은 headline(-), bullet(·), talking point, ※ 참고사항 '전부'에 동일 적용한다. 특히 headline과 talking point가 짧아지기 쉬우니, 구체 기관명·수치·성과·맥락·시사점을 덧붙여 한 줄을 꽉 채운다.",
-    "- 예(나쁨→좋음): headline '바이오모방 로보틱스 설계 강점' → '생체모사·4족보행 로봇 설계부터 상용화까지 주도한 로보틱스 리더'. talking point '메타 합류 배경과 역할' → 'Meta Robotics Studio 합류 배경과 로봇 R&D 총괄로서의 조직 운영 방향'.",
+    "- 동시에, 각 문구는 '한 줄을 거의 꽉 채워야' 한다. 길이 규칙(엄격): 공백 포함 한글 28~32자(영문 위주면 56~64자). 27자 이하는 반려 사유이니 보강하고, 33자를 넘으면 2줄이 되므로 반드시 줄인다.",
+    "- 이 밀도 규칙은 headline(-), bullet(·), talking point, ※ 참고사항 '전부'에 동일 적용한다. 특히 headline과 talking point가 짧아지기 쉬우니, 구체 기관명·수치·성과·맥락·시사점을 덧붙여 한 줄을 채우되 33자를 넘기지 않는다.",
+    "- 예(나쁨→좋음): headline '바이오모방 로보틱스 설계 강점' → '생체모사·휴머노이드 로봇을 장기 구축한 연구 리더'. talking point '메타 합류 배경과 역할' → 'Meta Robotics Studio 합류 배경과 로봇 R&D 총괄 역할'.",
     "- 학력의 전공명도 반드시 1줄에 맞춘다. 예: Aeronautical and Astronautical Engineering → '항공우주공학', Computer Science → 'CS' 또는 '컴퓨터과학', Mechanical Engineering → 'ME' 또는 '기계공학'.",
     "- 학교/기관: Massachusetts Institute of Technology→MIT, Stanford University→Stanford, The Ohio State University→Ohio State, 서울대학교→서울대.",
     "- 직급/직책: Chief Executive Officer→CEO, Chief Operating Officer→COO, Vice President→VP, Senior→Sr..",
@@ -184,6 +184,11 @@ function buildPrompt(format, input) {
     "[학력 표기]",
     "- education 배열은 학위 1개당 항목 1개로 분리한다. 같은 학교에서 석사·박사를 모두 받았어도 반드시 별도 항목 2개로 나눈다.",
     "- 각 항목의 degree는 반드시 학위 한 글자만: 學(학사)/碩(석사)/博(박사). '碩博'처럼 두 글자를 한 항목에 합치지 않는다.",
+    "",
+    "[경력 표기]",
+    "- 같은 기관에서 직급/직책만 바뀌며 재직한 경우(예: 조교수→부교수→교수) 여러 줄로 쪼개지 말고 '한 줄로 통합'한다. 직책은 '최종(최상위) 직책' 하나만, 기간은 전체 기간(가장 이른 시작 ~ 가장 최근 종료)으로 표기한다.",
+    "- 학위 취득 과정(박사과정/석사과정/PhD Candidate/대학원 재학 등)은 '경력이 아니라 학력'이다. career에 넣지 말고 education으로만 표기한다. (Post-doc 등 연구직은 경력으로 인정)",
+    "- career 항목은 핵심 위주로 간결하게. 1장을 넘기지 않도록 필요 시 오래된·비핵심 경력은 생략한다.",
     "",
     "[표기 관례]",
     "- 국가 약어 美/韓/英/中/日 을 경력 org 앞 country에, 회사는 '社', 현재는 '現', 등은 '等', 내부는 '內'.",
@@ -303,9 +308,9 @@ async function expandShortSentences(candidate, input) {
   if (!apiKey) return;
   const model = process.env.OPENAI_PROFILE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const prompt = [
-    "다음 각 문구는 보고서 한 줄을 채우기엔 너무 짧다. 각 문구를 '공백 포함 한글 30~40자'로 더 구체적이고 풍부하게 늘려라.",
+    "다음 각 문구는 보고서 한 줄을 채우기엔 너무 짧다. 각 문구를 '공백 포함 한글 28~32자'로 더 구체적이고 풍부하게 늘려라.",
     "- 제공 자료(LinkedIn/뉴스/메모)에 근거한 구체 정보(기관·직책·기술·성과·맥락)를 덧붙여 늘린다. 없는 사실은 절대 지어내지 않는다.",
-    "- 한국어 개조식 명사형 종결 유지. 기호(-,·,_,*) 없이 순수 텍스트. 한 줄을 넘기지 않는다(최대 42자).",
+    "- 한국어 개조식 명사형 종결 유지. 기호(-,·,_,*) 없이 순수 텍스트. 33자를 넘기면 2줄이 되므로 '절대 33자 초과 금지'.",
     "- key는 그대로 두고 text만 늘려, 입력과 동일 개수·동일 key로 반환한다.",
     "",
     "[자료]",
