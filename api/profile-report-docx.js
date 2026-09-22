@@ -70,7 +70,7 @@ function applyBirthLine(candidate) {
   const year = Number(m[1]);
   if (year < 1900 || year > new Date().getFullYear()) return;
   const age = new Date().getFullYear() - year;
-  candidate.birthLine = String(year).slice(2) + "년생, " + age + "세";
+  candidate.birthLine = String(year).slice(2) + "年生, " + age + "세";
 }
 
 // Decode photos and derive birth lines in-place for a candidate (or table).
