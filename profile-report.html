@@ -191,7 +191,7 @@
   function downloadDocx(format, data) {
     setStatus("Word 생성 중…", "work");
     return fetch("/api/profile-report-docx", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, data: data, variant: IS_MOBILE ? "inline" : "textbox" })
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, data: data, variant: "textbox" })
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); });
       var disp = r.headers.get("Content-Disposition") || "";
