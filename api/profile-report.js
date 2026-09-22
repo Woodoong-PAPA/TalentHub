@@ -237,6 +237,108 @@ async function callOpenAI(format, input) {
   return JSON.parse(outputText);
 }
 
+// ---- Strict one-line length enforcement ------------------------------
+// Headlines / bullets / talking points must nearly fill a line. Prompting
+// alone is unreliable, so any sentence shorter than MIN_VIS_LEN is expanded
+// in one follow-up call using the same source material (no fabrication).
+const MIN_VIS_LEN = 26; // ~ Korean chars (ASCII counts as 0.5)
+
+function visLen(s) {
+  let n = 0;
+  for (const ch of String(s == null ? "" : s)) n += ch.charCodeAt(0) < 128 ? 0.5 : 1;
+  return n;
+}
+
+function collectShort(candidate) {
+  const items = [];
+  (candidate.competencies || []).forEach((blk, bi) => {
+    if (blk && String(blk.headline || "").trim() && visLen(blk.headline) < MIN_VIS_LEN) items.push({ key: "h:" + bi, text: blk.headline });
+    (blk && blk.bullets ? blk.bullets : []).forEach((b, ui) => {
+      const t = typeof b === "string" ? b : b && b.text;
+      if (t && visLen(t) < MIN_VIS_LEN) items.push({ key: "b:" + bi + ":" + ui, text: t });
+    });
+  });
+  (candidate.talkingPoints || []).forEach((t, i) => {
+    if (t && visLen(t) < MIN_VIS_LEN) items.push({ key: "t:" + i, text: t });
+  });
+  return items;
+}
+
+function applyExpansions(candidate, map) {
+  (candidate.competencies || []).forEach((blk, bi) => {
+    if (map["h:" + bi]) blk.headline = map["h:" + bi];
+    (blk && blk.bullets ? blk.bullets : []).forEach((b, ui) => {
+      const k = "b:" + bi + ":" + ui;
+      if (!map[k]) return;
+      if (typeof b === "string") blk.bullets[ui] = map[k];
+      else b.text = map[k];
+    });
+  });
+  (candidate.talkingPoints || []).forEach((t, i) => {
+    if (map["t:" + i]) candidate.talkingPoints[i] = map["t:" + i];
+  });
+}
+
+const EXPAND_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items"],
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["key", "text"],
+        properties: { key: { type: "string" }, text: { type: "string" } }
+      }
+    }
+  }
+};
+
+async function expandShortSentences(candidate, input) {
+  const short = collectShort(candidate);
+  if (!short.length) return;
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return;
+  const model = process.env.OPENAI_PROFILE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const prompt = [
+    "다음 각 문구는 보고서 한 줄을 채우기엔 너무 짧다. 각 문구를 '공백 포함 한글 30~40자'로 더 구체적이고 풍부하게 늘려라.",
+    "- 제공 자료(LinkedIn/뉴스/메모)에 근거한 구체 정보(기관·직책·기술·성과·맥락)를 덧붙여 늘린다. 없는 사실은 절대 지어내지 않는다.",
+    "- 한국어 개조식 명사형 종결 유지. 기호(-,·,_,*) 없이 순수 텍스트. 한 줄을 넘기지 않는다(최대 42자).",
+    "- key는 그대로 두고 text만 늘려, 입력과 동일 개수·동일 key로 반환한다.",
+    "",
+    "[자료]",
+    "LinkedIn: " + JSON.stringify(input.linkedinProfile || null),
+    "메모/뉴스: " + String(input.sourcesText || "").slice(0, 8000),
+    "",
+    "[늘릴 문구]",
+    JSON.stringify(short)
+  ].join("\n");
+  const body = {
+    model,
+    input: [
+      { role: "system", content: "You expand short Korean report sentences to fill one line using only the provided facts. Return schema-valid JSON." },
+      { role: "user", content: prompt }
+    ],
+    text: { format: { type: "json_schema", name: "expanded_sentences", schema: EXPAND_SCHEMA, strict: true } }
+  };
+  if (modelSupportsTemperature(model)) body.temperature = 0.3;
+  try {
+    const r = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) return;
+    const out = extractOutputText(JSON.parse(await r.text()));
+    if (!out) return;
+    const map = {};
+    (JSON.parse(out).items || []).forEach((it) => {
+      if (it && it.key && it.text) map[it.key] = String(it.text).replace(/[_*]/g, "").trim();
+    });
+    applyExpansions(candidate, map);
+  } catch (error) {
+    // best-effort: keep the original text if expansion fails
+  }
+}
+
 module.exports = async function profileReport(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { ok: false, error: "Method not allowed" });
@@ -260,6 +362,9 @@ module.exports = async function profileReport(request, response) {
       linkedinProfile: body.linkedinProfile,
       sourcesText: body.sourcesText
     });
+
+    // Enforce the minimum one-line density by expanding any short sentences.
+    await expandShortSentences(candidate, { linkedinProfile: body.linkedinProfile, sourcesText: body.sourcesText });
 
     sendJson(response, 200, { ok: true, format, candidate });
   } catch (error) {
