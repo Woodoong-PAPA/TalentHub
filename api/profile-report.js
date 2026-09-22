@@ -165,10 +165,11 @@ function buildPrompt(format, input) {
     "- 이름과 소속/직급 힌트로 동일 인물을 특정하고, 신뢰 가능한 출처(기사, 공식 프로필, 회사 페이지)를 우선한다. 확신이 없으면 추측하지 않는다.",
     "",
     "[분량 — 가장 중요]",
-    "- 결과 보고서는 반드시 A4 '1장'을 넘지 않는다. 모든 문구는 반드시 '한 줄' 안에 들어가야 한다(2줄 절대 금지).",
-    "- 동시에, 각 문구는 '한 줄을 거의 꽉 채워야' 한다. 길이 규칙(엄격): 공백 포함 한글 28~32자(영문 위주면 56~64자). 27자 이하는 반려 사유이니 보강하고, 33자를 넘으면 2줄이 되므로 반드시 줄인다.",
-    "- 이 밀도 규칙은 headline(-), bullet(·), talking point, ※ 참고사항 '전부'에 동일 적용한다. 특히 headline과 talking point가 짧아지기 쉬우니, 구체 기관명·수치·성과·맥락·시사점을 덧붙여 한 줄을 채우되 33자를 넘기지 않는다.",
-    "- 예(나쁨→좋음): headline '바이오모방 로보틱스 설계 강점' → '생체모사·휴머노이드 로봇을 장기 구축한 연구 리더'. talking point '메타 합류 배경과 역할' → 'Meta Robotics Studio 합류 배경과 로봇 R&D 총괄 역할'.",
+    "- 결과 보고서는 반드시 A4 '1장'을 넘지 않는다.",
+    "- headline(-), talking point, ※ 참고사항: 각각 '한 줄'을 거의 꽉 채우되 절대 2줄을 넘기지 않는다. 길이(엄격): 공백 포함 한글 32~40자(영문 위주면 64~80자). 31자 이하는 반려 사유이니 구체 기관명·수치·성과·맥락을 덧붙여 보강하고, 42자를 넘으면 줄인다.",
+    "- bullet(·): '두 줄'로 풍부하게 작성한다. 길이(권장): 공백 포함 한글 46~64자. 한 줄로 끝날 만큼 짧게 쓰지 말고, 근거·수치·맥락을 담아 두 줄을 채운다(단, 3줄은 넘기지 않는다).",
+    "- 특히 headline과 talking point가 짧아지기 쉬우니, 구체 기관명·수치·성과·맥락·시사점을 덧붙여 한 줄을 꽉 채운다. bullet은 그보다 더 길게(두 줄) 쓴다.",
+    "- 예(나쁨→좋음): headline '바이오모방 로보틱스 설계 강점' → '생체모사·휴머노이드 로봇을 장기 구축한 세계적 연구 리더'. talking point '메타 합류 배경과 역할' → 'Meta Robotics Studio 합류 배경과 로봇 R&D 총괄 역할'.",
     "- 학력의 전공명도 반드시 1줄에 맞춘다. 예: Aeronautical and Astronautical Engineering → '항공우주공학', Computer Science → 'CS' 또는 '컴퓨터과학', Mechanical Engineering → 'ME' 또는 '기계공학'.",
     "- 학교/기관: Massachusetts Institute of Technology→MIT, Stanford University→Stanford, The Ohio State University→Ohio State, 서울대학교→서울대.",
     "- 직급/직책: Chief Executive Officer→CEO, Chief Operating Officer→COO, Vice President→VP, Senior→Sr..",
@@ -242,11 +243,12 @@ async function callOpenAI(format, input) {
   return JSON.parse(outputText);
 }
 
-// ---- Strict one-line length enforcement ------------------------------
-// Headlines / bullets / talking points must nearly fill a line. Prompting
-// alone is unreliable, so any sentence shorter than MIN_VIS_LEN is expanded
-// in one follow-up call using the same source material (no fabrication).
-const MIN_VIS_LEN = 26; // ~ Korean chars (ASCII counts as 0.5)
+// ---- Length enforcement ----------------------------------------------
+// Headlines / talking points must nearly fill ONE line; · bullets should fill
+// TWO. Prompting alone is unreliable, so anything shorter than its threshold is
+// expanded in one follow-up call using the same source material (no fabrication).
+const MIN_HEAD = 30; // headline / talking point: one full line (~32-40 chars)
+const MIN_BULLET = 44; // · bullet: two lines (~46-64 chars)
 
 function visLen(s) {
   let n = 0;
@@ -257,14 +259,14 @@ function visLen(s) {
 function collectShort(candidate) {
   const items = [];
   (candidate.competencies || []).forEach((blk, bi) => {
-    if (blk && String(blk.headline || "").trim() && visLen(blk.headline) < MIN_VIS_LEN) items.push({ key: "h:" + bi, text: blk.headline });
+    if (blk && String(blk.headline || "").trim() && visLen(blk.headline) < MIN_HEAD) items.push({ key: "h:" + bi, text: blk.headline });
     (blk && blk.bullets ? blk.bullets : []).forEach((b, ui) => {
       const t = typeof b === "string" ? b : b && b.text;
-      if (t && visLen(t) < MIN_VIS_LEN) items.push({ key: "b:" + bi + ":" + ui, text: t });
+      if (t && visLen(t) < MIN_BULLET) items.push({ key: "b:" + bi + ":" + ui, text: t });
     });
   });
   (candidate.talkingPoints || []).forEach((t, i) => {
-    if (t && visLen(t) < MIN_VIS_LEN) items.push({ key: "t:" + i, text: t });
+    if (t && visLen(t) < MIN_HEAD) items.push({ key: "t:" + i, text: t });
   });
   return items;
 }
@@ -308,9 +310,11 @@ async function expandShortSentences(candidate, input) {
   if (!apiKey) return;
   const model = process.env.OPENAI_PROFILE_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const prompt = [
-    "다음 각 문구는 보고서 한 줄을 채우기엔 너무 짧다. 각 문구를 '공백 포함 한글 28~32자'로 더 구체적이고 풍부하게 늘려라.",
+    "다음 각 문구는 보고서 한 칸을 채우기엔 너무 짧다. key 접두어에 따라 목표 길이가 다르니 그에 맞춰 더 구체적이고 풍부하게 늘려라.",
+    "- key가 'h:'(headline) 또는 't:'(talking point)이면: 공백 포함 한글 32~40자(한 줄을 꽉 채움). 42자를 넘기지 않는다.",
+    "- key가 'b:'(bullet)이면: 공백 포함 한글 46~64자(두 줄 분량). 한 줄로 끝날 만큼 짧게 쓰지 않는다.",
     "- 제공 자료(LinkedIn/뉴스/메모)에 근거한 구체 정보(기관·직책·기술·성과·맥락)를 덧붙여 늘린다. 없는 사실은 절대 지어내지 않는다.",
-    "- 한국어 개조식 명사형 종결 유지. 기호(-,·,_,*) 없이 순수 텍스트. 33자를 넘기면 2줄이 되므로 '절대 33자 초과 금지'.",
+    "- 한국어 개조식 명사형 종결 유지. 기호(-,·,_,*) 없이 순수 텍스트.",
     "- key는 그대로 두고 text만 늘려, 입력과 동일 개수·동일 key로 반환한다.",
     "",
     "[자료]",
