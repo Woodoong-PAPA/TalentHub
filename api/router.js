@@ -13,6 +13,7 @@ const routes = {
   "policy-chat": () => require("./policy-chat.js"),
   "profile-report": () => require("./profile-report.js"),
   "profile-report-docx": () => require("./profile-report-docx.js"),
+  "profile-reports": () => require("./profile-reports.js"),
   "realtime-token": () => require("./realtime-token.js"),
   "recruiting-metrics-mail": () => require("./recruiting-metrics-mail.js"),
   "recruiting-metrics-request-cron": () => require("./recruiting-metrics-mail.js"),
