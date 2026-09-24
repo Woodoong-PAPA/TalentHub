@@ -62,15 +62,23 @@ function decodePhoto(photo) {
   }
 }
 
-// Build "(yy년생, NN세)" from a 4-digit birth year; age = current year - birth.
+// Build "YY년생, NN세" from a 4-digit birth year; age = report year - birth year.
+// When the birth year is unconfirmed, do not guess — mark it "출생연도·나이 미확인".
+const BIRTH_UNKNOWN = "출생연도·나이 미확인";
 function applyBirthLine(candidate) {
   if (!candidate || candidate.birthLine) return;
   const m = String(candidate.birthYear || "").match(/(\d{4})/);
-  if (!m) return;
+  if (!m) {
+    candidate.birthLine = BIRTH_UNKNOWN;
+    return;
+  }
   const year = Number(m[1]);
-  if (year < 1900 || year > new Date().getFullYear()) return;
+  if (year < 1900 || year > new Date().getFullYear()) {
+    candidate.birthLine = BIRTH_UNKNOWN;
+    return;
+  }
   const age = new Date().getFullYear() - year;
-  candidate.birthLine = String(year).slice(2) + "年生, " + age + "세";
+  candidate.birthLine = String(year).slice(2) + "년생, " + age + "세";
 }
 
 // Decode photos and derive birth lines in-place for a candidate (or table).
