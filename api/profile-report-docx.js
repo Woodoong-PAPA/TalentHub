@@ -109,8 +109,11 @@ module.exports = async function profileReportDocx(request, response) {
     preparePhotos(format, data);
     const buffer = await buildProfileReportDocx(format, data);
 
+    const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const nameForFile =
-      format === "summary" ? data.groupLabel || "candidate_table" : data.name || "profile";
+      format === "summary"
+        ? [data.groupLabel || "candidate_table", ymd].join("_")
+        : [data.name || "profile", data.orgShort, "Profile", ymd].filter(Boolean).join("_");
     const fileName = safeFileName(nameForFile) + ".docx";
 
     response.writeHead(200, {

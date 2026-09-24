@@ -7,6 +7,16 @@
 
 const MAX_SOURCES_CHARS = 24000;
 
+// Per-fact source, rendered as a real Word comment (검토 메모). name is the
+// source label (예: 'MIT 공식 프로필'); url the link the model actually saw (빈
+// 문자열 가능). The confirmation date is stamped by the renderer.
+const SOURCE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "url"],
+  properties: { name: { type: "string" }, url: { type: "string" } }
+};
+
 const CANDIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -32,13 +42,14 @@ const CANDIDATE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["degree", "school", "major", "year", "note"],
+        required: ["degree", "school", "major", "year", "note", "source"],
         properties: {
           degree: { type: "string" },
           school: { type: "string" },
           major: { type: "string" },
           year: { type: "string" },
-          note: { type: "string" }
+          note: { type: "string" },
+          source: SOURCE_SCHEMA
         }
       }
     },
@@ -47,13 +58,14 @@ const CANDIDATE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["country", "org", "title", "period", "note"],
+        required: ["country", "org", "title", "period", "note", "source"],
         properties: {
           country: { type: "string" },
           org: { type: "string" },
           title: { type: "string" },
           period: { type: "string" },
-          note: { type: "string" }
+          note: { type: "string" },
+          source: SOURCE_SCHEMA
         }
       }
     },
@@ -71,10 +83,11 @@ const CANDIDATE_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["text", "notes"],
+              required: ["text", "notes", "source"],
               properties: {
                 text: { type: "string" },
-                notes: { type: "array", items: { type: "string" } }
+                notes: { type: "array", items: { type: "string" } },
+                source: SOURCE_SCHEMA
               }
             }
           }
@@ -102,6 +115,7 @@ const FORMAT_GUIDES = {
     "[식별] 이름·소속으로 동일 인물을 먼저 특정하고 직급/직책은 별도로 검증한다. 동명이인 판단이 어려우면 무리하게 확정하지 않는다.",
     "[검증] 출처 우선순위: 회사·대학 공식 프로필 → 본인 홈페이지 → LinkedIn → 신뢰할 만한 언론. 학력·생년·재직기간·직책·성과 수치·수상은 각각 근거를 확인한다. 언론 1건에만 실린 성과도 사용 가능하나 그 사실의 note에 근거 범위를 남긴다. 로그인해야 보이는 LinkedIn 비공개 정보는 실제 접근 자료가 있을 때만 사용한다.",
     "[미확인] 조사로 찾지 못한 값은 지어내지 말고 '미확인'으로 표기한다(생년 미확인이면 birthYear는 빈 문자열로 두되, 확인 자체가 불가함을 competencyNotes 등으로 알릴 수 있다). 확인된 근거가 없는 성과·역량 주장은 아예 작성하지 않는다.",
+    "[출처] 주요 학력·경력·근거(bullet)의 source(출처명·URL)를 가능한 한 채운다 — 각 사실에 Word 검토 메모로 삽입된다. 출처 충돌·언론 1건 근거·입력 직책과 조사 결과 차이도 해당 항목의 source.name에 짧게 남긴다.",
     "[중립성] '세계적 석학','업계 최고 수준' 같은 강한 평가는 객관적 근거가 있을 때만. 근거가 없으면 확인된 전문 분야를 중립적으로 기술한다.",
     "[제목/식별필드] 제목은 시스템이 【 이름(소속) Profile 】로 만든다(직급은 제목에 넣지 않음). orgShort에 소속 약칭(학교·회사 병기는 'MIT/Meta'처럼 슬래시), role에 직급/직책을 채운다. competencyTitle에는 확인된 전문 분야 요약 한 줄(예: '생체모사 로보틱스·휴머노이드 R&D 전문가').",
     "[인적사항 표] education/career에는 '핵심 명칭과 연도'만 넣는다. 담당 업무·성과·배경 설명은 표에 쓰지 말고 전문역량 bullet 본문으로 옮긴다. 긴 공식 명칭은 식별 가능한 약칭으로. 표가 좁으면 중요도 낮은 과거 경력을 먼저 생략하고, 사실을 합치거나 연도를 임의로 단축하지 않는다.",
@@ -211,6 +225,12 @@ function buildPrompt(format, input) {
     "- 각주는 짧은 명사구로만. 완결 문장·중복 설명 금지, 한 각주당 20자 이내 권장.",
     "- 출처 표기는 각주에 절대 넣지 않는다: 'LinkedIn 기준', '보도자료 기반', '공식 프로필', '게시물 기준' 같은 출처·근거 문구 금지.",
     "- 덧붙일 역할/기관/지표가 없으면 각주는 비운다.",
+    "",
+    "[출처 메모(source)]",
+    "- education/career/각 bullet의 source에는 그 사실의 출처를 넣는다. 이 값은 Word '검토 메모(코멘트)'로 문서에 삽입되며, 확인일은 시스템이 자동 기록한다.",
+    "- source.name: 출처 라벨(예: 'MIT 공식 프로필','회사 보도자료','OO 홈페이지 약력'). source.url: 실제로 확인한 링크만 넣고, 없거나 불확실하면 빈 문자열. URL을 지어내지 않는다.",
+    "- 언론 1건에만 근거한 성과는 source.name에 그 범위를 드러낸다(예: 'ㅇㅇ일보 기사 1건'). 출처를 특정하지 못하면 source는 빈 값({name:'', url:''})으로 둔다.",
+    "- 출처는 본문(headline/bullet/표)에 절대 쓰지 말고 source에만 담는다.",
     "",
     "[형식 지침]",
     ...guide.map((g) => "- " + g),
