@@ -137,60 +137,114 @@
   function $(id) { return document.getElementById(id); }
   function setStatus(msg, kind) { var el = $("status"); el.textContent = msg || ""; el.className = "status" + (kind ? " " + kind : ""); }
 
-  // ---- Saved reports (per-browser localStorage) --------------------------
+  // ---- Saved reports (Supabase-backed, localStorage fallback) ------------
   var SAVE_KEY = "talenthub.profileReports.v1";
   var FMT_LABEL = { interview: "면접용", basic: "기본", summary: "요약표" };
-  function loadSaved() {
-    try { return JSON.parse(localStorage.getItem(SAVE_KEY) || "[]") || []; } catch (e) { return []; }
+  var savedLocal = false; // true when the server is unavailable and we fell back
+
+  function apiList() {
+    return fetch("/api/profile-reports").then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || "목록 조회 실패");
+      return (d.reports || []).map(function (x) { x.remote = true; return x; });
+    });
   }
-  function persistSaved(list) {
-    // Newest first; drop oldest until it fits localStorage (photos can be large).
+  function apiGet(id) {
+    return fetch("/api/profile-reports?id=" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || "불러오기 실패");
+      return d.report;
+    });
+  }
+  function apiCreate(format, title, data) {
+    return fetch("/api/profile-reports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, title: title, data: data }) })
+      .then(function (r) { return r.json(); }).then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || "저장 실패"); return d.report; });
+  }
+  function apiDelete(id) {
+    return fetch("/api/profile-reports?id=" + encodeURIComponent(id), { method: "DELETE" }).then(function (r) { return r.json(); })
+      .then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || "삭제 실패"); return true; });
+  }
+
+  // localStorage fallback (used only when the server is unreachable)
+  function loadLocal() { try { return JSON.parse(localStorage.getItem(SAVE_KEY) || "[]") || []; } catch (e) { return []; } }
+  function persistLocal(list) {
     var arr = list.slice(0, 100);
-    while (arr.length) {
-      try { localStorage.setItem(SAVE_KEY, JSON.stringify(arr)); return true; }
-      catch (e) { arr = arr.slice(0, arr.length - 1); }
-    }
+    while (arr.length) { try { localStorage.setItem(SAVE_KEY, JSON.stringify(arr)); return true; } catch (e) { arr = arr.slice(0, arr.length - 1); } }
     try { localStorage.setItem(SAVE_KEY, "[]"); } catch (e) {}
     return false;
   }
+
   function saveReport(format, data, title) {
-    var list = loadSaved();
-    list.unshift({ id: String(Date.now()) + Math.random().toString(36).slice(2, 6), ts: Date.now(), format: format, title: title || "무제", data: data });
-    var ok = persistSaved(list);
-    renderSaved();
-    return ok;
+    title = title || "무제";
+    return apiCreate(format, title, data)
+      .then(function () { return refreshSaved(); })
+      .catch(function () {
+        savedLocal = true;
+        var list = loadLocal();
+        list.unshift({ id: String(Date.now()) + Math.random().toString(36).slice(2, 6), ts: Date.now(), format: format, title: title, data: data });
+        persistLocal(list);
+        renderSaved(list);
+      });
   }
+
+  function refreshSaved() {
+    return apiList()
+      .then(function (reports) { savedLocal = false; renderSaved(reports); })
+      .catch(function () { savedLocal = true; renderSaved(loadLocal()); });
+  }
+
+  // Resolve an entry's {format, data} (fetching the blob for remote entries).
+  function entryData(entry) {
+    if (entry.remote) return apiGet(entry.id).then(function (r) { return { format: r.format, data: r.data }; });
+    return Promise.resolve({ format: entry.format, data: entry.data });
+  }
+  function deleteEntry(entry) {
+    if (entry.remote) return apiDelete(entry.id).then(refreshSaved);
+    persistLocal(loadLocal().filter(function (x) { return x.id !== entry.id; }));
+    renderSaved(loadLocal());
+    return Promise.resolve();
+  }
+
   function fmtDate(ts) {
     var d = new Date(ts);
     function p(n) { return (n < 10 ? "0" : "") + n; }
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   }
-  function renderSaved() {
-    var list = loadSaved();
+  function renderSaved(list) {
+    list = list || [];
     $("savedCount").textContent = String(list.length);
     $("savedEmpty").classList.toggle("hide", list.length > 0);
+    $("savedEmpty").textContent = savedLocal
+      ? "서버 저장을 사용할 수 없어 이 브라우저에만 저장됩니다."
+      : "아직 저장된 보고서가 없습니다.";
     var box = $("savedList"); box.innerHTML = "";
-    list.forEach(function (r) {
+    list.forEach(function (entry) {
       var item = document.createElement("div"); item.className = "item";
       var meta = document.createElement("div"); meta.className = "meta";
       var t = document.createElement("span"); t.className = "t";
-      t.innerHTML = '<span class="badge">' + (FMT_LABEL[r.format] || r.format) + '</span> ' + escapeHtml(r.title);
-      var sub = document.createElement("span"); sub.className = "muted"; sub.textContent = fmtDate(r.ts);
+      t.innerHTML = '<span class="badge">' + (FMT_LABEL[entry.format] || entry.format) + '</span> ' + escapeHtml(entry.title);
+      var sub = document.createElement("span"); sub.className = "muted";
+      sub.textContent = fmtDate(entry.ts) + (entry.remote ? "" : " · 로컬");
       meta.appendChild(t); meta.appendChild(sub);
       var actions = document.createElement("div"); actions.className = "actions";
       var dl = document.createElement("button"); dl.className = "dl"; dl.textContent = "다운로드";
       dl.addEventListener("click", function () {
         dl.disabled = true;
-        downloadDocx(r.format, r.data).catch(function (e) { setStatus("실패: " + e.message, "err"); }).finally(function () { dl.disabled = false; });
+        entryData(entry).then(function (e) { return downloadDocx(e.format, e.data); })
+          .catch(function (err) { setStatus("실패: " + err.message, "err"); })
+          .finally(function () { dl.disabled = false; });
       });
       actions.appendChild(dl);
-      if (r.format === "summary" && r.data && r.data.candidates) {
+      if (entry.format === "summary") {
         var load = document.createElement("button"); load.className = "load"; load.textContent = "표 불러오기";
-        load.addEventListener("click", function () { loadSummaryIntoTable(r.data); });
+        load.addEventListener("click", function () {
+          load.disabled = true;
+          entryData(entry).then(function (e) { loadSummaryIntoTable(e.data); })
+            .catch(function (err) { setStatus("실패: " + err.message, "err"); })
+            .finally(function () { load.disabled = false; });
+        });
         actions.appendChild(load);
       }
       var del = document.createElement("button"); del.className = "del"; del.textContent = "삭제";
-      del.addEventListener("click", function () { persistSaved(loadSaved().filter(function (x) { return x.id !== r.id; })); renderSaved(); });
+      del.addEventListener("click", function () { del.disabled = true; deleteEntry(entry).catch(function (err) { setStatus("삭제 실패: " + err.message, "err"); del.disabled = false; }); });
       actions.appendChild(del);
       item.appendChild(meta); item.appendChild(actions); box.appendChild(item);
     });
@@ -341,7 +395,7 @@
       .finally(function () { $("btnRunTable").disabled = false; });
   });
 
-  renderSaved();
+  refreshSaved();
 })();
 </script>
 </body>

@@ -84,6 +84,27 @@ alter table public.interpreter_rooms enable row level security;
 
 The browser never receives `SUPABASE_SERVICE_ROLE_KEY`; reads, writes, and soft deletes go through `/api/interpreter-rooms`.
 
+## Profile Report Storage Table
+
+Generated candidate profile reports are saved to `public.profile_reports` so they can be re-downloaded from any device via `/api/profile-reports` (server-only `SUPABASE_SERVICE_ROLE_KEY`). If the table or key is unavailable, the profile-report page falls back to per-browser `localStorage`.
+
+```sql
+create table if not exists public.profile_reports (
+  id uuid primary key default gen_random_uuid(),
+  format text not null check (format in ('interview', 'basic', 'summary')),
+  title text not null default '무제',
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
+create index if not exists profile_reports_created_at_idx
+  on public.profile_reports (created_at desc)
+  where deleted_at is null;
+
+alter table public.profile_reports enable row level security;
+```
+
 ## Supabase Realtime E2E Checklist
 
 Use two browser tabs or two phones.
