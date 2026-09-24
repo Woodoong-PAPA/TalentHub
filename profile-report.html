@@ -48,6 +48,14 @@
   .table-list .item button { padding: 4px 10px; background: #fde2e4; color: var(--danger); font-size: 12px; }
   .badge { display: inline-block; background: var(--accent-weak); color: var(--accent); border-radius: 6px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
   .big { font-size: 15px; padding: 13px 22px; }
+  #savedList .item { align-items: center; }
+  #savedList .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  #savedList .meta .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #savedList .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  #savedList .item button { padding: 4px 10px; font-size: 12px; }
+  #savedList .item button.dl { background: var(--accent-weak); color: var(--accent); }
+  #savedList .item button.load { background: #e7f5ec; color: var(--ok); }
+  #savedList .item button.del { background: #fde2e4; color: var(--danger); }
 </style>
 </head>
 <body>
@@ -112,6 +120,14 @@
     <div class="table-list hide" id="tableList"></div>
   </div>
 
+  <!-- saved reports -->
+  <div class="card">
+    <h2>저장된 보고서 <span class="badge" id="savedCount">0</span></h2>
+    <p class="muted">생성한 보고서는 이 브라우저에 자동 저장되어, 언제든 다시 다운로드하거나 불러올 수 있습니다.</p>
+    <div class="table-list" id="savedList"></div>
+    <p class="muted hide" id="savedEmpty">아직 저장된 보고서가 없습니다.</p>
+  </div>
+
 </main>
 
 <script>
@@ -120,6 +136,76 @@
   var state = { format: "interview", tableCandidates: [], photoDataUrl: "" };
   function $(id) { return document.getElementById(id); }
   function setStatus(msg, kind) { var el = $("status"); el.textContent = msg || ""; el.className = "status" + (kind ? " " + kind : ""); }
+
+  // ---- Saved reports (per-browser localStorage) --------------------------
+  var SAVE_KEY = "talenthub.profileReports.v1";
+  var FMT_LABEL = { interview: "면접용", basic: "기본", summary: "요약표" };
+  function loadSaved() {
+    try { return JSON.parse(localStorage.getItem(SAVE_KEY) || "[]") || []; } catch (e) { return []; }
+  }
+  function persistSaved(list) {
+    // Newest first; drop oldest until it fits localStorage (photos can be large).
+    var arr = list.slice(0, 100);
+    while (arr.length) {
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify(arr)); return true; }
+      catch (e) { arr = arr.slice(0, arr.length - 1); }
+    }
+    try { localStorage.setItem(SAVE_KEY, "[]"); } catch (e) {}
+    return false;
+  }
+  function saveReport(format, data, title) {
+    var list = loadSaved();
+    list.unshift({ id: String(Date.now()) + Math.random().toString(36).slice(2, 6), ts: Date.now(), format: format, title: title || "무제", data: data });
+    var ok = persistSaved(list);
+    renderSaved();
+    return ok;
+  }
+  function fmtDate(ts) {
+    var d = new Date(ts);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+  function renderSaved() {
+    var list = loadSaved();
+    $("savedCount").textContent = String(list.length);
+    $("savedEmpty").classList.toggle("hide", list.length > 0);
+    var box = $("savedList"); box.innerHTML = "";
+    list.forEach(function (r) {
+      var item = document.createElement("div"); item.className = "item";
+      var meta = document.createElement("div"); meta.className = "meta";
+      var t = document.createElement("span"); t.className = "t";
+      t.innerHTML = '<span class="badge">' + (FMT_LABEL[r.format] || r.format) + '</span> ' + escapeHtml(r.title);
+      var sub = document.createElement("span"); sub.className = "muted"; sub.textContent = fmtDate(r.ts);
+      meta.appendChild(t); meta.appendChild(sub);
+      var actions = document.createElement("div"); actions.className = "actions";
+      var dl = document.createElement("button"); dl.className = "dl"; dl.textContent = "다운로드";
+      dl.addEventListener("click", function () {
+        dl.disabled = true;
+        downloadDocx(r.format, r.data).catch(function (e) { setStatus("실패: " + e.message, "err"); }).finally(function () { dl.disabled = false; });
+      });
+      actions.appendChild(dl);
+      if (r.format === "summary" && r.data && r.data.candidates) {
+        var load = document.createElement("button"); load.className = "load"; load.textContent = "표 불러오기";
+        load.addEventListener("click", function () { loadSummaryIntoTable(r.data); });
+        actions.appendChild(load);
+      }
+      var del = document.createElement("button"); del.className = "del"; del.textContent = "삭제";
+      del.addEventListener("click", function () { persistSaved(loadSaved().filter(function (x) { return x.id !== r.id; })); renderSaved(); });
+      actions.appendChild(del);
+      item.appendChild(meta); item.appendChild(actions); box.appendChild(item);
+    });
+  }
+  function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function loadSummaryIntoTable(data) {
+    // Switch to the summary format and restore its candidate list for re-use.
+    var lab = document.querySelector('#fmt label[data-fmt="summary"]');
+    if (lab) lab.click();
+    if (data.groupLabel) $("groupLabel").value = data.groupLabel;
+    state.tableCandidates = (data.candidates || []).slice();
+    renderTableList();
+    setStatus("표를 불러왔습니다 (" + state.tableCandidates.length + "명). 인물을 더 추가하거나 다시 출력하세요.", "ok");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   // format switching
   Array.prototype.forEach.call(document.querySelectorAll('#fmt label'), function (lab) {
@@ -213,7 +299,12 @@
     if (!inp.name && !inp.linkedinUrl && !inp.sourcesText) { setStatus("이름, LinkedIn URL, 또는 추가 자료 중 하나는 입력하세요.", "err"); return; }
     $("btnRun").disabled = true;
     researchCandidate(inp)
-      .then(function (cand) { return downloadDocx(inp.format, cand); })
+      .then(function (cand) {
+        return downloadDocx(inp.format, cand).then(function () {
+          var title = (cand.name || inp.name || "무제") + (cand.orgShort ? " (" + cand.orgShort + ")" : "");
+          saveReport(inp.format, cand, title);
+        });
+      })
       .catch(function (e) { setStatus("실패: " + e.message, "err"); })
       .finally(function () { $("btnRun").disabled = false; });
   });
@@ -243,10 +334,14 @@
   $("btnRunTable").addEventListener("click", function () {
     if (!state.tableCandidates.length) { setStatus("표에 인물을 1명 이상 추가하세요.", "err"); return; }
     $("btnRunTable").disabled = true;
-    downloadDocx("summary", { groupLabel: $("groupLabel").value.trim() || "Candidate Table", candidates: state.tableCandidates })
+    var payload = { groupLabel: $("groupLabel").value.trim() || "Candidate Table", candidates: state.tableCandidates };
+    downloadDocx("summary", payload)
+      .then(function () { saveReport("summary", payload, payload.groupLabel); })
       .catch(function (e) { setStatus("실패: " + e.message, "err"); })
       .finally(function () { $("btnRunTable").disabled = false; });
   });
+
+  renderSaved();
 })();
 </script>
 </body>
