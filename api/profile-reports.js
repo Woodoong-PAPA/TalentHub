@@ -51,12 +51,21 @@ function readRequestBody(request) {
   });
 }
 
-function getSupabaseAdmin() {
+function getSupabaseClient() {
   loadLocalEnv();
   const supabaseUrl = String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
-  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "");
-  if (!supabaseUrl || !serviceRoleKey) return null;
-  return createClient(supabaseUrl, serviceRoleKey, {
+  // Prefer the service role key when available; otherwise fall back to the anon
+  // key, which is how the rest of this app reads/writes Supabase (candidates,
+  // trending_people_reports use anon + permissive RLS). profile_reports has the
+  // matching "demo profile reports" policies so anon access works.
+  const key = String(
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      ""
+  );
+  if (!supabaseUrl || !key) return null;
+  return createClient(supabaseUrl, key, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
 }
@@ -152,11 +161,11 @@ async function deleteReport(request, response, supabase) {
 }
 
 module.exports = async function profileReports(request, response) {
-  const supabase = getSupabaseAdmin();
+  const supabase = getSupabaseClient();
   if (!supabase) {
     sendJson(response, 503, {
       ok: false,
-      error: "Supabase service role is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable shared report storage."
+      error: "Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) to enable shared report storage."
     });
     return;
   }
