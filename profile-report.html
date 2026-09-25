@@ -55,6 +55,7 @@
   #savedList .item button { padding: 4px 10px; font-size: 12px; }
   #savedList .item button.dl { background: var(--accent-weak); color: var(--accent); }
   #savedList .item button.load { background: #e7f5ec; color: var(--ok); }
+  #savedList .item button.reuse { background: #fff4e5; color: #b26a00; }
   #savedList .item button.del { background: #fde2e4; color: var(--danger); }
 </style>
 </head>
@@ -172,14 +173,17 @@
     return false;
   }
 
-  function saveReport(format, data, title) {
+  function saveReport(format, data, title, inputs) {
     title = title || "무제";
-    return apiCreate(format, title, data)
+    // Keep the original form inputs alongside the report so it can be "reused"
+    // (form re-populated) later. The renderer ignores the extra __inputs field.
+    var payload = inputs ? Object.assign({}, data, { __inputs: inputs }) : data;
+    return apiCreate(format, title, payload)
       .then(function () { return refreshSaved(); })
       .catch(function () {
         savedLocal = true;
         var list = loadLocal();
-        list.unshift({ id: String(Date.now()) + Math.random().toString(36).slice(2, 6), ts: Date.now(), format: format, title: title, data: data });
+        list.unshift({ id: String(Date.now()) + Math.random().toString(36).slice(2, 6), ts: Date.now(), format: format, title: title, data: payload });
         persistLocal(list);
         renderSaved(list);
       });
@@ -242,6 +246,15 @@
             .finally(function () { load.disabled = false; });
         });
         actions.appendChild(load);
+      } else {
+        var reuse = document.createElement("button"); reuse.className = "reuse"; reuse.textContent = "재사용";
+        reuse.addEventListener("click", function () {
+          reuse.disabled = true;
+          entryData(entry).then(function (e) { reuseEntry(e.format, e.data); })
+            .catch(function (err) { setStatus("실패: " + err.message, "err"); })
+            .finally(function () { reuse.disabled = false; });
+        });
+        actions.appendChild(reuse);
       }
       var del = document.createElement("button"); del.className = "del"; del.textContent = "삭제";
       del.addEventListener("click", function () { del.disabled = true; deleteEntry(entry).catch(function (err) { setStatus("삭제 실패: " + err.message, "err"); del.disabled = false; }); });
@@ -250,6 +263,29 @@
     });
   }
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function setFormat(fmt) {
+    var lab = document.querySelector('#fmt label[data-fmt="' + fmt + '"]');
+    if (lab) lab.click();
+  }
+  // Re-populate the input form from a saved report so the user can add more
+  // material and generate again. Uses the stored original inputs when present,
+  // otherwise falls back to the fields available on the candidate JSON.
+  function reuseEntry(format, data) {
+    var inp = data.__inputs || {};
+    setFormat(inp.format || format || "interview");
+    $("name").value = inp.name || data.name || "";
+    $("org").value = inp.org || data.orgShort || "";
+    $("rank").value = inp.rank || data.role || "";
+    $("category").value = inp.category || data.category || "";
+    $("linkedinUrl").value = inp.linkedinUrl || "";
+    $("sources").value = inp.sourcesText || "";
+    var photo = data.photo;
+    var b64 = photo && (typeof photo === "string" ? photo : photo.base64 || photo.dataUrl) || "";
+    state.photoDataUrl = b64;
+    if (b64) $("photoPrev").src = b64; else $("photoPrev").removeAttribute("src");
+    setStatus("입력값을 불러왔습니다. 참고자료를 추가한 뒤 '보고서 출력하기'로 다시 생성하세요.", "ok");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
   function loadSummaryIntoTable(data) {
     // Switch to the summary format and restore its candidate list for re-use.
     var lab = document.querySelector('#fmt label[data-fmt="summary"]');
@@ -356,7 +392,7 @@
       .then(function (cand) {
         return downloadDocx(inp.format, cand).then(function () {
           var title = (cand.name || inp.name || "무제") + (cand.orgShort ? " (" + cand.orgShort + ")" : "");
-          saveReport(inp.format, cand, title);
+          saveReport(inp.format, cand, title, inp);
         });
       })
       .catch(function (e) { setStatus("실패: " + e.message, "err"); })
