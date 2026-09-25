@@ -101,6 +101,7 @@
       <img id="photoPrev" class="photo-prev" alt="" />
       <div>
         <input type="file" id="photo" accept="image/*" />
+        <button type="button" class="ghost hide" id="photoClear" style="margin-left:8px; padding:6px 12px; font-size:12px;">사진 삭제</button>
         <div class="muted">양식에 맞는 위치(A·C 성명칸, B 우상단)에 자동 삽입됩니다.</div>
       </div>
     </div>
@@ -124,7 +125,7 @@
   <!-- saved reports -->
   <div class="card">
     <h2>저장된 보고서 <span class="badge" id="savedCount">0</span></h2>
-    <p class="muted">생성한 보고서는 이 브라우저에 자동 저장되어, 언제든 다시 다운로드하거나 불러올 수 있습니다.</p>
+    <p class="muted" id="savedHelp">생성한 보고서는 서버에 저장되어, 다른 기기·브라우저에서도 다시 다운로드하거나 불러올 수 있습니다.</p>
     <div class="table-list" id="savedList"></div>
     <p class="muted hide" id="savedEmpty">아직 저장된 보고서가 없습니다.</p>
   </div>
@@ -215,10 +216,11 @@
   function renderSaved(list) {
     list = list || [];
     $("savedCount").textContent = String(list.length);
+    $("savedHelp").textContent = savedLocal
+      ? "서버 저장을 사용할 수 없어, 지금은 이 브라우저에만 저장됩니다."
+      : "생성한 보고서는 서버에 저장되어, 다른 기기·브라우저에서도 다시 다운로드하거나 불러올 수 있습니다.";
     $("savedEmpty").classList.toggle("hide", list.length > 0);
-    $("savedEmpty").textContent = savedLocal
-      ? "서버 저장을 사용할 수 없어 이 브라우저에만 저장됩니다."
-      : "아직 저장된 보고서가 없습니다.";
+    $("savedEmpty").textContent = "아직 저장된 보고서가 없습니다.";
     var box = $("savedList"); box.innerHTML = "";
     list.forEach(function (entry) {
       var item = document.createElement("div"); item.className = "item";
@@ -281,8 +283,8 @@
     $("sources").value = inp.sourcesText || "";
     var photo = data.photo;
     var b64 = photo && (typeof photo === "string" ? photo : photo.base64 || photo.dataUrl) || "";
-    state.photoDataUrl = b64;
-    if (b64) $("photoPrev").src = b64; else $("photoPrev").removeAttribute("src");
+    $("photo").value = "";
+    setPhoto(b64);
     setStatus("입력값을 불러왔습니다. 참고자료를 추가한 뒤 '보고서 출력하기'로 다시 생성하세요.", "ok");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -315,12 +317,22 @@
   });
 
   // photo -> base64
+  function setPhoto(dataUrl) {
+    state.photoDataUrl = dataUrl || "";
+    if (state.photoDataUrl) $("photoPrev").src = state.photoDataUrl;
+    else $("photoPrev").removeAttribute("src");
+    $("photoClear").classList.toggle("hide", !state.photoDataUrl);
+  }
   $("photo").addEventListener("change", function () {
     var f = this.files && this.files[0];
-    if (!f) { state.photoDataUrl = ""; $("photoPrev").removeAttribute("src"); return; }
+    if (!f) { setPhoto(""); return; }
     var reader = new FileReader();
-    reader.onload = function () { state.photoDataUrl = reader.result; $("photoPrev").src = reader.result; };
+    reader.onload = function () { setPhoto(reader.result); };
     reader.readAsDataURL(f);
+  });
+  $("photoClear").addEventListener("click", function () {
+    $("photo").value = "";
+    setPhoto("");
   });
 
   function inputs() {
