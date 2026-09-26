@@ -134,10 +134,13 @@ const FORMAT_GUIDES = {
     "competencyNotes(※)에 산학협력/입사예정 등 핵심 특이사항을 1개 이내로 작성한다(예: \"'휴머노이드 전신제어 AI 개발' 주제로 삼성과 산학협력 진행 中\"). talkingPoints, summaryBullets, category, reviewNote는 빈 값으로 둔다."
   ],
   summary: [
-    "형식 C(요약표 1인 행): category(분류 태그, 예: 'M&A','로봇(전략)')를 채운다.",
-    "competencyTitle(전문역량 한 줄), summaryBullets(핵심 역량 2개)를 작성한다.",
+    "형식 C(요약표 1인 행): 표 너비가 좁으므로(성명 3cm·주요경력 및 학력 7cm·전문역량 7cm) 모든 문구를 그 폭에 맞게 과감히 축약한다.",
+    "category(분류 태그, 예: 'M&A','로봇(전략)')를 채운다.",
+    "competencyTitle(전문역량 '한 줄 요약')은 한글 15~18자(영문 23~26자) 이내로 쓴다.",
+    "summaryBullets(핵심 역량 2개): 각 항목은 최대 '두 줄'이며 '한 줄당' 한글 15~18자(영문 23~26자, 기호 · 제외) 이내가 되도록, 한 항목 총 한글 30~36자 이내로 축약한다. 기호(·) 없이 순수 텍스트만.",
+    "career/education은 표에 들어갈 핵심 명칭·연도만(담당 업무·성과 설명 금지). education은 최근 학력이 위로 오도록 최신순으로 정렬한다.",
     "reviewNote는 '~ 후보자로 검토' 형태로 작성한다(예: 'M&A 후보자로 검토').",
-    "career/education은 표에 들어갈 핵심만 간결히. competencies, talkingPoints, competencyNotes는 빈 값으로 둔다."
+    "competencies, talkingPoints, competencyNotes는 빈 값으로 둔다."
   ]
 };
 
