@@ -58,6 +58,9 @@
   #savedList .item button.reuse { background: #fff4e5; color: #b26a00; }
   .photo-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .photo-btns button { padding: 7px 14px; font-size: 12.5px; }
+  .paste-box { margin-top: 8px; border: 1.5px dashed var(--line); border-radius: 8px; padding: 10px 12px; min-height: 40px; font-size: 12.5px; color: var(--ink); background: #fafbfc; -webkit-user-modify: read-write; }
+  .paste-box:empty:before { content: attr(data-ph); color: #9aa1ab; }
+  .paste-box:focus { outline: none; border-color: var(--accent); background: var(--accent-weak); }
   #savedList .item button.del { background: #fde2e4; color: var(--danger); }
 </style>
 </head>
@@ -108,7 +111,8 @@
           <button type="button" class="ghost hide" id="photoClear">사진 삭제</button>
         </div>
         <div class="muted" id="photoName" style="margin-top:6px;">선택된 파일 없음</div>
-        <div class="muted" style="margin-top:4px;">웹 이미지를 복사(우클릭 → 이미지 복사)한 뒤 <b>Ctrl+V</b>로 붙여넣어도 됩니다. 양식에 맞는 위치(A·C 성명칸, B 우상단)에 자동 삽입됩니다.</div>
+        <div id="photoPaste" contenteditable="true" class="paste-box" data-ph="여기를 눌러 이미지 붙여넣기 (모바일: 길게 눌러 붙여넣기 / PC: Ctrl+V)"></div>
+        <div class="muted" style="margin-top:4px;">웹 이미지를 복사(모바일은 길게 눌러 '이미지 복사', PC는 우클릭 → '이미지 복사')한 뒤 위 칸에 붙여넣으세요. 양식에 맞는 위치(A·C 성명칸, B 우상단)에 자동 삽입됩니다.</div>
       </div>
     </div>
   </div>
@@ -346,8 +350,8 @@
     $("photo").value = "";
     setPhoto("");
   });
-  // Paste a copied web image (right-click → copy image, then Ctrl+V anywhere).
-  document.addEventListener("paste", function (e) {
+  // Extract an image from a paste/clipboard event; returns true if handled.
+  function handlePastedImage(e) {
     var items = (e.clipboardData && e.clipboardData.items) || [];
     for (var i = 0; i < items.length; i++) {
       if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
@@ -357,10 +361,26 @@
           $("photo").value = "";
           readPhotoFile(f, "붙여넣은 이미지");
           setStatus("붙여넣은 이미지를 사진으로 사용합니다.", "ok");
-          return;
+          return true;
         }
       }
     }
+    return false;
+  }
+  // Visible paste box (works on mobile: tap → long-press → 붙여넣기).
+  var pasteBox = $("photoPaste");
+  pasteBox.addEventListener("paste", function (e) {
+    var handled = handlePastedImage(e);
+    // Never keep pasted text/markup inside the box.
+    e.preventDefault();
+    setTimeout(function () { pasteBox.innerHTML = ""; }, 0);
+    if (!handled) setStatus("클립보드에 이미지가 없습니다. 이미지를 먼저 복사하세요.", "err");
+  });
+  pasteBox.addEventListener("input", function () { pasteBox.innerHTML = ""; });
+  // Also allow Ctrl+V anywhere on the page (desktop convenience).
+  document.addEventListener("paste", function (e) {
+    if (e.target === pasteBox) return; // handled above
+    handlePastedImage(e);
   });
 
   function inputs() {
