@@ -56,6 +56,8 @@
   #savedList .item button.dl { background: var(--accent-weak); color: var(--accent); }
   #savedList .item button.load { background: #e7f5ec; color: var(--ok); }
   #savedList .item button.reuse { background: #fff4e5; color: #b26a00; }
+  .photo-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .photo-btns button { padding: 7px 14px; font-size: 12.5px; }
   #savedList .item button.del { background: #fde2e4; color: var(--danger); }
 </style>
 </head>
@@ -99,10 +101,14 @@
     <label>인물 사진 (선택 · 얼굴 클로즈업 권장 · JPG/PNG)</label>
     <div class="photo-wrap">
       <img id="photoPrev" class="photo-prev" alt="" />
-      <div>
-        <input type="file" id="photo" accept="image/*" style="display:block; max-width:100%;" />
-        <button type="button" class="ghost hide" id="photoClear" style="display:block; margin-top:8px; padding:6px 12px; font-size:12px;">사진 삭제</button>
-        <div class="muted" style="margin-top:6px;">양식에 맞는 위치(A·C 성명칸, B 우상단)에 자동 삽입됩니다.</div>
+      <div style="flex:1; min-width:0;">
+        <input type="file" id="photo" accept="image/*" class="hide" />
+        <div class="photo-btns">
+          <button type="button" class="ghost" id="photoPick">파일 선택</button>
+          <button type="button" class="ghost hide" id="photoClear">사진 삭제</button>
+        </div>
+        <div class="muted" id="photoName" style="margin-top:6px;">선택된 파일 없음</div>
+        <div class="muted" style="margin-top:4px;">웹 이미지를 복사(우클릭 → 이미지 복사)한 뒤 <b>Ctrl+V</b>로 붙여넣어도 됩니다. 양식에 맞는 위치(A·C 성명칸, B 우상단)에 자동 삽입됩니다.</div>
       </div>
     </div>
   </div>
@@ -284,7 +290,7 @@
     var photo = data.photo;
     var b64 = photo && (typeof photo === "string" ? photo : photo.base64 || photo.dataUrl) || "";
     $("photo").value = "";
-    setPhoto(b64);
+    setPhoto(b64, b64 ? "저장된 사진" : "");
     setStatus("입력값을 불러왔습니다. 참고자료를 추가한 뒤 '보고서 출력하기'로 다시 생성하세요.", "ok");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -317,22 +323,44 @@
   });
 
   // photo -> base64
-  function setPhoto(dataUrl) {
+  function setPhoto(dataUrl, name) {
     state.photoDataUrl = dataUrl || "";
     if (state.photoDataUrl) $("photoPrev").src = state.photoDataUrl;
     else $("photoPrev").removeAttribute("src");
     $("photoClear").classList.toggle("hide", !state.photoDataUrl);
+    $("photoName").textContent = state.photoDataUrl ? (name || "이미지 선택됨") : "선택된 파일 없음";
   }
+  function readPhotoFile(f, name) {
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () { setPhoto(reader.result, name || f.name); };
+    reader.readAsDataURL(f);
+  }
+  $("photoPick").addEventListener("click", function () { $("photo").click(); });
   $("photo").addEventListener("change", function () {
     var f = this.files && this.files[0];
     if (!f) { setPhoto(""); return; }
-    var reader = new FileReader();
-    reader.onload = function () { setPhoto(reader.result); };
-    reader.readAsDataURL(f);
+    readPhotoFile(f);
   });
   $("photoClear").addEventListener("click", function () {
     $("photo").value = "";
     setPhoto("");
+  });
+  // Paste a copied web image (right-click → copy image, then Ctrl+V anywhere).
+  document.addEventListener("paste", function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
+        var f = items[i].getAsFile();
+        if (f) {
+          e.preventDefault();
+          $("photo").value = "";
+          readPhotoFile(f, "붙여넣은 이미지");
+          setStatus("붙여넣은 이미지를 사진으로 사용합니다.", "ok");
+          return;
+        }
+      }
+    }
   });
 
   function inputs() {
