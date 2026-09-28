@@ -5,7 +5,45 @@
 // lib/profile-report-docx.js. Returns editable JSON for the UI to review
 // before the .docx is generated (see api/profile-report-docx.js).
 
+const fs = require("fs");
+const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
+const { fetchLinkedinProfiles } = require("./linkedin-profile.js");
+
 const MAX_SOURCES_CHARS = 24000;
+const JOBS_TABLE = "profile_report_jobs";
+
+// Runs a promise beyond the HTTP response so the browser gets a fast reply while
+// the (minutes-long) research keeps going server-side. On a corporate network a
+// security proxy cuts long requests, so the client must not hold one open — it
+// starts a job, gets an id immediately, then polls. `waitUntil` (Vercel) keeps
+// the function alive until the work finishes; without it we best-effort detach.
+let vercelWaitUntil = null;
+try { vercelWaitUntil = require("@vercel/functions").waitUntil; } catch (e) { vercelWaitUntil = null; }
+function runInBackground(promise) {
+  const p = Promise.resolve(promise).catch((err) => console.warn("Background job failed.", err));
+  if (typeof vercelWaitUntil === "function") {
+    try { vercelWaitUntil(p); } catch (e) { /* fall through to detached */ }
+  }
+  return p;
+}
+
+function loadLocalEnv() {
+  const envPath = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) return;
+  fs.readFileSync(envPath, "utf8").split(/\r?\n/).forEach((line) => {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  });
+}
+
+function getSupabaseClient() {
+  loadLocalEnv();
+  const url = String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+  const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+}
 
 // Per-fact source, rendered as a real Word comment (검토 메모). name is the
 // source label (예: 'MIT 공식 프로필'); url the link the model actually saw (빈
@@ -383,7 +421,93 @@ async function expandShortSentences(candidate, input) {
   }
 }
 
+// The full research pipeline for one candidate: optionally scrape LinkedIn
+// (best-effort — a failure degrades to web-only research), structure the JSON,
+// then expand any too-short sentences. Used by both the sync and async paths.
+async function researchCandidate(format, body) {
+  let linkedinProfile = body.linkedinProfile || null;
+  if (!linkedinProfile && body.linkedinUrl) {
+    try {
+      const profiles = await fetchLinkedinProfiles(body.linkedinUrl);
+      linkedinProfile = profiles && profiles[0] ? profiles[0] : null;
+    } catch (e) {
+      linkedinProfile = null; // best-effort: continue with web research only
+    }
+  }
+  const input = {
+    name: body.name,
+    org: body.org || body.orgHint,
+    rank: body.rank,
+    category: body.category,
+    linkedinProfile,
+    sourcesText: body.sourcesText
+  };
+  const candidate = await callOpenAI(format, input);
+  await expandShortSentences(candidate, { linkedinProfile, sourcesText: body.sourcesText });
+  return candidate;
+}
+
+async function runResearchJob(supabase, jobId, format, body) {
+  try {
+    const candidate = await researchCandidate(format, body);
+    await supabase.from(JOBS_TABLE).update({ status: "done", candidate, updated_at: new Date().toISOString() }).eq("id", jobId);
+  } catch (error) {
+    console.warn("Profile research job failed.", error);
+    await supabase.from(JOBS_TABLE).update({ status: "error", error: String((error && error.message) || "research failed").slice(0, 500), updated_at: new Date().toISOString() }).eq("id", jobId);
+  }
+}
+
+async function handleStart(request, response, body, format) {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    sendJson(response, 503, { ok: false, error: "Supabase is not configured; async report generation is unavailable." });
+    return;
+  }
+  const jobId = String(body.jobId || "").trim() || (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+  // Create (or reuse) the job row first. A retried start (proxy hiccup) hits the
+  // primary-key conflict and simply returns ok — the first invocation already
+  // scheduled the work.
+  const { error } = await supabase.from(JOBS_TABLE).insert({ id: jobId, status: "pending", format });
+  if (error) {
+    if (/duplicate|already exists|23505/i.test(String(error.message || error.code || ""))) {
+      sendJson(response, 200, { ok: true, jobId, status: "pending", reused: true });
+      return;
+    }
+    sendJson(response, 503, { ok: false, error: "Could not start the report job.", details: error.message });
+    return;
+  }
+  runInBackground(runResearchJob(supabase, jobId, format, body));
+  sendJson(response, 200, { ok: true, jobId, status: "pending" });
+}
+
+async function handleStatus(request, response, jobId) {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    sendJson(response, 503, { ok: false, error: "Supabase is not configured; async report generation is unavailable." });
+    return;
+  }
+  const { data, error } = await supabase.from(JOBS_TABLE).select("id, status, format, candidate, error").eq("id", jobId).single();
+  if (error || !data) {
+    sendJson(response, 404, { ok: false, error: "Job not found.", details: error && error.message });
+    return;
+  }
+  sendJson(response, 200, { ok: true, jobId: data.id, status: data.status, format: data.format, candidate: data.candidate || null, error: data.error || null });
+}
+
 module.exports = async function profileReport(request, response) {
+  // Async status poll: GET /api/profile-report?jobId=...
+  if (request.method === "GET" || request.method === "HEAD") {
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    const jobId = String(url.searchParams.get("jobId") || "").trim();
+    if (!jobId) {
+      sendJson(response, 400, { ok: false, error: "jobId is required" });
+      return;
+    }
+    try { await handleStatus(request, response, jobId); }
+    catch (error) { sendJson(response, 500, { ok: false, error: (error && error.message) || "status check failed" }); }
+    return;
+  }
+
   if (request.method !== "POST") {
     sendJson(response, 405, { ok: false, error: "Method not allowed" });
     return;
@@ -393,23 +517,21 @@ module.exports = async function profileReport(request, response) {
     const body = JSON.parse((await readRequestBody(request)) || "{}");
     const format = ["interview", "basic", "summary"].includes(body.format) ? body.format : "interview";
 
-    if (!body.name && !body.linkedinProfile && !body.sourcesText) {
-      sendJson(response, 400, { ok: false, error: "name, linkedinProfile, or sourcesText is required" });
+    if (!body.name && !body.linkedinProfile && !body.linkedinUrl && !body.sourcesText) {
+      sendJson(response, 400, { ok: false, error: "name, linkedinUrl, or sourcesText is required" });
       return;
     }
 
-    const candidate = await callOpenAI(format, {
-      name: body.name,
-      org: body.org || body.orgHint,
-      rank: body.rank,
-      category: body.category,
-      linkedinProfile: body.linkedinProfile,
-      sourcesText: body.sourcesText
-    });
+    // Async path (default for the browser client): return a job id immediately
+    // and do the long research in the background so no single request stays open
+    // long enough for a corporate proxy to cut it.
+    if (body.mode === "start") {
+      await handleStart(request, response, body, format);
+      return;
+    }
 
-    // Enforce the minimum one-line density by expanding any short sentences.
-    await expandShortSentences(candidate, { linkedinProfile: body.linkedinProfile, sourcesText: body.sourcesText });
-
+    // Sync path (kept for compatibility / server-to-server callers).
+    const candidate = await researchCandidate(format, body);
     sendJson(response, 200, { ok: true, format, candidate });
   } catch (error) {
     console.warn("Profile structuring failed.", error);

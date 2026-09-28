@@ -145,7 +145,23 @@ function normalizeProfile(item) {
   };
 }
 
-module.exports = async function linkedinProfile(request, response) {
+// Reusable scrape used both by the HTTP handler and by the profile-report async
+// job (so the browser never has to hold a 2-3 minute connection open, which a
+// corporate proxy would cut). Returns normalized profiles; throws on bad input
+// or an Apify failure so the caller can decide how to degrade.
+async function fetchLinkedinProfiles(rawUrls) {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) throw new Error("APIFY_TOKEN is not configured on the server.");
+  const list = Array.isArray(rawUrls) ? rawUrls : [rawUrls];
+  const urls = list.map(normalizeLinkedinUrl).filter(Boolean).slice(0, 5);
+  if (!urls.length) throw new Error("A valid LinkedIn profile URL is required.");
+  const actor = process.env.APIFY_LINKEDIN_ACTOR || DEFAULT_ACTOR;
+  const mode = process.env.APIFY_LINKEDIN_MODE || DEFAULT_MODE;
+  const items = await runApifyActor(urls, { token, actor, mode });
+  return items.map(normalizeProfile).filter(Boolean);
+}
+
+async function linkedinProfile(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { ok: false, error: "Method not allowed" });
     return;
@@ -183,4 +199,7 @@ module.exports = async function linkedinProfile(request, response) {
     console.warn("LinkedIn profile fetch failed.", error);
     sendJson(response, 500, { ok: false, error: error.message || "LinkedIn profile fetch failed" });
   }
-};
+}
+
+module.exports = linkedinProfile;
+module.exports.fetchLinkedinProfiles = fetchLinkedinProfiles;

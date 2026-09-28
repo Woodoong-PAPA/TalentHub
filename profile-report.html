@@ -441,38 +441,59 @@
     };
   }
 
-  // research one person -> candidate JSON (LinkedIn optional + web research)
+  function delay(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  function newJobId() {
+    try { if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID(); } catch (e) {}
+    return "job-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  // research one person -> candidate JSON, via an async job (LinkedIn + web
+  // research run server-side). The browser only makes SHORT requests — start,
+  // then poll — so a corporate proxy can't cut a long-held connection. LinkedIn
+  // is best-effort inside the job: if it fails the report falls back to web-only
+  // research automatically.
   function researchCandidate(inp) {
-    var chain = Promise.resolve(null);
-    if (inp.linkedinUrl) {
-      setStatus("LinkedIn 프로필 조사 중… (최대 2~3분)", "work");
-      // LinkedIn is best-effort. If the scrape fails, times out, or a company
-      // proxy cuts the long request, we do NOT abort the report — we drop the
-      // LinkedIn data and continue with web research only.
-      chain = fetchJson("/api/linkedin-profile", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: inp.linkedinUrl })
-      }, { timeoutMs: 180000 }).then(function (d) {
-        return d && d.ok && d.profiles && d.profiles[0] ? d.profiles[0] : null;
-      }).catch(function () {
-        setStatus("LinkedIn 조사를 건너뜁니다 — 웹 조사만으로 진행합니다…", "work");
-        return null;
+    var jobId = newJobId();
+    setStatus("조사 작업을 시작합니다…", "work");
+    return fetchJson("/api/profile-report", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "start", jobId: jobId, format: inp.format, name: inp.name, org: inp.org,
+        rank: inp.rank, category: inp.category, linkedinUrl: inp.linkedinUrl, sourcesText: inp.sourcesText
+      })
+    }, { timeoutMs: 30000, retries: 2, onRetry: function () { setStatus("작업 시작을 다시 시도합니다…", "work"); } })
+      .then(function (d) {
+        if (!d || !d.ok) throw new Error((d && d.error) || "작업 시작 실패");
+        return pollJob(d.jobId || jobId, inp);
       });
+  }
+
+  // Poll the job until it finishes. Each request is short and independently
+  // retried, so intermittent proxy hiccups don't fail the whole run.
+  function pollJob(jobId, inp) {
+    var startedAt = Date.now();
+    var MAX_MS = 6 * 60 * 1000; // give the server up to ~6 minutes
+    setStatus(inp.linkedinUrl ? "웹 조사 및 초안 작성 중… (LinkedIn 포함, 최대 수 분)" : "웹 조사 및 초안 작성 중… (최대 수 분)", "work");
+    function tick() {
+      return fetchJson("/api/profile-report?jobId=" + encodeURIComponent(jobId), { method: "GET" }, { timeoutMs: 30000, retries: 3 })
+        .then(function (d) {
+          if (!d || !d.ok) {
+            // A transient 404 right after start (row not visible yet) — keep waiting.
+            if (Date.now() - startedAt < 15000) return delay(3000).then(tick);
+            throw new Error((d && d.error) || "상태 조회 실패");
+          }
+          if (d.status === "done") {
+            var cand = d.candidate;
+            if (!cand) throw new Error("조사 결과가 비어 있습니다. 다시 시도해 주세요.");
+            if (state.photoDataUrl) cand.photo = { base64: state.photoDataUrl };
+            return cand;
+          }
+          if (d.status === "error") throw new Error(d.error || "조사에 실패했습니다.");
+          if (Date.now() - startedAt > MAX_MS) throw new Error("조사 시간이 초과됐습니다. 잠시 후 다시 시도하거나 참고 자료를 추가해 주세요.");
+          return delay(4000).then(tick);
+        });
     }
-    return chain.then(function (linkedinProfile) {
-      setStatus(linkedinProfile ? "웹 조사 및 초안 작성 중…" : "웹 조사 및 초안 작성 중… (LinkedIn 제외)", "work");
-      return fetchJson("/api/profile-report", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          format: inp.format, name: inp.name, org: inp.org, rank: inp.rank,
-          category: inp.category, linkedinProfile: linkedinProfile, sourcesText: inp.sourcesText
-        })
-      }, { timeoutMs: 280000, retries: 1, onRetry: function () { setStatus("응답이 지연돼 한 번 더 시도합니다…", "work"); } }).then(function (d) {
-        if (!d || !d.ok) throw new Error((d && d.error) || "초안 생성 실패");
-        var cand = d.candidate;
-        if (state.photoDataUrl) cand.photo = { base64: state.photoDataUrl };
-        return cand;
-      });
-    });
+    return tick();
   }
 
   // download docx for given {format, data}
