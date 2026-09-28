@@ -3,7 +3,10 @@
   "builds": [
     {
       "src": "api/router.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "maxDuration": 300
+      }
     },
     {
       "src": "package.json",

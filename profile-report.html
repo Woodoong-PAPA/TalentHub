@@ -149,29 +149,45 @@
   function $(id) { return document.getElementById(id); }
   function setStatus(msg, kind) { var el = $("status"); el.textContent = msg || ""; el.className = "status" + (kind ? " " + kind : ""); }
 
+  // Parse a fetch response as JSON, but fail with a readable message when the
+  // server answers with an HTML page instead (a gateway timeout or crash page).
+  // Otherwise JSON.parse throws "Unexpected token '<' … is not valid JSON",
+  // which tells the user nothing about what actually went wrong.
+  function asJson(r) {
+    return r.text().then(function (t) {
+      try { return JSON.parse(t); }
+      catch (e) {
+        if (r.status === 504 || r.status === 502 || r.status === 408 || r.status === 524) {
+          throw new Error("요청 처리 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요. (조사 대상이 많으면 시간이 더 걸릴 수 있습니다.)");
+        }
+        throw new Error("서버가 예기치 않은 응답을 반환했습니다 (HTTP " + r.status + "). 잠시 후 다시 시도해 주세요.");
+      }
+    });
+  }
+
   // ---- Saved reports (Supabase-backed, localStorage fallback) ------------
   var SAVE_KEY = "talenthub.profileReports.v1";
   var FMT_LABEL = { interview: "면접용", basic: "기본", summary: "요약표" };
   var savedLocal = false; // true when the server is unavailable and we fell back
 
   function apiList() {
-    return fetch("/api/profile-reports").then(function (r) { return r.json(); }).then(function (d) {
+    return fetch("/api/profile-reports").then(asJson).then(function (d) {
       if (!d || !d.ok) throw new Error((d && d.error) || "목록 조회 실패");
       return (d.reports || []).map(function (x) { x.remote = true; return x; });
     });
   }
   function apiGet(id) {
-    return fetch("/api/profile-reports?id=" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (d) {
+    return fetch("/api/profile-reports?id=" + encodeURIComponent(id)).then(asJson).then(function (d) {
       if (!d || !d.ok) throw new Error((d && d.error) || "불러오기 실패");
       return d.report;
     });
   }
   function apiCreate(format, title, data) {
     return fetch("/api/profile-reports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, title: title, data: data }) })
-      .then(function (r) { return r.json(); }).then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || "저장 실패"); return d.report; });
+      .then(asJson).then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || "저장 실패"); return d.report; });
   }
   function apiDelete(id) {
-    return fetch("/api/profile-reports?id=" + encodeURIComponent(id), { method: "DELETE" }).then(function (r) { return r.json(); })
+    return fetch("/api/profile-reports?id=" + encodeURIComponent(id), { method: "DELETE" }).then(asJson)
       .then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || "삭제 실패"); return true; });
   }
 
@@ -402,7 +418,7 @@
       setStatus("LinkedIn 프로필 조사 중… (최대 2~3분)", "work");
       chain = fetch("/api/linkedin-profile", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: inp.linkedinUrl })
-      }).then(function (r) { return r.json(); }).then(function (d) {
+      }).then(asJson).then(function (d) {
         return d.ok && d.profiles && d.profiles[0] ? d.profiles[0] : null;
       }).catch(function () { return null; });
     }
@@ -414,7 +430,7 @@
           format: inp.format, name: inp.name, org: inp.org, rank: inp.rank,
           category: inp.category, linkedinProfile: linkedinProfile, sourcesText: inp.sourcesText
         })
-      }).then(function (r) { return r.json(); }).then(function (d) {
+      }).then(asJson).then(function (d) {
         if (!d.ok) throw new Error(d.error || "초안 생성 실패");
         var cand = d.candidate;
         if (state.photoDataUrl) cand.photo = { base64: state.photoDataUrl };
@@ -429,7 +445,7 @@
     return fetch("/api/profile-report-docx", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: format, data: data, variant: "textbox" })
     }).then(function (r) {
-      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); });
+      if (!r.ok) return asJson(r).then(function (j) { throw new Error((j && j.error) || ("HTTP " + r.status)); });
       var disp = r.headers.get("Content-Disposition") || "";
       var m = /filename\*=UTF-8''([^;]+)/.exec(disp);
       var fileName = m ? decodeURIComponent(m[1]) : "profile.docx";

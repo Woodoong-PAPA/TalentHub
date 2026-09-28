@@ -60,6 +60,18 @@ module.exports = async function apiRouter(request, response) {
     return;
   }
 
-  const handler = loadHandler();
-  await handler(request, response);
+  try {
+    const handler = loadHandler();
+    await handler(request, response);
+  } catch (error) {
+    // Never let an unhandled throw bubble to the platform, which would answer
+    // with an HTML error page. The browser expects JSON, so a stray "<html>…"
+    // body surfaces as "Unexpected token '<' … is not valid JSON". Return JSON.
+    console.error("API route failed:", routeName, error);
+    if (!response.headersSent) {
+      sendJson(response, 500, { ok: false, error: (error && error.message) || "Internal server error", route: routeName });
+    } else {
+      try { response.end(); } catch (e) {}
+    }
+  }
 };
