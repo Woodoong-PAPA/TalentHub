@@ -165,6 +165,36 @@
     });
   }
 
+  // fetch + JSON with an abort timeout and optional retries. On a company/VPN
+  // network a security proxy may cut a long-running request and hand back its
+  // own HTML page; this surfaces that as a readable error and can retry once
+  // for an intermittent hiccup instead of failing outright.
+  function fetchJson(url, options, cfg) {
+    cfg = cfg || {};
+    var timeoutMs = cfg.timeoutMs || 0;
+    var attempts = (cfg.retries || 0) + 1;
+    function once() {
+      var ctrl = ("AbortController" in window) ? new AbortController() : null;
+      var opts = {};
+      for (var k in (options || {})) opts[k] = options[k];
+      if (ctrl) opts.signal = ctrl.signal;
+      var timer = (timeoutMs && ctrl) ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
+      return fetch(url, opts).then(function (r) {
+        if (timer) clearTimeout(timer);
+        return asJson(r);
+      }, function (e) {
+        if (timer) clearTimeout(timer);
+        if (e && e.name === "AbortError") throw new Error("요청 시간이 초과됐습니다. 회사망/보안 프록시가 오래 걸리는 요청을 끊었을 수 있습니다.");
+        throw new Error("네트워크 요청에 실패했습니다. 회사망/보안 프록시 환경에서는 실패할 수 있습니다.");
+      });
+    }
+    var p = once();
+    for (var i = 1; i < attempts; i++) {
+      p = p.catch(function (e) { if (cfg.onRetry) cfg.onRetry(e); return once(); });
+    }
+    return p;
+  }
+
   // ---- Saved reports (Supabase-backed, localStorage fallback) ------------
   var SAVE_KEY = "talenthub.profileReports.v1";
   var FMT_LABEL = { interview: "면접용", basic: "기본", summary: "요약표" };
@@ -416,22 +446,28 @@
     var chain = Promise.resolve(null);
     if (inp.linkedinUrl) {
       setStatus("LinkedIn 프로필 조사 중… (최대 2~3분)", "work");
-      chain = fetch("/api/linkedin-profile", {
+      // LinkedIn is best-effort. If the scrape fails, times out, or a company
+      // proxy cuts the long request, we do NOT abort the report — we drop the
+      // LinkedIn data and continue with web research only.
+      chain = fetchJson("/api/linkedin-profile", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: inp.linkedinUrl })
-      }).then(asJson).then(function (d) {
-        return d.ok && d.profiles && d.profiles[0] ? d.profiles[0] : null;
-      }).catch(function () { return null; });
+      }, { timeoutMs: 180000 }).then(function (d) {
+        return d && d.ok && d.profiles && d.profiles[0] ? d.profiles[0] : null;
+      }).catch(function () {
+        setStatus("LinkedIn 조사를 건너뜁니다 — 웹 조사만으로 진행합니다…", "work");
+        return null;
+      });
     }
     return chain.then(function (linkedinProfile) {
-      setStatus("웹 조사 및 초안 작성 중…", "work");
-      return fetch("/api/profile-report", {
+      setStatus(linkedinProfile ? "웹 조사 및 초안 작성 중…" : "웹 조사 및 초안 작성 중… (LinkedIn 제외)", "work");
+      return fetchJson("/api/profile-report", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           format: inp.format, name: inp.name, org: inp.org, rank: inp.rank,
           category: inp.category, linkedinProfile: linkedinProfile, sourcesText: inp.sourcesText
         })
-      }).then(asJson).then(function (d) {
-        if (!d.ok) throw new Error(d.error || "초안 생성 실패");
+      }, { timeoutMs: 280000, retries: 1, onRetry: function () { setStatus("응답이 지연돼 한 번 더 시도합니다…", "work"); } }).then(function (d) {
+        if (!d || !d.ok) throw new Error((d && d.error) || "초안 생성 실패");
         var cand = d.candidate;
         if (state.photoDataUrl) cand.photo = { base64: state.photoDataUrl };
         return cand;
