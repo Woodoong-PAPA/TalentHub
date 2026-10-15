@@ -55,3 +55,8 @@
   .im-card { padding:16px; }.im-tabs .im-button { flex:1 1 auto; }
   .im-slot { flex-wrap:wrap; }
 }
+.im-page.im-embedded .app-shell { display:block; min-height:0; }
+.im-page.im-embedded .sidebar,.im-page.im-embedded .section-heading { display:none; }
+.im-page.im-embedded .workspace { margin:0; min-width:0; }
+.im-page.im-embedded .main-content { padding:0 2px 24px; }
+.im-page.im-embedded { background:transparent; min-width:0; }

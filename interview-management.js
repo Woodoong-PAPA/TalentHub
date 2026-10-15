@@ -1,5 +1,9 @@
 "use strict";
 (() => {
+  const unified = window.__APP_CONFIG__?.unifiedAuthEnabled === true;
+  const embedded = new URLSearchParams(location.search).get("embedded") === "1" && window.parent !== window;
+  if (unified && !embedded) { location.replace("/?view=interview-management"); return; }
+  if (embedded) document.body.classList.add("im-embedded");
   const root = document.querySelector("#im-content");
   const types = { PHONE:"전화면접", TECHNICAL:"1차 전문성 면접", EXECUTIVE:"2차 임원·부서장 면접", HR:"3차 HR 면접" };
   const roles = { RECRUITER:"채용담당자", HRBP:"HRBP", INTERVIEWER:"면접관", CANDIDATE:"지원자" };
@@ -18,7 +22,7 @@
   }
   async function api(action="bootstrap", body) {
     const { data:sessionData } = await client.auth.getSession();
-    if (!sessionData.session) throw new Error("신규 영역 로그인이 필요합니다.");
+    if (!sessionData.session) throw new Error("Talent Pool 로그인이 필요합니다.");
     const response=await fetch(`/api/interview-management/${action}`, { method:body?"POST":"GET", headers:{ Authorization:`Bearer ${sessionData.session.access_token}`, ...(body?{"Content-Type":"application/json"}:{}) }, ...(body?{body:JSON.stringify(body)}:{}) });
     const result=await response.json();
     if(!response.ok || !result.ok) throw new Error(result.error || "처리에 실패했습니다.");
@@ -41,6 +45,7 @@
     document.querySelector("#im-app").hidden=true;
     document.querySelector("#im-logout").hidden=true;
     document.querySelector("#im-identity").textContent="별도 계정 로그인";
+    if (unified) { document.querySelector("#im-login").hidden=true; message("Talent Pool에서 로그인한 뒤 이용해주세요.",true); }
   }
   function startFields(row={}) {
     const mode=row.coordination_start_mode==="SCHEDULED"&&Date.parse(row.window_start)>Date.now()?"SCHEDULED":"IMMEDIATE";
@@ -123,7 +128,7 @@
   function render() {
     const tabs=[["dashboard","대시보드"],["list",data.actor.role==="CANDIDATE"?"내 면접":"면접 목록"],["calendar","일정 캘린더"],...(recruiter()?[["create","면접 생성"],["emails","이메일 승인함"],["users","사용자 관리"],["departments","부서·기본 시간"]]:[]),["password","비밀번호 변경"]];
     if(![...tabs.map(t=>t[0]),"detail",...(recruiter()?["user-edit","reset-password"]:[])].includes(tab)) tab="dashboard";
-    document.querySelector("#im-tabs").innerHTML=tabs.map(([key,label])=>`<button type="button" class="im-button ${tab===key?"is-active":""}" data-tab="${key}" ${tab===key?'aria-current="page"':""}>${label}</button>`).join("");
+    document.querySelector("#im-tabs").innerHTML=tabs.filter(([key])=>!unified||!["users","password"].includes(key)).map(([key,label])=>`<button type="button" class="im-button ${tab===key?"is-active":""}" data-tab="${key}" ${tab===key?'aria-current="page"':""}>${label}</button>`).join("");
     const views={ dashboard, list, detail, calendar, emails, create:interviewForm, users, departments, "user-edit":userEdit,"reset-password":resetPasswordForm, password:()=>`<section class="im-card im-login"><h3>내 비밀번호 변경</h3><form id="im-password-form" class="im-form"><label>새 비밀번호<input name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label><label>새 비밀번호 확인<input name="confirm" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label><button class="im-button im-primary">비밀번호 변경</button></form></section>` };
     root.innerHTML=views[tab]();
   }
@@ -223,7 +228,8 @@
       document.querySelector("#im-login-form").hidden=true;
       message("Supabase Auth 설정과 신규 DB 마이그레이션이 필요합니다. 기존 TalentHub 계정과 별도 영역입니다.");return;
     }
-    client=window.supabase.createClient(config.supabaseUrl,config.supabaseAnonKey,{auth:{storageKey:"talenthub-interview-mgmt-v2-auth",persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
+    client=unified && embedded ? window.parent.TalentAuth?.client : window.supabase.createClient(config.supabaseUrl,config.supabaseAnonKey,{auth:{storageKey:"talenthub-interview-mgmt-v2-auth",persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
+    if (!client) { showLogin(); return; }
     const {data:sessionData}=await client.auth.getSession();
     if(sessionData.session) await run(async()=>{try { await refresh();message(""); } catch(error) { showLogin();throw error; }});
     client.auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT") {showLogin();message("로그인이 종료되었습니다.");}});

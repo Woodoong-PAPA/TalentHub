@@ -65,6 +65,10 @@ function createHandler({ clientFactory = createClient, env = process.env, mailPr
       if (auth.error || !auth.data?.user) core.fail("로그인이 만료되었습니다.", 401);
       const actor = unwrap(await db.from(`${PREFIX}users`).select("id,name,email,role,active").eq("id", auth.data.user.id).maybeSingle());
       if (!actor?.active) core.fail("활성화된 신규 기능 계정이 필요합니다.", 403);
+      if (env.TALENT_AUTH_UNIFIED_ENABLED === "true") {
+        if (!unwrap(await db.rpc("interview_mgmt_role"))) core.fail("Talent Pool 회원 권한을 확인해주세요.",403);
+        if (["users","users/update","users/reset-password"].includes(action)) core.fail("Talent Pool 관리자 메뉴에서 회원을 관리해주세요.",410);
+      }
       if(action.startsWith("mail/")){
         core.requireRecruiter(actor);
         if(action==="mail/inbox")payload={drafts:unwrap(await db.rpc("interview_mgmt_mail_inbox")),sendEnabled:env.INTERVIEW_MGMT_MAIL_SEND_ENABLED==="true"};

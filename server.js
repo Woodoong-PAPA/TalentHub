@@ -29,6 +29,9 @@ function resolveRequestPath(url) {
 }
 
 const server = http.createServer((request, response) => {
+  if (/^\/api\/talent-auth(?:\/|$)/.test(request.url.split("?")[0])) {
+    require("./api/talent-auth/index.js")(request, response); return;
+  }
   if (/^\/api\/interview-management(?:\/|$)/.test(request.url.split("?")[0])) {require("./api/interview-management/index.js")(request,response);return;}
   if (request.url.split("?")[0] === "/runtime-config.js") {
     const runtimeConfig = require("./api/client-config.js");

@@ -15,7 +15,7 @@ async function main(){
       await page.locator("#login-email").fill("admin@samsung.com");await page.locator("#login-password").fill("Admin1234!");await page.locator("#login-form button[type=submit]").click();
       await page.locator("body.is-authenticated").waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-      assert.equal(await page.locator('a[href="/interview-management"]').count(),1);
+      assert.equal(await page.locator('.nav-list [data-view="interview-management"]').count(),1);
       for(const view of ["pool","screening","interview","ai-search","members","dashboard"]){
         await page.locator(`.nav-list [data-view="${view}"]`).click();await page.locator(`#${view}-view.is-active`).waitFor();
       }

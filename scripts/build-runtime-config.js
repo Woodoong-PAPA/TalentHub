@@ -46,6 +46,7 @@ const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 const config = {
   supabaseUrl,
   supabaseAnonKey,
+  unifiedAuthEnabled: process.env.TALENT_AUTH_UNIFIED_ENABLED === 'true' || fileEnv.TALENT_AUTH_UNIFIED_ENABLED === 'true',
   interviewManagementSupabaseUrl: process.env.INTERVIEW_MGMT_SUPABASE_URL || fileEnv.INTERVIEW_MGMT_SUPABASE_URL || supabaseUrl,
   interviewManagementSupabaseAnonKey: process.env.INTERVIEW_MGMT_SUPABASE_ANON_KEY || fileEnv.INTERVIEW_MGMT_SUPABASE_ANON_KEY || supabaseAnonKey,
   dataSource: requestedDataSource === "supabase" && hasSupabaseConfig ? "supabase" : "local"
@@ -56,7 +57,7 @@ const contents = `window.__APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`
 fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(distDir, { recursive: true });
 
-["index.html", "styles.css", "talent-pool.js", "interpreter.html", "interpreter.css", "interpreter.js", "profile-report.html", "interview-management.html", "interview-management.css", "interview-management.js"].forEach((fileName) => {
+["index.html", "styles.css", "talent-pool.js", "talent-auth.js", "interpreter.html", "interpreter.css", "interpreter.js", "profile-report.html", "interview-management.html", "interview-management.css", "interview-management.js"].forEach((fileName) => {
   fs.copyFileSync(path.join(rootDir, fileName), path.join(distDir, fileName));
 });
 
