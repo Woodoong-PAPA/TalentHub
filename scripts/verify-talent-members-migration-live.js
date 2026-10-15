@@ -4,7 +4,7 @@ const {createClient}=require('@supabase/supabase-js'),{randomUUID,randomBytes,cr
 (async()=>{
  const url=process.env.INTERVIEW_MGMT_SUPABASE_URL||process.env.SUPABASE_URL,key=process.env.INTERVIEW_MGMT_SUPABASE_SERVICE_ROLE_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY;
  assert.equal(new URL(url).hostname,'pefsetlczrrlvlehealp.supabase.co');
- const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}}),id='unified-test-'+randomUUID(),email=id+'@example.test',password=randomBytes(24).toString('hex')+'!Aa1';let authId;
+ const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}}),id='unified-test-'+randomUUID(),email=id+'@example.test',password=randomBytes(24).toString('hex')+'!Aa1';let authId,child;
  const base=process.env.TALENTHUB_TEST_URL||'http://127.0.0.1:5195';
  const request=async(action,body,token)=>{const r=await fetch(base+'/api/talent-auth/'+action,{method:body?'POST':'GET',headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{})});return{status:r.status,data:await r.json()};};
  try{
@@ -14,10 +14,22 @@ const {createClient}=require('@supabase/supabase-js'),{randomUUID,randomBytes,cr
   const token=signed.data.session.access_token,listed=await request('members',null,token);assert.equal(listed.status,200);assert.equal(listed.data.members.length,1);assert(!JSON.stringify(listed.data).includes('password'));
   assert.equal((await request('members/update',{id,member:{role:'admin'}},token)).status,403);
   let r=await fetch(base+'/api/interview-management/bootstrap',{headers:{Authorization:'Bearer '+token}});assert.equal(r.status,200);assert.equal((await r.json()).actor.role,'INTERVIEWER');
+  // Only the test service connection grants this temporary synthetic admin role.
+  await db.from('app_members').update({role:'admin'}).eq('id',id);
+  const childEmail='unified-test-'+randomUUID()+'@example.test',initial=randomBytes(24).toString('hex')+'!Aa1',reset=randomBytes(24).toString('hex')+'!Aa2';
+  const created=await request('members/create',{member:{name:'가상 공통 계정',email:childEmail,role:'hiring_manager',interviewRole:'HRBP'},password:initial},token);
+  assert.equal(created.status,200);child=created.data.member;
+  const childLogin=await request('login',{email:childEmail,password:initial});assert.equal(childLogin.status,200);
+  r=await fetch(base+'/api/interview-management/bootstrap',{headers:{Authorization:'Bearer '+childLogin.data.session.access_token}});assert.equal(r.status,200);assert.equal((await r.json()).actor.role,'HRBP');
+  assert.equal((await request('members/reset-password',{id:child.id,password:reset},token)).status,200);
+  assert.equal((await request('login',{email:childEmail,password:initial})).status,401);
+  assert.equal((await request('login',{email:childEmail,password:reset})).status,200);
+  assert.equal((await request('members/delete',{id:child.id},token)).status,200);
+  assert([401,403].includes((await request('session',null,childLogin.data.session.access_token)).status));
   await db.from('app_members').update({status:'suspended'}).eq('id',id);
   assert.equal((await request('session',null,token)).status,403);
   r=await fetch(base+'/api/interview-management/bootstrap',{headers:{Authorization:'Bearer '+token}});assert.equal(r.status,403);
-  console.log('Actual legacy password migration, canonical role mapping, own-member scope and immediate suspension verified.');
+  console.log('Actual legacy migration, chosen initial/reset passwords, common account creation/deletion, HRBP mapping and immediate suspension verified.');
  }finally{
   if(!authId){const found=await db.from('app_members').select('auth_user_id').eq('id',id).maybeSingle();authId=found.data?.auth_user_id;}
   const deleted=await db.from('app_members').delete().eq('id',id);assert.ifError(deleted.error);
@@ -26,6 +38,11 @@ const {createClient}=require('@supabase/supabase-js'),{randomUUID,randomBytes,cr
     // test projection before Auth because the normal history FK is restrictive.
     const projection=await db.from('interview_mgmt_users').delete().eq('id',authId).eq('email',email);assert.ifError(projection.error);
     const deletedAuth=await db.auth.admin.deleteUser(authId);assert.ifError(deletedAuth.error);
+  }
+  if(child){
+    const deletedChild=await db.from('app_members').delete().eq('id',child.id);assert.ifError(deletedChild.error);
+    const projection=await db.from('interview_mgmt_users').delete().eq('id',child.authUserId).eq('email',child.email);assert.ifError(projection.error);
+    const deletedAuth=await db.auth.admin.deleteUser(child.authUserId);assert.ifError(deletedAuth.error);
   }
  }
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
