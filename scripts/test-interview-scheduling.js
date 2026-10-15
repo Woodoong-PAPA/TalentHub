@@ -102,14 +102,18 @@ run("locked time removes overlapping slots", () => {
 });
 
 run("common slot calculation returns max three options", () => {
+  const futureYear = new Date().getUTCFullYear() + 1;
+  const windowStart = new Date(Date.UTC(futureYear, 6, 1)).toISOString();
+  const windowEnd = new Date(Date.UTC(futureYear, 6, 2)).toISOString();
+  const availabilityEnd = new Date(Date.UTC(futureYear, 6, 1, 5)).toISOString();
   const result = computeCommonSlotOptions({
     durationMinutes: 60,
     slotIntervalMinutes: 30,
-    windowStart: july1,
-    windowEnd: july2,
+    windowStart,
+    windowEnd,
     participants: [
-      { required: true, availability: [{ start: july1, end: "2026-07-01T05:00:00.000Z" }] },
-      { required: true, availability: [{ start: july1, end: "2026-07-01T05:00:00.000Z" }] }
+      { required: true, availability: [{ start: windowStart, end: availabilityEnd }] },
+      { required: true, availability: [{ start: windowStart, end: availabilityEnd }] }
     ]
   });
   assert.equal(result.length, 3);
@@ -149,12 +153,16 @@ run("idempotency key is deterministic", () => {
 });
 
 run("valid AI response schema passes", () => {
+  const futureYear = new Date().getUTCFullYear() + 1;
   const result = validateAiAvailabilityResult({
     caseCode: "INT-2026-0001",
     senderRole: "CANDIDATE",
     intent: "PROVIDE_AVAILABILITY",
     timezone: "Asia/Seoul",
-    availability: [{ start: "2026-07-01T05:00:00.000Z", end: "2026-07-01T08:00:00.000Z" }],
+    availability: [{
+      start: new Date(Date.UTC(futureYear, 6, 1, 5)).toISOString(),
+      end: new Date(Date.UTC(futureYear, 6, 1, 8)).toISOString()
+    }],
     selectedOptionCodes: [],
     confidence: 0.95,
     needsClarification: false,

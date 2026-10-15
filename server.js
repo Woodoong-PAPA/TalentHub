@@ -15,6 +15,7 @@ const CONTENT_TYPES = {
 
 function resolveRequestPath(url) {
   const requestPath = decodeURIComponent(url.split("?")[0]);
+  if (["/interview-management","/interview-management/"].includes(requestPath)) return path.join(ROOT,"interview-management.html");
   if (["/interpreter", "/interpreter/", "/tools/interpreter", "/tools/interpreter/"].includes(requestPath)) {
     return path.join(ROOT, "interpreter.html");
   }
@@ -28,6 +29,7 @@ function resolveRequestPath(url) {
 }
 
 const server = http.createServer((request, response) => {
+  if (/^\/api\/interview-management(?:\/|$)/.test(request.url.split("?")[0])) {require("./api/interview-management/index.js")(request,response);return;}
   if (request.url.split("?")[0] === "/runtime-config.js") {
     const runtimeConfig = require("./api/client-config.js");
     runtimeConfig(request, response);

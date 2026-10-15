@@ -1,0 +1,57 @@
+.im-page .nav-item { text-decoration:none; }
+.im-page .brand-block { color:var(--text,#191f28); text-decoration:none; }
+.im-page .app-shell { display:grid; }
+.im-page [hidden] { display:none !important; }
+.im-page .main-content { max-width:1500px; width:100%; }
+.im-page h2 { font-size:24px; }
+.im-page h3 { margin:0 0 14px; font-size:18px; }
+.im-page p { line-height:1.6; }
+.im-card { background:var(--surface,#fff); border:1px solid var(--line,#e5e8eb); border-radius:8px; padding:20px; margin-bottom:16px; min-width:0; }
+.im-login { max-width:460px; }
+.im-muted { color:var(--muted,#6b7684); font-size:13px; }
+.im-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; }
+.im-button { background:white; border:1px solid var(--line,#e5e8eb); border-radius:12px; min-height:44px; padding:10px 16px; cursor:pointer; font:inherit; }
+.im-button:disabled { opacity:.55; cursor:wait; }
+.im-primary,.im-tabs .is-active { background:#3182f6; color:white; border-color:#3182f6; }
+.im-danger { color:#f04452; }
+.im-form { display:grid; gap:16px; }
+.im-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.im-form label { display:grid; gap:8px; min-width:0; font-size:14px; }
+.im-form input,.im-form select,.im-filter input,.im-filter select { width:100%; min-width:0; border:1px solid #e5e8eb; border-radius:14px; padding:10px 14px; font:inherit; background:white; min-height:44px; }
+.im-form textarea { width:100%; resize:vertical; border:1px solid #e5e8eb; border-radius:14px; padding:10px 14px; font:inherit; }
+.im-slot-list { display:grid; gap:8px; max-height:420px; overflow:auto; }
+.im-slot { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px; border:1px solid #e5e8eb; border-radius:8px; overflow-wrap:anywhere; }
+.im-form .im-slot input { width:18px; min-height:18px; flex-shrink:0; }
+.im-form .im-slot { display:flex; justify-content:flex-start; }
+.im-availability-list article,.im-request { padding:16px 0; border-bottom:1px solid #e5e8eb; }
+.im-calendar-day { margin:20px 0; }
+.im-mail-draft { padding:18px 0; border-top:1px solid #e5e8eb; overflow-wrap:anywhere; min-width:0; }
+.im-mail-body { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; background:#f9fafb; padding:16px; border-radius:8px; }
+.im-page :focus-visible { outline:2px solid #3182f6; outline-offset:2px; }
+.im-form fieldset { border:1px solid #e5e8eb; border-radius:8px; min-width:0; padding:16px; }
+.im-checks { display:flex; flex-wrap:wrap; gap:16px; }
+.im-checks label { display:flex; align-items:center; gap:8px; }
+.im-checks input { width:18px; min-height:18px; }
+.im-actions,.im-filter { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
+.im-filter input { flex:1; min-width:160px; }
+.im-filter select { width:auto; }
+.im-table-wrap { overflow:auto; }
+.im-table { border-collapse:collapse; width:100%; min-width:540px; font-size:14px; }
+.im-table th,.im-table td { padding:12px; border-bottom:1px solid #e5e8eb; text-align:left; vertical-align:middle; overflow-wrap:anywhere; }
+.im-table th { color:#6b7684; font-weight:600; background:#f9fafb; }
+.im-badge { display:inline-block; border-radius:999px; padding:4px 10px; background:#f2f4f6; white-space:nowrap; font-size:12px; }
+.im-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.im-metrics strong { display:block; font-size:28px; margin-top:10px; }
+.im-detail { display:grid; grid-template-columns:150px minmax(0,1fr); gap:12px; }
+.im-detail dt { color:#6b7684; }.im-detail dd { margin:0; overflow-wrap:anywhere; }
+#im-message { overflow-wrap:anywhere; color:#333d4b; }
+#im-message.im-error { color:#f04452; }
+.im-secret { border:1px solid #d1d6db; padding:16px; border-radius:8px; overflow-wrap:anywhere; margin-bottom:16px; }
+.im-secret code { display:block; margin:8px 0; user-select:all; }
+@media(max-width:760px) {
+  .im-grid { grid-template-columns:1fr; }
+  .im-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .im-detail { grid-template-columns:1fr; gap:4px; }.im-detail dd { margin-bottom:10px; }
+  .im-card { padding:16px; }.im-tabs .im-button { flex:1 1 auto; }
+  .im-slot { flex-wrap:wrap; }
+}

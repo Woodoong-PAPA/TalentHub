@@ -30,6 +30,8 @@ function getClientConfig() {
   return {
     supabaseUrl,
     supabaseAnonKey,
+    interviewManagementSupabaseUrl: process.env.INTERVIEW_MGMT_SUPABASE_URL || supabaseUrl,
+    interviewManagementSupabaseAnonKey: process.env.INTERVIEW_MGMT_SUPABASE_ANON_KEY || supabaseAnonKey,
     dataSource: requestedDataSource === "supabase" && hasSupabaseConfig ? "supabase" : "local"
   };
 }

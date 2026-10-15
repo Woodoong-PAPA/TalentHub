@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>면접 일정 관리 | TalentHub</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/interview-management.css">
+    <script src="/runtime-config.js" defer></script>
+    <script src="/vendor/supabase.js" defer></script>
+    <script src="/vendor/supabase-global.js" defer></script>
+    <script src="/interview-management.js" defer></script>
+  </head>
+  <body class="is-menu-ready im-page">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="주요 메뉴">
+        <a class="brand-block" href="/"><div class="brand-mark">S</div><div><p class="brand-kicker">Samsung HR</p><h1>Talent Pool</h1></div></a>
+        <nav class="nav-list">
+          <a class="nav-item" href="/"><span class="nav-icon">D</span><span>TalentHub 홈</span></a>
+          <a class="nav-item" href="/?view=interview"><span class="nav-icon">I</span><span>Interview</span></a>
+          <a class="nav-item is-active" href="/interview-management"><span class="nav-icon">일</span><span>면접 일정 관리</span></a>
+        </nav>
+        <div class="sidebar-footer"><p id="im-identity">별도 계정 로그인</p><button id="im-logout" class="im-button" type="button" hidden>로그아웃</button></div>
+      </aside>
+      <div class="workspace"><main class="main-content">
+        <div class="section-heading"><div><p class="eyebrow">TalentHub</p><h2>면접 일정 관리</h2></div></div>
+        <p id="im-message" role="status" aria-live="polite"></p>
+        <section id="im-login" class="im-card im-login">
+          <h3>면접 일정 관리 로그인</h3><p>채용담당자가 발급한 별도 계정을 사용해주세요.</p>
+          <form id="im-login-form" class="im-form">
+            <label>아이디 (이메일)<input name="email" type="email" autocomplete="username" required></label>
+            <label>비밀번호<input name="password" type="password" autocomplete="current-password" required></label>
+            <button class="im-button im-primary" type="submit">로그인</button>
+          </form>
+          <p class="im-muted">비밀번호를 잊으셨다면 담당 채용담당자에게 초기화를 요청해주세요. 로그인 후 직접 변경할 수 있습니다.</p>
+        </section>
+        <div id="im-app" hidden>
+          <nav id="im-tabs" class="im-tabs" aria-label="면접 관리 화면"></nav>
+          <div id="im-content"></div>
+        </div>
+      </main></div>
+    </div>
+  </body>
+</html>
