@@ -141,3 +141,13 @@ For local browser verification:
 
 - Desktop: open two tabs at `http://127.0.0.1:5177/tools/interpreter`.
 - Mobile on the same network: run the server on `0.0.0.0`, then open `http://<computer-lan-ip>:5177/tools/interpreter`.
+
+## 면접 일정 관리 v2
+
+`/interview-management`는 기존 Interview와 분리된 Supabase Auth 및 권한 영역입니다. 사용자 관리에서 초기 비밀번호를 직접 설정하고, 조율 시작은 즉시 또는 예약으로 지정합니다. 모든 이메일은 담당 채용담당자 승인 후 발송합니다.
+
+- [기능 구조 및 단계별 검증](docs/interview-management-v2-phase0.md)
+- [최초 테스트 계정 준비](docs/interview-management-v2-account-setup.md)
+- [운영 배포 및 메일 자동 처리](docs/interview-management-v2-release-20261015.md)
+
+기본 검사: `npm run check`, `npm run test:interview-management`, `npm run build`. DB 검사는 `npm run test:interview-management:db`, 네이티브 PostgreSQL 검사는 `npm run test:interview-management:native`를 사용합니다. 선택적 DB 런타임 설치 절차는 Phase 1/2 문서를 따릅니다. 운영 키와 테스트 수신 주소는 로컬 `.env` 또는 배포 환경 변수에만 설정합니다. `.codex-artifacts`는 Git 및 Vercel 업로드에서 제외합니다.

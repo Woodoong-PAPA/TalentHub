@@ -6,6 +6,9 @@
     <title>Samsung Talent Pool Console</title>
     <link rel="stylesheet" href="styles.css?v=20260921-01" />
     <script src="runtime-config.js?v=20260609-07" defer></script>
+    <script src="/vendor/supabase.js" defer></script>
+    <script src="/vendor/supabase-global.js" defer></script>
+    <script src="/talent-auth.js?v=20261016-01" defer></script>
     <script src="talent-pool.js?v=20260921-01" defer></script>
   </head>
   <body>
@@ -80,6 +83,7 @@
             <span class="nav-icon">M</span>
             <span>Management</span>
           </button>
+          <button class="nav-item" type="button" data-view="interview-management"><span class="nav-icon">일</span><span>면접 일정 관리</span></button>
         </nav>
 
         <div class="sidebar-footer">
@@ -257,7 +261,8 @@
             </div>
             <div id="members-content"></div>
           </section>
-        </main>
+        <section id="interview-management-view" class="view" aria-label="면접 일정 관리"><iframe id="interview-management-frame" title="면접 일정 관리" class="embedded-tool-frame im-integrated-frame" loading="lazy"></iframe></section>
+      </main>
       </div>
     </div>
 

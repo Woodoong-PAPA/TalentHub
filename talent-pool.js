@@ -1,3 +1,4 @@
+const unifiedMembers = window.TalentAuth?.enabled === true;
 const STATUS_LABELS = {
   interested: "관심",
   contact_planned: "접촉 예정",
@@ -19,6 +20,7 @@ const STATUS_ORDER = [
 ];
 
 const MENU_CONFIG = [
+  { view: "interview-management", label: "면접 일정 관리", description: "면접 일정 조율과 이메일 승인" },
   { view: "dashboard", label: "대시보드", description: "운영 현황과 KPI 조회" },
   { view: "pool", label: "Talent Pool", description: "후보자 목록과 상세 프로필 조회" },
   { view: "screening", label: "직무적합도 평가", description: "포지션별 지원자 스크리닝과 전화면접 안내" },
@@ -47,6 +49,7 @@ const JD_ENHANCEMENT_SETTING_KEY = "jd_enhancement";
 const VISIT_STATS_SETTING_KEY = "visit_stats";
 const VISIT_STATS_RETENTION_DAYS = 1095;
 const ROLE_PERMISSION_TABLE_VIEWS = new Set([
+  "interview-management",
   "dashboard",
   "pool",
   "screening",
@@ -90,12 +93,12 @@ const CANDIDATE_REGISTER_ROLES = new Set(["search_firm", "business_recruiter", "
 const MEMBER_ROLES_WITHOUT_BUSINESS_UNIT = new Set(["applicant", "search_firm", "hiring_manager"]);
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  applicant: ["screening", "interview", "interpreter"],
+  applicant: ["interview-management", "screening", "interview", "interpreter"],
   general: ["dashboard", "pool", "policy-chat", "interpreter", "trending"],
   search_firm: ["dashboard", "pool", "screening", "ai-search", "policy-chat", "interpreter"],
-  hiring_manager: ["dashboard", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending"],
-  business_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
-  division_recruiter: ["dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
+  hiring_manager: ["interview-management", "dashboard", "pool", "screening", "interview", "interview-report", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending"],
+  business_recruiter: ["interview-management", "dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
+  division_recruiter: ["interview-management", "dashboard", "pool", "screening", "interview", "interview-report", "recruiting-metrics", "ai-search", "job-fit", "jd-enhance", "policy-chat", "interpreter", "trending", "members"],
   admin: MENU_CONFIG.map((item) => item.view)
 };
 
@@ -1918,6 +1921,8 @@ function normalizeMember(member) {
 
   return {
     id: member.id || createId("member"),
+    authUserId: member.authUserId || member.auth_user_id || "",
+    interviewRole: member.interviewRole || member.profile?.interviewRole || "",
     name: String(member.name || "").trim(),
     email: String(member.email || "").trim().toLowerCase(),
     password: String(member.password || ""),
@@ -3480,6 +3485,7 @@ function normalizeTrendingSearchSettings(settings = {}) {
 function sanitizeMemberForStorage(member) {
   const normalized = normalizeMember(member);
   const { password, ...safeMember } = normalized;
+  if (unifiedMembers) delete safeMember.passwordHash;
   return safeMember;
 }
 
@@ -3612,7 +3618,7 @@ function getMenuConfigItem(view) {
 function ensureMemberDefaults() {
   state.members = state.members.map(normalizeMember);
 
-  if (!state.members.some((member) => member.role === "admin" && member.status === "active")) {
+  if (!unifiedMembers && !state.members.some((member) => member.role === "admin" && member.status === "active")) {
     state.members.unshift(...structuredClone(DEFAULT_MEMBERS).map(normalizeMember));
   }
 
@@ -4282,6 +4288,10 @@ function getSupabaseHeaders(extraHeaders = {}) {
 }
 
 async function supabaseRequest(path, options = {}) {
+  if (unifiedMembers && path.startsWith("app_members")) return window.TalentAuth.memberRequest(path, options);
+  if (unifiedMembers && path.startsWith("app_role_permissions") && options.method === "POST") {
+    await window.TalentAuth.request("permissions", { rows: JSON.parse(options.body || "[]") }); return null;
+  }
   if (!REMOTE_SYNC_ENABLED) {
     return null;
   }
@@ -4830,6 +4840,12 @@ async function upsertMemberToSupabase(member) {
 function queueMemberRemoteSave(member) {
   upsertMemberToSupabase(member).catch((error) => {
     console.warn("Member remote save failed.", error);
+    if (unifiedMembers) {
+      showToast("회원 정보 저장에 실패했습니다. " + error.message);
+      window.TalentAuth.request("members").then(result => {
+        state.members = result.members.map(normalizeMember); persistState({ skipRemoteSync: true }); render();
+      }).catch(() => {});
+    }
   });
 }
 
@@ -5678,7 +5694,7 @@ async function syncStateToSupabase() {
 
   try {
     ensureAuditLogIds();
-    await ensureMemberPasswordHashes();
+    if (!unifiedMembers) await ensureMemberPasswordHashes();
     const candidateRows = state.candidates.map(candidateToSupabaseRow);
     state.screeningFolders = filterDeletedScreeningFolders(state.screeningFolders);
     state.interviewDeletedCaseIds = normalizeIdList(state.interviewDeletedCaseIds);
@@ -5717,7 +5733,7 @@ async function syncStateToSupabase() {
       });
     }
 
-    if (memberRows.length) {
+    if (!unifiedMembers && memberRows.length) {
       await supabaseRequest("app_members?on_conflict=id", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -5725,7 +5741,7 @@ async function syncStateToSupabase() {
       });
     }
 
-    if (permissionRows.length) {
+    if (!unifiedMembers && permissionRows.length) {
       await supabaseRequest("app_role_permissions?on_conflict=role,view", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -5844,6 +5860,12 @@ async function loadStateFromSupabase() {
       state.rolePermissions = rolePermissionsFromSupabaseRows(permissionRows);
     }
 
+    for (const permission of permissionRows || []) {
+      if (permission.view !== "interview-management" || !state.rolePermissions[permission.role]) continue;
+      const views = new Set(state.rolePermissions[permission.role]);
+      if (permission.enabled) views.add(permission.view); else views.delete(permission.view);
+      state.rolePermissions[permission.role] = [...views];
+    }
     if (Array.isArray(policySourceRows) && policySourceRows.length) {
       state.policySources = policySourceRows.map(policySourceFromSupabaseRow).filter((source) => source.content);
     }
@@ -6883,7 +6905,11 @@ function getDisplayTrendingPeople(report) {
   return (Array.isArray(report?.people) ? report.people : []).filter(isDisplayableTrendingPerson);
 }
 
-function setView(view) {
+function ensureIntegratedInterviewLoaded() {
+     const frame = document.getElementById("interview-management-frame");
+     if (state.view === "interview-management" && frame && !frame.dataset.loaded) { frame.src = "/interview-management?embedded=1"; frame.dataset.loaded = "true"; }
+   }
+   function setView(view) {
   if (!isAuthenticated()) {
     renderAuth();
     return;
@@ -6942,6 +6968,7 @@ function setView(view) {
     state.editingMemoId = "";
   }
   syncActiveViewState();
+  ensureIntegratedInterviewLoaded();
   render();
 
   if (view === "trending" && trendingReportNeedsRefresh(state.trendingReport) && !state.trendingLoading) {
@@ -24276,6 +24303,7 @@ function memberTable(members) {
           <tr>
             <th>회원</th>
             <th>등급</th>
+            ${unifiedMembers ? "<th>면접 권한</th>" : ""}
             <th>상태</th>
             <th>소속</th>
             <th>가입 신청</th>
@@ -24298,6 +24326,7 @@ function memberTable(members) {
                   ${MEMBER_ROLE_ORDER.map((role) => `<option value="${role}" ${member.role === role ? "selected" : ""}>${MEMBER_ROLES[role]}</option>`).join("")}
                 </select>
               </td>
+              ${unifiedMembers ? `<td><select class="control-select compact-select" data-member-interview-role="${escapeHtml(member.id)}" ${isAdmin() ? "" : "disabled"}>${renderInterviewRoleOptions(member.interviewRole)}</select></td>` : ""}
               <td>${getMemberStatusChip(member.status)}</td>
               <td>
                 <div class="member-role-cell">
@@ -24318,6 +24347,9 @@ function memberTable(members) {
   `;
 }
 
+function renderInterviewRoleOptions(selected) {
+  return Object.entries({ "": "회원 등급에 따라 자동", RECRUITER: "채용담당자", HRBP: "HRBP", INTERVIEWER: "면접관", CANDIDATE: "지원자" }).map(([key,label]) => `<option value="${key}" ${key === selected ? "selected" : ""}>${label}</option>`).join("");
+}
 function renderRolePermissionMatrix() {
   const menus = getOrderedMenuConfig();
 
@@ -24553,6 +24585,7 @@ function renderMemberCreatePanel() {
               ${roleOptions.map((role) => `<option value="${role}">${escapeHtml(MEMBER_ROLES[role])}</option>`).join("")}
             </select>
           </label>
+          ${unifiedMembers && isAdmin() ? `<label>면접 권한<select name="interviewRole" class="control-select">${renderInterviewRoleOptions("")}</select></label>` : ""}
           <label data-member-create-business-unit-field class="${showBusinessUnit ? "" : "is-hidden"}">
             사업부
             <select class="control-select" name="businessUnit" data-member-create-business-unit ${showBusinessUnit ? "" : "disabled"}>
@@ -30947,6 +30980,7 @@ function setAuthMessage(message) {
 }
 
 async function verifyMemberPassword(member, password) {
+  if (unifiedMembers) return window.TalentAuth.verifyPassword(member.email, password);
   if (member.passwordHash) {
     return member.passwordHash === await hashPassword(member.email, password);
   }
@@ -31032,7 +31066,11 @@ async function saveCurrentMemberProfile(form) {
     }
 
     member.password = "";
-    member.passwordHash = await hashPassword(member.email, newPassword);
+    if (unifiedMembers) {
+      const result = await window.TalentAuth.client.auth.updateUser({ password: newPassword });
+      if (result.error) { showMemberProfileError("비밀번호 변경에 실패했습니다."); return; }
+      member.passwordHash = "";
+    } else member.passwordHash = await hashPassword(member.email, newPassword);
   }
 
   const beforeName = member.name;
@@ -31061,9 +31099,16 @@ async function handleLoginSubmit(form) {
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
   const shouldRememberEmail = Boolean(formData.get("rememberEmail"));
-  const member = state.members.find((item) => item.email === email);
+  let member = state.members.find((item) => item.email === email);
+  if (unifiedMembers) {
+    try {
+      member = normalizeMember(await window.TalentAuth.login(email, password));
+      state.members = (await window.TalentAuth.request("members")).members.map(normalizeMember);
+      form.elements.password.value = "";
+    } catch (error) { setAuthMessage(error.message); return; }
+  }
 
-  if (!member || !await verifyMemberPassword(member, password)) {
+  if (!member || (!unifiedMembers && !await verifyMemberPassword(member, password))) {
     setAuthMessage("이메일 또는 비밀번호가 일치하지 않습니다.");
     return;
   }
@@ -31123,7 +31168,7 @@ async function handleSignupSubmit(form) {
     name,
     email,
     password: "",
-    passwordHash: await hashPassword(email, password),
+    passwordHash: unifiedMembers ? "" : await hashPassword(email, password),
     role: requestedRole === "admin" || !MEMBER_ROLES[requestedRole] ? "general" : requestedRole,
     status: "pending",
     businessUnit: formData.get("businessUnit"),
@@ -31134,8 +31179,10 @@ async function handleSignupSubmit(form) {
     note: formData.get("note")
   });
 
-  state.members.unshift(member);
-  queueMemberRemoteSave(member);
+  if (unifiedMembers) {
+    try { await window.TalentAuth.request("signup", { member, password }); form.reset(); }
+    catch (error) { setAuthMessage(error.message); return; }
+  } else { state.members.unshift(member); queueMemberRemoteSave(member); }
   notifyAdminsOfSignup(member);
   state.authView = "login";
   state.authMessage = "가입 신청이 접수되었습니다. 관리자가 승인하면 로그인할 수 있습니다.";
@@ -31233,7 +31280,7 @@ async function createMemberAccountFromForm(form) {
     name,
     email,
     password: "",
-    passwordHash: await hashPassword(email, password),
+    passwordHash: unifiedMembers ? "" : await hashPassword(email, password),
     role,
     status: "active",
     businessUnit,
@@ -31247,11 +31294,17 @@ async function createMemberAccountFromForm(form) {
     note: formData.get("note")
   });
 
+  if (unifiedMembers) {
+    try {
+      const saved = await window.TalentAuth.request("members/create", { member: { ...member, interviewRole: String(formData.get("interviewRole") || "") }, password });
+      Object.assign(member, normalizeMember(saved.member)); form.reset();
+    } catch (error) { showMemberCreateError(error.message); return; }
+  }
   state.members.unshift(member);
   state.memberFilters.role = "all";
   state.memberFilters.status = "all";
   state.memberFilters.query = "";
-  queueMemberRemoteSave(member);
+  if (!unifiedMembers) queueMemberRemoteSave(member);
   addAuditLog("회원 계정 생성", member.name, `${getRoleLabel(member.role)} 계정 생성`, getCurrentActorName());
   persistState();
   showToast(`${member.name} 계정을 생성했습니다.`);
@@ -31259,6 +31312,9 @@ async function createMemberAccountFromForm(form) {
 }
 
 function logout() {
+  if (unifiedMembers) window.TalentAuth.logout();
+  const imFrame = document.getElementById("interview-management-frame");
+  if (imFrame) { imFrame.src = "about:blank"; delete imFrame.dataset.loaded; }
   const member = getCurrentMember();
   if (member) {
     addAuditLog("로그아웃", member.name, "시스템 접속 종료", member.name);
@@ -31421,6 +31477,15 @@ async function resetMemberPassword(memberId) {
   }
 
   member.password = "";
+  if (unifiedMembers) {
+    const password = await window.TalentAuth.choosePassword(member.name);
+    if (!password) return;
+    try { await window.TalentAuth.request("members/reset-password", { id: member.id, password }); }
+    catch (error) { showToast(error.message); return; }
+    member.passwordHash = "";
+    addAuditLog("회원 비밀번호 초기화", member.name, "관리자 지정 비밀번호 설정");
+    persistState(); renderMembers(); showToast("비밀번호를 초기화했습니다."); return;
+  }
   member.passwordHash = await hashPassword(member.email, TEMP_PASSWORD);
   queueMemberRemoteSave(member);
   addAuditLog("회원 비밀번호 초기화", member.name, "임시 비밀번호 발급");
@@ -33720,6 +33785,14 @@ function bindEvents() {
       return;
     }
 
+    const interviewRoleSelect = event.target.closest("[data-member-interview-role]");
+    if (interviewRoleSelect && unifiedMembers && isAdmin()) {
+      const member = findMember(interviewRoleSelect.dataset.memberInterviewRole);
+      window.TalentAuth.request("members/update", { id: member.id, member: { interviewRole: interviewRoleSelect.value } })
+        .then(result => { Object.assign(member, normalizeMember(result.member)); persistState(); showToast("면접 권한을 저장했습니다."); })
+        .catch(error => { renderMembers(); showToast(error.message); });
+      return;
+    }
     const memberRoleSelect = event.target.closest("[data-member-role]");
     if (memberRoleSelect) {
       updateMemberRole(memberRoleSelect.dataset.memberRole, memberRoleSelect.value);
@@ -33890,6 +33963,11 @@ function applyInitialUrlIntent() {
 
 async function initializeApp() {
   restorePersistedState();
+  if (unifiedMembers) {
+    state.currentUserId = ""; state.members = [];
+    const member = await window.TalentAuth.restore();
+    if (member) { state.members = [normalizeMember(member)]; state.currentUserId = member.id; }
+  }
   ensureMemberDefaults();
   if (isAuthenticated()) {
     recordPageVisit(getCurrentMember());
@@ -33898,7 +33976,7 @@ async function initializeApp() {
   applyInitialUrlIntent();
 
   try {
-    if (await ensureMemberPasswordHashes()) {
+    if (!unifiedMembers && await ensureMemberPasswordHashes()) {
       persistState({ skipRemoteSync: true });
     }
   } catch (error) {

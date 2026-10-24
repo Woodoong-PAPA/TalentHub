@@ -49,6 +49,13 @@ function resolveRouteName(request) {
 
 module.exports = async function apiRouter(request, response) {
   const routeName = resolveRouteName(request);
+  if (/^interview-management(?:\/|$)/.test(routeName)) {
+    await require("./interview-management/index.js")(request,response);
+    return;
+  }
+  if (/^talent-auth(?:\/|$)/.test(routeName)) {
+    await require("./talent-auth/index.js")(request, response); return;
+  }
   const loadHandler = routes[routeName];
 
   if (!loadHandler) {

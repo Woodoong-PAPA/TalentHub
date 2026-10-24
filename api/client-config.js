@@ -28,8 +28,11 @@ function getClientConfig() {
   const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
   return {
+    unifiedAuthEnabled: process.env.TALENT_AUTH_UNIFIED_ENABLED === 'true',
     supabaseUrl,
     supabaseAnonKey,
+    interviewManagementSupabaseUrl: process.env.INTERVIEW_MGMT_SUPABASE_URL || supabaseUrl,
+    interviewManagementSupabaseAnonKey: process.env.INTERVIEW_MGMT_SUPABASE_ANON_KEY || supabaseAnonKey,
     dataSource: requestedDataSource === "supabase" && hasSupabaseConfig ? "supabase" : "local"
   };
 }

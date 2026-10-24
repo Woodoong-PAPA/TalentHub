@@ -7,3 +7,5 @@ node_modules
 server.js
 runtime-config.js
 *.log
+
+.codex-artifacts
