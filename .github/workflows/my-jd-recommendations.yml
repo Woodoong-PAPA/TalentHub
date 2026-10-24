@@ -1,0 +1,24 @@
+name: My JD profile recommendations
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: my-jd-recommendations
+  cancel-in-progress: false
+jobs:
+  recommend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      MY_JD_CRON_SECRET: ${{ secrets.MY_JD_CRON_SECRET }}
+    steps:
+      - name: Analyze newly registered profiles and send matching cards
+        if: ${{ env.MY_JD_CRON_SECRET != '' }}
+        run: |
+          curl --fail --silent --show-error --max-time 180 \
+            --request POST \
+            --header "Authorization: Bearer ${MY_JD_CRON_SECRET}" \
+            https://talentpool-dx.com/api/my-jd-cron
